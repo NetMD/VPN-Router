@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "VpnRouter (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "VpnRouter (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}

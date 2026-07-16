@@ -1,0 +1,12 @@
+<Solution>
+  <Project Path="VpnRouter.Core/VpnRouter.Core.csproj" />
+  <Project Path="VpnRouter.Ipc/VpnRouter.Ipc.csproj" />
+  <Project Path="VpnRouter.Networking/VpnRouter.Networking.csproj" />
+  <Project Path="VpnRouter.Service/VpnRouter.Service.csproj" />
+  <Project Path="VpnRouter.Tests/VpnRouter.Tests.csproj" />
+  <Project Path="VpnRouter.Vpn/VpnRouter.Vpn.csproj" />
+  <Project Path="VpnRouter.App/VpnRouter.App.csproj" Id="d862e077-edaf-4c61-851c-52a9ece2f9fa">
+    <Platform Project="x64" />
+    <Deploy />
+  </Project>
+</Solution>

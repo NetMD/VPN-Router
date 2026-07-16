@@ -1,0 +1,17 @@
+.vs/
+bin/
+obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Build artifacts under nested projects
+**/bin/
+**/obj/
+
+# Local diagnostics and secrets
+*.log
+*.dmp
+*.wg.conf
+*.ovpn

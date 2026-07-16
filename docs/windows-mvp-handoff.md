@@ -73,6 +73,13 @@ Recommended stack:
 - First VPN engine: WireGuard
 - Installer: evaluate WiX Toolset or MSIX plus service bootstrapper
 
+MVP dependency decision:
+
+- WireGuard for Windows is a user-installed external prerequisite.
+- VPN Router should not bundle, redistribute, or silently install WireGuard in the MVP.
+- The desktop app should detect the standard WireGuard install path and guide users to the official install page when missing.
+- Actual tunnel activation should call the installed WireGuard for Windows command-line interface.
+
 Visual Studio Community is recommended for WinUI 3 and Windows App SDK work. VS Code can be used as an editor for service/core logic, but Visual Studio is the safer primary tool for project templates, XAML, packaging, debugging profiles, and Windows App SDK setup.
 
 ## Development Environment Notes
