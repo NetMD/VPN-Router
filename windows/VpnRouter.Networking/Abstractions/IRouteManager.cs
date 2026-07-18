@@ -11,5 +11,11 @@ public interface IRouteManager
         int interfaceIndex,
         CancellationToken cancellationToken);
 
+    Task<int> RemoveExpiredRoutesAsync(Guid profileId, CancellationToken cancellationToken);
+
     Task RemoveManagedRoutesAsync(Guid profileId, CancellationToken cancellationToken);
+
+    Task<bool> HasManagedRoutesAsync(CancellationToken cancellationToken);
+
+    Task RemoveAllManagedRoutesAsync(CancellationToken cancellationToken);
 }

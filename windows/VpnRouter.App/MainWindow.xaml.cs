@@ -26,6 +26,7 @@ public sealed partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        AppWindow.Resize(new Windows.Graphics.SizeInt32(1120, 780));
         RefreshWireGuardInstallStatus();
         _ = RefreshConnectionStateAsync(false);
         _ = RefreshProfilesAsync(null, false);
@@ -517,13 +518,26 @@ public sealed partial class MainWindow : Window
         panel.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
         var text = new TextBlock { Text = domain, VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center };
-        var button = new Button { Content = "삭제", Tag = domain };
+        var button = new Button
+        {
+            Content = new SymbolIcon { Symbol = Symbol.Delete },
+            Tag = domain,
+            Width = 36,
+            Height = 36,
+            Padding = new Thickness(0)
+        };
+        ToolTipService.SetToolTip(button, $"{domain} 삭제");
         button.Click += RemoveDomainButton_Click;
         Grid.SetColumn(button, 1);
 
         panel.Children.Add(text);
         panel.Children.Add(button);
-        DomainRulesList.Items.Add(new ListViewItem { Content = panel, Tag = domain });
+        DomainRulesList.Items.Add(new ListViewItem
+        {
+            Content = panel,
+            Tag = domain,
+            HorizontalContentAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Stretch
+        });
     }
 
     private IEnumerable<string> GetDomainListItems()
@@ -610,11 +624,7 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        var endpointText = item.Endpoints.Count == 0
-            ? "Endpoint 정보 없음"
-            : $"Endpoint: {string.Join(", ", item.Endpoints)}";
-
-        ProfileDetailsText.Text = $"저장된 프로필 {profileCount}개. {endpointText}";
+        ProfileDetailsText.Text = $"저장된 프로필 {profileCount}개 · {item.Name}";
         if (item.Endpoints.Any(endpoint => endpoint.Contains("example.com", StringComparison.OrdinalIgnoreCase)))
         {
             AppendRecentStatus("현재 선택된 WireGuard 프로필의 Endpoint가 example.com 예제 주소입니다. 실제 VPN .conf를 다시 가져오세요.");

@@ -20,7 +20,8 @@ public sealed class WireGuardRuntimeConfigStore
         Directory.CreateDirectory(_runtimeDirectory);
 
         var path = Path.Combine(_runtimeDirectory, $"{WireGuardTunnelName.ForProfile(profileId)}.conf");
-        var runtimeConfigText = await ResolveEndpointHostsAsync(configText, cancellationToken);
+        var splitRoutingConfigText = ApplySplitRoutingAllowedIps(ApplySplitRoutingTableOff(configText));
+        var runtimeConfigText = await ResolveEndpointHostsAsync(splitRoutingConfigText, cancellationToken);
         await File.WriteAllTextAsync(path, runtimeConfigText, cancellationToken);
         return path;
     }
@@ -34,6 +35,69 @@ public sealed class WireGuardRuntimeConfigStore
         }
 
         return Task.CompletedTask;
+    }
+
+    public static string ApplySplitRoutingTableOff(string configText)
+    {
+        var lines = configText.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n').ToList();
+        var interfaceIndex = lines.FindIndex(line =>
+            string.Equals(line.Trim(), "[Interface]", StringComparison.OrdinalIgnoreCase));
+        if (interfaceIndex < 0)
+        {
+            throw new InvalidOperationException("WireGuard config is missing an [Interface] section.");
+        }
+
+        var nextSectionIndex = lines.FindIndex(
+            interfaceIndex + 1,
+            line => line.TrimStart().StartsWith('['));
+        if (nextSectionIndex < 0)
+        {
+            nextSectionIndex = lines.Count;
+        }
+
+        var tableIndex = lines.FindIndex(
+            interfaceIndex + 1,
+            nextSectionIndex - interfaceIndex - 1,
+            line => line.TrimStart().StartsWith("Table", StringComparison.OrdinalIgnoreCase)
+                && line.Contains('='));
+
+        if (tableIndex >= 0)
+        {
+            lines[tableIndex] = "Table = off";
+        }
+        else
+        {
+            lines.Insert(interfaceIndex + 1, "Table = off");
+        }
+
+        return string.Join(Environment.NewLine, lines).Trim();
+    }
+
+    public static string ApplySplitRoutingAllowedIps(string configText)
+    {
+        var lines = configText.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var line = lines[i];
+            var equalsIndex = line.IndexOf('=');
+            if (equalsIndex <= 0
+                || !string.Equals(line[..equalsIndex].Trim(), "AllowedIPs", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var values = line[(equalsIndex + 1)..]
+                .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+                .SelectMany(value => value.ToLowerInvariant() switch
+                {
+                    "0.0.0.0/0" => new[] { "0.0.0.0/1", "128.0.0.0/1" },
+                    "::/0" => new[] { "::/1", "8000::/1" },
+                    _ => new[] { value }
+                });
+            lines[i] = $"{line[..(equalsIndex + 1)]} {string.Join(", ", values)}";
+        }
+
+        return string.Join(Environment.NewLine, lines).Trim();
     }
 
     public static async Task<string> ResolveEndpointHostsAsync(string configText, CancellationToken cancellationToken)

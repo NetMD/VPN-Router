@@ -20,7 +20,7 @@ public sealed class WindowsNetworkSnapshotStore(
         Directory.CreateDirectory(Path.GetDirectoryName(_snapshotPath)!);
 
         var dnsJson = await RunPowerShellAsync(
-            "Get-DnsClientServerAddress | Select-Object InterfaceAlias,InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 5",
+            "$targets = Get-NetAdapter | Where-Object { $_.Status -eq 'Up' -and $_.InterfaceDescription -notmatch 'WireGuard|Wintun' -and $_.Name -notmatch 'WireGuard|Wintun' }; $targets | ForEach-Object { Get-DnsClientServerAddress -InterfaceIndex $_.ifIndex } | Select-Object InterfaceAlias,InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 5",
             cancellationToken);
 
         var routeText = await RunPowerShellAsync(
@@ -69,8 +69,8 @@ public sealed class WindowsNetworkSnapshotStore(
             }
 
             var command = entry.ServerAddresses.Count == 0
-                ? $"Set-DnsClientServerAddress -InterfaceIndex {entry.InterfaceIndex} -AddressFamily IPv4 -ResetServerAddresses"
-                : $"Set-DnsClientServerAddress -InterfaceIndex {entry.InterfaceIndex} -AddressFamily IPv4 -ServerAddresses @({string.Join(",", entry.ServerAddresses.Select(ToPowerShellString))})";
+                ? $"Set-DnsClientServerAddress -InterfaceIndex {entry.InterfaceIndex} -ResetServerAddresses"
+                : $"Set-DnsClientServerAddress -InterfaceIndex {entry.InterfaceIndex} -ServerAddresses @({string.Join(",", entry.ServerAddresses.Select(ToPowerShellString))})";
 
             await RunPowerShellAsync(command, cancellationToken);
             logger.LogWarning(

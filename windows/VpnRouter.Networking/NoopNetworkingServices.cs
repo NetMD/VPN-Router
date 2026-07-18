@@ -7,7 +7,12 @@ namespace VpnRouter.Networking;
 
 public sealed class NoopDnsProxyController : IDnsProxyController
 {
-    public Task StartAsync(IReadOnlyList<DomainRule> rules, CancellationToken cancellationToken)
+    public Task StartAsync(
+        IReadOnlyList<DomainRule> rules,
+        IPAddress? upstreamDnsServer,
+        Guid profileId,
+        int interfaceIndex,
+        CancellationToken cancellationToken)
     {
         return Task.CompletedTask;
     }
@@ -43,6 +48,21 @@ public sealed class NoopRouteManager : IRouteManager
     }
 
     public Task RemoveManagedRoutesAsync(Guid profileId, CancellationToken cancellationToken)
+    {
+        return Task.CompletedTask;
+    }
+
+    public Task<int> RemoveExpiredRoutesAsync(Guid profileId, CancellationToken cancellationToken)
+    {
+        return Task.FromResult(0);
+    }
+
+    public Task<bool> HasManagedRoutesAsync(CancellationToken cancellationToken)
+    {
+        return Task.FromResult(false);
+    }
+
+    public Task RemoveAllManagedRoutesAsync(CancellationToken cancellationToken)
     {
         return Task.CompletedTask;
     }

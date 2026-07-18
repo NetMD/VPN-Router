@@ -15,4 +15,6 @@ public interface IVpnAdapter
     Task<VpnInterfaceInfo> GetInterfaceInfoAsync(Guid profileId, CancellationToken cancellationToken);
 
     Task<VpnConnectionStatus> GetConnectionStatusAsync(Guid profileId, CancellationToken cancellationToken);
+
+    Task<int> CleanupStaleConnectionsAsync(CancellationToken cancellationToken);
 }

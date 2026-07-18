@@ -6,126 +6,239 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d"
-    Title="VPN 라우터">
+    Title="VPN Router">
 
     <Window.SystemBackdrop>
         <MicaBackdrop />
     </Window.SystemBackdrop>
 
-    <Grid Padding="32">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
-        </Grid.RowDefinitions>
+    <Grid Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+        <Grid.Resources>
+            <Style x:Key="SectionTitleStyle" TargetType="TextBlock">
+                <Setter Property="FontSize" Value="18" />
+                <Setter Property="FontWeight" Value="SemiBold" />
+            </Style>
+            <Style x:Key="CaptionStyle" TargetType="TextBlock">
+                <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
+                <Setter Property="TextWrapping" Value="Wrap" />
+            </Style>
+        </Grid.Resources>
+        <ScrollViewer HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled">
+            <Grid
+                Width="960"
+                Padding="0,22,0,32"
+                HorizontalAlignment="Center"
+                RowSpacing="22">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
 
-        <StackPanel Spacing="4">
-            <TextBlock Text="VPN 라우터" Style="{ThemeResource TitleTextBlockStyle}" />
-            <TextBlock
-                Text="원하는 사이트만 VPN으로 열고, 나머지 인터넷은 평소 연결을 그대로 사용합니다."
-                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-        </StackPanel>
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Spacing="2">
+                        <TextBlock Text="VPN Router" FontSize="28" FontWeight="SemiBold" />
+                        <TextBlock Text="선택한 사이트만 VPN으로 연결합니다" Style="{StaticResource CaptionStyle}" />
+                    </StackPanel>
+                    <Button
+                        Grid.Column="1"
+                        Content="연결 전 확인"
+                        Click="ValidateConnectionPlanButton_Click"
+                        x:Name="ValidateConnectionPlanButton"
+                        VerticalAlignment="Center" />
+                </Grid>
 
-        <Grid Grid.Row="1" Margin="0,28,0,0" ColumnSpacing="24">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="2*" />
-                <ColumnDefinition Width="*" />
-            </Grid.ColumnDefinitions>
+                <Border
+                    Grid.Row="1"
+                    Padding="20"
+                    CornerRadius="6"
+                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1">
+                    <Grid ColumnSpacing="20">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <Border
+                            Width="44"
+                            Height="44"
+                            CornerRadius="6"
+                            Background="{ThemeResource AccentFillColorSecondaryBrush}">
+                            <SymbolIcon
+                                Symbol="ProtectedDocument"
+                                Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center" />
+                        </Border>
+                        <StackPanel Grid.Column="1" Spacing="3" VerticalAlignment="Center">
+                            <TextBlock x:Name="ConnectionStateText" Text="연결 안 됨" FontSize="22" FontWeight="SemiBold" />
+                            <TextBlock
+                                x:Name="ConnectionDetailsText"
+                                Text="연결하면 선택한 사이트만 VPN을 사용합니다."
+                                Style="{StaticResource CaptionStyle}" />
+                        </StackPanel>
+                        <Button
+                            x:Name="ConnectButton"
+                            Grid.Column="2"
+                            MinWidth="132"
+                            MinHeight="44"
+                            Content="연결"
+                            Style="{ThemeResource AccentButtonStyle}"
+                            Click="ConnectButton_Click" />
+                    </Grid>
+                </Border>
 
-            <StackPanel Spacing="18">
-                <Border Padding="20" CornerRadius="12" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
-                    <StackPanel Spacing="16">
-                        <TextBlock Text="연결 상태" Style="{ThemeResource SubtitleTextBlockStyle}" />
-                        <Grid ColumnSpacing="16">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <StackPanel Spacing="4">
-                                <TextBlock x:Name="ConnectionStateText" Text="연결 안 됨" FontSize="22" />
-                                <TextBlock x:Name="ConnectionDetailsText" Text="연결하면 선택한 사이트만 VPN을 사용합니다." Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <Grid Grid.Row="2" ColumnSpacing="36">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="2*" MinWidth="520" />
+                        <ColumnDefinition Width="*" MinWidth="300" />
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel Spacing="26">
+                        <StackPanel Spacing="12">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="VPN 프로필" Style="{StaticResource SectionTitleStyle}" VerticalAlignment="Center" />
+                                <Button Grid.Column="1" Click="ImportWireGuardButton_Click" ToolTipService.ToolTip="WireGuard 설정 가져오기">
+                                    <StackPanel Orientation="Horizontal" Spacing="7">
+                                        <SymbolIcon Symbol="Import" />
+                                        <TextBlock Text="가져오기" />
+                                    </StackPanel>
+                                </Button>
+                            </Grid>
+                            <ComboBox
+                                x:Name="ProfileComboBox"
+                                SelectedIndex="0"
+                                HorizontalAlignment="Stretch"
+                                SelectionChanged="ProfileComboBox_SelectionChanged" />
+                            <TextBlock
+                                x:Name="ProfileDetailsText"
+                                Text="WireGuard 프로필을 선택하세요."
+                                Style="{StaticResource CaptionStyle}" />
+
+                            <Expander Header="프로필 관리">
+                                <StackPanel Padding="0,10,0,4" Spacing="10">
+                                    <Grid ColumnSpacing="8">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBox x:Name="ProfileNameTextBox" PlaceholderText="프로필 이름" />
+                                        <Button Grid.Column="1" Content="이름 변경" Click="RenameProfileButton_Click" />
+                                        <Button Grid.Column="2" Click="DeleteProfileButton_Click" ToolTipService.ToolTip="프로필 삭제">
+                                            <SymbolIcon Symbol="Delete" />
+                                        </Button>
+                                    </Grid>
+                                    <Grid ColumnSpacing="10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock
+                                            x:Name="WireGuardInstallStatusText"
+                                            Text="WireGuard 설치 상태를 확인하는 중입니다."
+                                            Style="{StaticResource CaptionStyle}"
+                                            VerticalAlignment="Center" />
+                                        <Button
+                                            x:Name="InstallWireGuardButton"
+                                            Grid.Column="1"
+                                            Content="설치 안내"
+                                            Click="InstallWireGuardButton_Click" />
+                                    </Grid>
+                                </StackPanel>
+                            </Expander>
+                        </StackPanel>
+
+                        <Rectangle Height="1" Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+
+                        <StackPanel Spacing="12">
+                            <StackPanel Spacing="2">
+                                <TextBlock Text="VPN으로 열 사이트" Style="{StaticResource SectionTitleStyle}" />
+                                <TextBlock Text="하위 도메인도 함께 적용됩니다" Style="{StaticResource CaptionStyle}" />
                             </StackPanel>
-                            <StackPanel Grid.Column="1" Spacing="8">
-                                <Button x:Name="ConnectButton" MinWidth="128" Content="연결" Click="ConnectButton_Click" />
-                                <Button x:Name="ValidateConnectionPlanButton" MinWidth="128" Content="연결 전 점검" Click="ValidateConnectionPlanButton_Click" />
+                            <ListView
+                                x:Name="DomainRulesList"
+                                MinHeight="120"
+                                MaxHeight="240"
+                                SelectionMode="None" />
+                            <Grid ColumnSpacing="8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBox
+                                    x:Name="DomainTextBox"
+                                    PlaceholderText="example.com"
+                                    VerticalContentAlignment="Center" />
+                                <Button Grid.Column="1" Click="AddDomainButton_Click">
+                                    <StackPanel Orientation="Horizontal" Spacing="7">
+                                        <SymbolIcon Symbol="Add" />
+                                        <TextBlock Text="추가" />
+                                    </StackPanel>
+                                </Button>
+                            </Grid>
+                        </StackPanel>
+                    </StackPanel>
+
+                    <StackPanel Grid.Column="1" Spacing="22">
+                        <StackPanel Spacing="10">
+                            <TextBlock Text="최근 상태" Style="{StaticResource SectionTitleStyle}" />
+                            <ItemsControl x:Name="RecentStatusList">
+                                <TextBlock Text="연결 기록이 여기에 표시됩니다." Style="{StaticResource CaptionStyle}" />
+                            </ItemsControl>
+                        </StackPanel>
+
+                        <Rectangle Height="1" Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+
+                        <Expander Header="연결 설정">
+                            <StackPanel Padding="0,10,0,4" Spacing="10">
+                                <ToggleSwitch
+                                    x:Name="ProtectionModeToggle"
+                                    Header="보호 모드"
+                                    OffContent="경로 실패 시 일반 인터넷 사용"
+                                    OnContent="경로 실패 시 사이트 차단" />
                             </StackPanel>
-                        </Grid>
-                    </StackPanel>
-                </Border>
+                        </Expander>
 
-                <Border Padding="20" CornerRadius="12" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
-                    <StackPanel Spacing="14">
-                        <TextBlock Text="VPN 프로필" Style="{ThemeResource SubtitleTextBlockStyle}" />
-                        <ComboBox x:Name="ProfileComboBox" SelectedIndex="0" MinWidth="280" SelectionChanged="ProfileComboBox_SelectionChanged" />
-                        <Grid ColumnSpacing="8">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <TextBox x:Name="ProfileNameTextBox" PlaceholderText="프로필 이름" Header="이름" />
-                            <Button Grid.Column="1" VerticalAlignment="Bottom" Content="이름 변경" Click="RenameProfileButton_Click" />
-                            <Button Grid.Column="2" VerticalAlignment="Bottom" Content="삭제" Click="DeleteProfileButton_Click" />
-                        </Grid>
-                        <Button Content="WireGuard 설정 가져오기" Click="ImportWireGuardButton_Click" />
-                        <Button x:Name="InstallWireGuardButton" Content="WireGuard 설치" Click="InstallWireGuardButton_Click" />
-                        <TextBlock x:Name="WireGuardInstallStatusText" Text="WireGuard 설치 여부를 확인하는 중입니다." Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-                        <TextBlock x:Name="ProfileDetailsText" Text=".conf 파일을 가져오면 WireGuard 프로필을 확인합니다." Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                        <Expander Header="문제 해결">
+                            <StackPanel Padding="0,10,0,4" Spacing="10">
+                                <Button Click="RestoreNetworkButton_Click" HorizontalAlignment="Stretch">
+                                    <StackPanel Orientation="Horizontal" Spacing="7">
+                                        <SymbolIcon Symbol="Repair" />
+                                        <TextBlock Text="네트워크 설정 복구" />
+                                    </StackPanel>
+                                </Button>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="진단" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                    <Button Grid.Column="1" Click="RefreshDiagnosticsButton_Click" ToolTipService.ToolTip="진단 새로고침">
+                                        <SymbolIcon Symbol="Refresh" />
+                                    </Button>
+                                </Grid>
+                                <ItemsControl x:Name="DiagnosticsList" />
+                                <TextBlock
+                                    x:Name="FeatureFlagsText"
+                                    Text="서비스 상태를 확인하는 중입니다."
+                                    Style="{StaticResource CaptionStyle}" />
+                                <Button Content="문제 해결 파일 만들기" Click="CreateTroubleshootingFileButton_Click" HorizontalAlignment="Stretch" />
+                            </StackPanel>
+                        </Expander>
                     </StackPanel>
-                </Border>
-
-                <Border Padding="20" CornerRadius="12" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
-                    <StackPanel Spacing="14">
-                        <TextBlock Text="VPN으로 열 사이트" Style="{ThemeResource SubtitleTextBlockStyle}" />
-                        <ListView x:Name="DomainRulesList" MaxHeight="220" />
-                        <Grid ColumnSpacing="8">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <TextBox x:Name="DomainTextBox" PlaceholderText="example.com" Header="사이트 추가" />
-                            <Button Grid.Column="1" VerticalAlignment="Bottom" Content="추가" Click="AddDomainButton_Click" />
-                        </Grid>
-                    </StackPanel>
-                </Border>
-            </StackPanel>
-
-            <StackPanel Grid.Column="1" Spacing="18">
-                <Border Padding="20" CornerRadius="12" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
-                    <StackPanel Spacing="12">
-                        <TextBlock Text="최근 상태" Style="{ThemeResource SubtitleTextBlockStyle}" />
-                        <ItemsControl x:Name="RecentStatusList">
-                            <TextBlock Text="- youtube.com은 VPN으로 열 준비가 되어 있습니다." TextWrapping="Wrap" />
-                            <TextBlock Text="- 다른 인터넷 트래픽은 평소 연결을 사용합니다." TextWrapping="Wrap" />
-                        </ItemsControl>
-                    </StackPanel>
-                </Border>
-
-                <Border Padding="20" CornerRadius="12" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
-                    <StackPanel Spacing="12">
-                        <TextBlock Text="보호 설정" Style="{ThemeResource SubtitleTextBlockStyle}" />
-                        <ToggleSwitch x:Name="ProtectionModeToggle" Header="보호 모드" OffContent="VPN 경로 설정에 실패하면 일반 인터넷 사용" OnContent="VPN 경로 설정에 실패하면 선택한 사이트 차단" />
-                        <Button Content="네트워크 설정 복구" Click="RestoreNetworkButton_Click" />
-                    </StackPanel>
-                </Border>
-
-                <Border Padding="20" CornerRadius="12" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
-                    <StackPanel Spacing="12">
-                        <Grid ColumnSpacing="8">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Text="진단" Style="{ThemeResource SubtitleTextBlockStyle}" />
-                            <Button Grid.Column="1" Content="새로고침" Click="RefreshDiagnosticsButton_Click" />
-                        </Grid>
-                        <ItemsControl x:Name="DiagnosticsList">
-                            <TextBlock Text="- 서비스 상태: 확인 전" TextWrapping="Wrap" />
-                        </ItemsControl>
-                        <TextBlock x:Name="FeatureFlagsText" Text="실험 기능 상태를 확인하는 중입니다." Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-                        <Button Content="문제 해결 파일 만들기" Click="CreateTroubleshootingFileButton_Click" />
-                    </StackPanel>
-                </Border>
-            </StackPanel>
-        </Grid>
+                </Grid>
+            </Grid>
+        </ScrollViewer>
     </Grid>
 </Window>

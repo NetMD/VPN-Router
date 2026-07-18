@@ -103,6 +103,67 @@ public sealed class WireGuardAdapter(IOptions<WireGuardAdapterOptions> options) 
                 : "WireGuard is installed, but no active WireGuard/Wintun interface was detected."));
     }
 
+    public async Task<int> CleanupStaleConnectionsAsync(CancellationToken cancellationToken)
+    {
+        var installation = WireGuardInstallationDetector.Detect();
+        if (!installation.IsInstalled)
+        {
+            return 0;
+        }
+
+        var interfaceNames = NetworkInterface.GetAllNetworkInterfaces()
+            .Select(networkInterface => networkInterface.Name)
+            .Where(name => name.StartsWith("VpnRtr-", StringComparison.OrdinalIgnoreCase));
+        var serviceTunnelNames = await GetVpnRouterTunnelServiceNamesAsync(cancellationToken);
+        var tunnelNames = interfaceNames
+            .Concat(serviceTunnelNames)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        foreach (var tunnelName in tunnelNames)
+        {
+            try
+            {
+                await RunWireGuardAsync(
+                    installation.ExecutablePath!,
+                    ["/uninstalltunnelservice", tunnelName],
+                    cancellationToken);
+            }
+            catch
+            {
+                // Startup recovery continues so DNS and recorded routes can still be restored.
+            }
+        }
+
+        return tunnelNames.Length;
+    }
+
+    private static async Task<IReadOnlyList<string>> GetVpnRouterTunnelServiceNamesAsync(
+        CancellationToken cancellationToken)
+    {
+        using var process = Process.Start(new ProcessStartInfo
+        {
+            FileName = "powershell.exe",
+            ArgumentList =
+            {
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "Get-Service -Name 'WireGuardTunnel$VpnRtr-*' -ErrorAction SilentlyContinue | ForEach-Object { $_.Name.Substring($_.Name.IndexOf('$') + 1) }"
+            },
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        }) ?? throw new InvalidOperationException("Failed to inspect WireGuard tunnel services.");
+
+        var output = await process.StandardOutput.ReadToEndAsync(cancellationToken);
+        await process.WaitForExitAsync(cancellationToken);
+        return output
+            .Split(["\r\n", "\n"], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(name => name.StartsWith("VpnRtr-", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+    }
+
     private static VpnInterfaceInfo? FindWireGuardInterface(string tunnelName)
     {
         var candidates = NetworkInterface.GetAllNetworkInterfaces()

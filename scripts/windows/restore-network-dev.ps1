@@ -20,6 +20,7 @@ if (Test-Path $routeFile) {
                 Remove-NetRoute -Confirm:$false -ErrorAction SilentlyContinue
         }
     }
+    Set-Content $routeFile "[]" -Encoding utf8
 }
 
 if ($ResetDnsToDhcp) {
@@ -31,8 +32,53 @@ if ($ResetDnsToDhcp) {
             $_.Name -notmatch "WireGuard|Wintun"
         } |
         ForEach-Object {
-            Set-DnsClientServerAddress -InterfaceIndex $_.ifIndex -AddressFamily IPv4 -ResetServerAddresses
+            Set-DnsClientServerAddress -InterfaceIndex $_.ifIndex -ResetServerAddresses
         }
 }
+else {
+    $snapshotFile = Join-Path $env:LOCALAPPDATA "VpnRouter\network-snapshot.json"
+    if (Test-Path $snapshotFile) {
+        Write-Host "Restoring IPv4 DNS server settings from the saved network snapshot..."
+        $snapshot = Get-Content $snapshotFile -Raw | ConvertFrom-Json
+        $dnsEntries = $snapshot.DnsClientServerAddressJson | ConvertFrom-Json
+        foreach ($entry in @($dnsEntries)) {
+            $addressFamily = [string]$entry.AddressFamily
+            if ($addressFamily -notin @("2", "IPv4", "InterNetwork")) {
+                continue
+            }
+
+            $servers = @($entry.ServerAddresses | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+            if ($servers.Count -eq 0) {
+                Set-DnsClientServerAddress -InterfaceIndex $entry.InterfaceIndex -ResetServerAddresses
+            }
+            else {
+                Set-DnsClientServerAddress -InterfaceIndex $entry.InterfaceIndex -ServerAddresses $servers
+            }
+        }
+    }
+    else {
+        Write-Warning "No saved network snapshot was found. Use -ResetDnsToDhcp if DNS still needs recovery."
+    }
+}
+
+$dnsFilterStateFile = Join-Path $env:LOCALAPPDATA "VpnRouter\dns-filter-handoff.json"
+if (Test-Path $dnsFilterStateFile) {
+    Write-Host "Restoring DNS filter service state..."
+    $dnsFilterState = Get-Content $dnsFilterStateFile -Raw | ConvertFrom-Json
+    $startupType = switch ([string]$dnsFilterState.StartMode) {
+        "Auto" { "Automatic" }
+        "Manual" { "Manual" }
+        "Disabled" { "Disabled" }
+        default { "Automatic" }
+    }
+    Set-Service "Adguard Service" -StartupType $startupType -ErrorAction SilentlyContinue
+    if ([string]$dnsFilterState.State -eq "Running") {
+        Start-Service "Adguard Service" -ErrorAction SilentlyContinue
+    }
+    Remove-Item $dnsFilterStateFile -Force -ErrorAction SilentlyContinue
+}
+
+$activeConnectionFile = Join-Path $env:LOCALAPPDATA "VpnRouter\active-connection.json"
+Remove-Item $activeConnectionFile -Force -ErrorAction SilentlyContinue
 
 Write-Host "Development network restore completed."

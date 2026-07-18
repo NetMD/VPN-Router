@@ -46,7 +46,7 @@ public sealed class WindowsDnsSettingsManager(
             if (-not $targets) { throw 'No active non-WireGuard network adapter was found for DNS mutation.' }
             $targets |
               ForEach-Object {
-                Set-DnsClientServerAddress -InterfaceIndex $_.ifIndex -AddressFamily IPv4 -ServerAddresses @('127.0.0.1')
+                Set-DnsClientServerAddress -InterfaceIndex $_.ifIndex -ServerAddresses @('127.0.0.1')
               }
             """;
 

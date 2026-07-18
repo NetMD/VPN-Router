@@ -1,5 +1,7 @@
 using System.Text.Json;
+using System.Net;
 using VpnRouter.Core.Profiles;
+using VpnRouter.Core.Rules;
 using VpnRouter.Ipc.Contracts;
 using VpnRouter.Ipc.NamedPipes;
 using VpnRouter.Service.Connection;
@@ -7,8 +9,10 @@ using VpnRouter.Service.Storage;
 using VpnRouter.Service.Diagnostics;
 using VpnRouter.Networking.Abstractions;
 using VpnRouter.Service.Configuration;
+using VpnRouter.Service.Networking;
 using VpnRouter.Vpn.WireGuard;
 using Microsoft.Extensions.Options;
+using VpnRouter.Service.Recovery;
 
 namespace VpnRouter.Service.Ipc;
 
@@ -23,6 +27,7 @@ public sealed class IpcCommandHandler(
     IDomainPreResolver domainPreResolver,
     IOptions<VpnRouterFeatureOptions> featureOptions,
     ISecretStore secretStore,
+    StartupRecoveryGate startupRecoveryGate,
     ILogger<IpcCommandHandler> logger)
 {
     private static readonly Guid PlaceholderProfileId = Guid.Parse("11111111-1111-1111-1111-111111111111");
@@ -64,6 +69,13 @@ public sealed class IpcCommandHandler(
 
     private async Task<IpcResponseEnvelope> HandleConnectAsync(JsonElement payload, CancellationToken cancellationToken)
     {
+        if (!startupRecoveryGate.Succeeded)
+        {
+            return new IpcResponseEnvelope(
+                false,
+                $"Startup network recovery failed. Restore network settings before connecting. {startupRecoveryGate.FailureMessage}".Trim());
+        }
+
         var request = payload.Deserialize<ConnectRequest>(VpnRouterIpcJson.Options)
             ?? throw new JsonException("Connect payload is missing.");
 
@@ -81,7 +93,15 @@ public sealed class IpcCommandHandler(
             storedProfile.ParsedConfig.Peers.Count);
 
         connectionStateStore.SetConnecting(profile.Id, request.Rules.Count);
-        await connectionOrchestrator.ConnectAsync(profile, request.Rules, request.ProtectionMode, cancellationToken);
+        var upstreamDnsServer = storedProfile.ParsedConfig.Interface.DnsServers
+            .Select(value => IPAddress.TryParse(value, out var address) ? address : null)
+            .FirstOrDefault(address => address?.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork);
+        await connectionOrchestrator.ConnectAsync(
+            profile,
+            request.Rules,
+            upstreamDnsServer,
+            request.ProtectionMode,
+            cancellationToken);
         connectionStateStore.SetConnected(profile.Id, request.Rules.Count);
         return new IpcResponseEnvelope(true, $"Connect accepted for {request.Rules.Count} site(s).");
     }
@@ -274,7 +294,13 @@ public sealed class IpcCommandHandler(
             checks.Add($"사이트 규칙 {enabledRules.Length}개를 확인했습니다.");
         }
 
-        var resolved = await domainPreResolver.ResolveAsync(enabledRules, cancellationToken);
+        var effectiveRules = DomainRuleExpander.Expand(enabledRules);
+        if (effectiveRules.Count > enabledRules.Length)
+        {
+            checks.Add($"미디어 재생에 필요한 관련 도메인 {effectiveRules.Count - enabledRules.Length}개를 자동으로 포함합니다.");
+        }
+
+        var resolved = await domainPreResolver.ResolveAsync(effectiveRules, cancellationToken);
         var routePlans = resolved
             .Select(pair => new RoutePlanDto(
                 pair.Key,
@@ -310,6 +336,17 @@ public sealed class IpcCommandHandler(
         if (!features.EnableWindowsDnsMutation)
         {
             warnings.Add("실제 DNS 변경 플래그가 꺼져 있어 브라우저 DNS 질의는 로컬 프록시로 강제되지 않습니다.");
+        }
+
+        var dnsConflict = features.EnableWindowsDnsMutation ? DnsConflictDetector.Detect() : null;
+        if (dnsConflict is not null)
+        {
+            warnings.Add(dnsConflict);
+        }
+
+        foreach (var browserWarning in BrowserSecureDnsDetector.DetectWarnings())
+        {
+            warnings.Add(browserWarning);
         }
 
         if (request.ProtectionMode)

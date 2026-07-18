@@ -1,6 +1,12 @@
 using VpnRouter.Vpn.WireGuard;
 using VpnRouter.Service.Networking;
 using VpnRouter.Service.Storage;
+using VpnRouter.Service.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using VpnRouter.Core.Rules;
+using VpnRouter.Core.Routing;
+using System.Net;
 
 var tests = new (string Name, Action Body)[]
 {
@@ -10,6 +16,17 @@ var tests = new (string Name, Action Body)[]
     ("Reject invalid CIDR", RejectsInvalidCidr),
     ("Parse DNS AAAA query", ParsesDnsAaaaQuery),
     ("Create empty DNS NoError response", CreatesEmptyDnsNoErrorResponse),
+    ("Parse DNS IPv4 answers", ParsesDnsIpv4Answers),
+    ("Proxy returns empty response for target AAAA query", ProxyReturnsEmptyTargetAaaaResponse),
+    ("Record concurrent DNS observations", RecordsConcurrentDnsObservations),
+    ("Batch concurrent dynamic route discoveries", BatchesConcurrentDynamicRouteDiscoveries),
+    ("Reuse persistent PowerShell worker", ReusesPersistentPowerShellWorker),
+    ("Expand media service domains", ExpandsMediaServiceDomains),
+    ("Interpret browser secure DNS policy", InterpretsBrowserSecureDnsPolicy),
+    ("Refresh repeated managed route expiration", RefreshesRepeatedManagedRouteExpiration),
+    ("Expire only eligible managed routes", ExpiresOnlyEligibleManagedRoutes),
+    ("Force WireGuard runtime routing table off", ForcesRuntimeRoutingTableOff),
+    ("Split WireGuard default allowed IPs", SplitsRuntimeDefaultAllowedIps),
     ("Keep WireGuard endpoint when DNS pre-resolution fails", KeepsEndpointWhenDnsPreResolutionFails)
 };
 
@@ -97,6 +114,212 @@ static void CreatesEmptyDnsNoErrorResponse()
     AssertEqual(0, response[11]);
 }
 
+static void ParsesDnsIpv4Answers()
+{
+    var response = DnsAResponsePacket("youtube.com", [203, 0, 113, 7]);
+    var addresses = DnsQueryParser.ParseIpv4Answers(response);
+
+    AssertEqual(1, addresses.Count);
+    AssertEqual("203.0.113.7", addresses[0].ToString());
+}
+
+static void ProxyReturnsEmptyTargetAaaaResponse()
+{
+    var controller = new WindowsDnsProxyController(
+        Options.Create(new VpnRouterFeatureOptions()),
+        new VpnRouter.Networking.NoopRouteManager(),
+        NullLogger<WindowsDnsProxyController>.Instance);
+    var profileId = Guid.NewGuid();
+    var rule = new DomainRule(Guid.NewGuid(), profileId, "youtube.com", true, true, DateTimeOffset.UtcNow);
+
+    controller.StartAsync([rule], System.Net.IPAddress.Loopback, profileId, 0, CancellationToken.None)
+        .GetAwaiter()
+        .GetResult();
+    try
+    {
+        using var client = new System.Net.Sockets.UdpClient();
+        client.Client.ReceiveTimeout = 3000;
+        var query = DnsQueryPacket("youtube.com", 28);
+        client.Send(query, query.Length, "127.0.0.1", 53535);
+        var remoteEndPoint = new System.Net.IPEndPoint(System.Net.IPAddress.Any, 0);
+        var response = client.Receive(ref remoteEndPoint);
+
+        AssertEqual(0, response[6]);
+        AssertEqual(0, response[7]);
+    }
+    finally
+    {
+        controller.StopAsync(CancellationToken.None).GetAwaiter().GetResult();
+    }
+}
+
+static void RecordsConcurrentDnsObservations()
+{
+    var domain = $"concurrent-{Guid.NewGuid():N}.invalid";
+    var profileId = Guid.NewGuid();
+    var controller = new WindowsDnsProxyController(
+        Options.Create(new VpnRouterFeatureOptions()),
+        new VpnRouter.Networking.NoopRouteManager(),
+        NullLogger<WindowsDnsProxyController>.Instance);
+    var rule = new DomainRule(Guid.NewGuid(), profileId, domain, false, true, DateTimeOffset.UtcNow);
+
+    controller.StartAsync([rule], IPAddress.Loopback, profileId, 0, CancellationToken.None)
+        .GetAwaiter()
+        .GetResult();
+    try
+    {
+        var requests = Enumerable.Range(0, 12).Select(_ => Task.Run(() =>
+        {
+            using var client = new System.Net.Sockets.UdpClient();
+            client.Client.ReceiveTimeout = 3000;
+            var query = DnsQueryPacket(domain, 28);
+            client.Send(query, query.Length, "127.0.0.1", 53535);
+            var remoteEndPoint = new IPEndPoint(IPAddress.Any, 0);
+            client.Receive(ref remoteEndPoint);
+        })).ToArray();
+        Task.WhenAll(requests).GetAwaiter().GetResult();
+    }
+    finally
+    {
+        controller.StopAsync(CancellationToken.None).GetAwaiter().GetResult();
+    }
+
+    var observationsPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "VpnRouter",
+        "dns-observations.json");
+    var matchingCount = File.ReadAllLines(observationsPath)
+        .Count(line => line.Contains($"\"Domain\":\"{domain}\"", StringComparison.Ordinal));
+    AssertEqual(12, matchingCount);
+}
+
+static void BatchesConcurrentDynamicRouteDiscoveries()
+{
+    var accumulator = new DynamicRouteAccumulator();
+    Parallel.For(0, 50, index =>
+    {
+        accumulator.Add(
+            index % 2 == 0 ? "www.youtube.com" : "WWW.YOUTUBE.COM",
+            [IPAddress.Parse("203.0.113.1"), IPAddress.Parse($"203.0.113.{10 + index % 10}")]);
+    });
+
+    var batch = accumulator.Drain();
+
+    AssertEqual(1, batch.Count);
+    AssertEqual(11, batch["www.youtube.com"].Count);
+    AssertEqual(0, accumulator.Drain().Count);
+}
+
+static void ReusesPersistentPowerShellWorker()
+{
+    var runner = new PersistentPowerShellRunner(NullLogger.Instance);
+    try
+    {
+        runner.RunAsync("$null = 1 + 1", CancellationToken.None).GetAwaiter().GetResult();
+        var firstProcessId = runner.ProcessId;
+        runner.RunAsync("$null = 2 + 2", CancellationToken.None).GetAwaiter().GetResult();
+
+        Assert(firstProcessId is not null, "PowerShell worker should be running after the first command.");
+        AssertEqual(firstProcessId, runner.ProcessId);
+        AssertThrows<InvalidOperationException>(() =>
+            runner.RunAsync("throw 'expected worker failure'", CancellationToken.None).GetAwaiter().GetResult());
+    }
+    finally
+    {
+        runner.DisposeAsync().AsTask().GetAwaiter().GetResult();
+    }
+}
+
+static void ExpandsMediaServiceDomains()
+{
+    var profileId = Guid.NewGuid();
+    var rules = new[]
+    {
+        new DomainRule(Guid.NewGuid(), profileId, "youtube.com", true, true, DateTimeOffset.UtcNow),
+        new DomainRule(Guid.NewGuid(), profileId, "netflix.com", true, true, DateTimeOffset.UtcNow),
+        new DomainRule(Guid.NewGuid(), profileId, "ytimg.com", true, true, DateTimeOffset.UtcNow)
+    };
+
+    var expanded = DomainRuleExpander.Expand(rules);
+    var domains = expanded.Select(rule => rule.Domain).ToArray();
+
+    Assert(domains.Contains("googlevideo.com"), "YouTube video CDN should be included.");
+    Assert(domains.Contains("nflxvideo.net"), "Netflix video CDN should be included.");
+    AssertEqual(1, domains.Count(domain => string.Equals(domain, "ytimg.com", StringComparison.OrdinalIgnoreCase)));
+    AssertEqual(domains.Length, domains.Distinct(StringComparer.OrdinalIgnoreCase).Count());
+}
+
+static void InterpretsBrowserSecureDnsPolicy()
+{
+    AssertEqual<string?>(null, BrowserSecureDnsDetector.BuildWarning("Chrome", false, null));
+    AssertEqual<string?>(null, BrowserSecureDnsDetector.BuildWarning("Chrome", true, "off"));
+    Assert(
+        BrowserSecureDnsDetector.BuildWarning("Chrome", true, null)?.Contains("보안 DNS") == true,
+        "An installed browser without an off policy should produce guidance.");
+    Assert(
+        BrowserSecureDnsDetector.BuildWarning("Edge", true, "automatic")?.Contains("automatic") == true,
+        "A non-off policy value should be included in the warning.");
+}
+
+static void RefreshesRepeatedManagedRouteExpiration()
+{
+    var profileId = Guid.NewGuid();
+    var now = DateTimeOffset.Parse("2026-07-18T12:00:00Z");
+    var ip = IPAddress.Parse("203.0.113.7");
+    var existing = new RouteEntry(
+        ip,
+        "youtube.com",
+        profileId,
+        now.AddMinutes(1),
+        54,
+        "VpnRouter.RoutePrototype");
+
+    var update = ManagedRouteLifecycle.Update(
+        [existing],
+        new Dictionary<string, IReadOnlyList<IPAddress>> { ["www.youtube.com"] = [ip] },
+        profileId,
+        55,
+        now,
+        TimeSpan.FromMinutes(15));
+
+    AssertEqual(0, update.Added.Count);
+    AssertEqual(1, update.RefreshedCount);
+    AssertEqual("www.youtube.com", update.Entries[0].Domain);
+    AssertEqual(now.AddMinutes(15), update.Entries[0].ExpiresAt);
+    AssertEqual(55, update.Entries[0].InterfaceIndex);
+}
+
+static void ExpiresOnlyEligibleManagedRoutes()
+{
+    var profileId = Guid.NewGuid();
+    var otherProfileId = Guid.NewGuid();
+    var now = DateTimeOffset.Parse("2026-07-18T12:00:00Z");
+    var entries = new[]
+    {
+        new RouteEntry(IPAddress.Parse("203.0.113.1"), "youtube.com", profileId, now, 54, "test"),
+        new RouteEntry(IPAddress.Parse("203.0.113.2"), ManagedRouteLifecycle.PersistentDnsDomain, profileId, now, 54, "test"),
+        new RouteEntry(IPAddress.Parse("203.0.113.3"), "netflix.com", profileId, now.AddMinutes(1), 54, "test"),
+        new RouteEntry(IPAddress.Parse("203.0.113.4"), "youtube.com", otherProfileId, now, 55, "test")
+    };
+
+    var expired = ManagedRouteLifecycle.FindExpired(entries, profileId, now);
+
+    AssertEqual(1, expired.Count);
+    AssertEqual("203.0.113.1", expired[0].Ip.ToString());
+
+    var dnsUpdate = ManagedRouteLifecycle.Update(
+        [],
+        new Dictionary<string, IReadOnlyList<IPAddress>>
+        {
+            [ManagedRouteLifecycle.PersistentDnsDomain] = [IPAddress.Parse("10.100.0.1")]
+        },
+        profileId,
+        54,
+        now,
+        TimeSpan.FromMinutes(15));
+    AssertEqual(DateTimeOffset.MaxValue, dnsUpdate.Added[0].ExpiresAt);
+}
+
 static void KeepsEndpointWhenDnsPreResolutionFails()
 {
     var config = ValidConfig().Replace("vpn.example.com:51820", "missing.invalid:51820 # provider endpoint");
@@ -106,6 +329,30 @@ static void KeepsEndpointWhenDnsPreResolutionFails()
         .GetResult();
 
     Assert(resolved.Contains("Endpoint = missing.invalid:51820 # provider endpoint"), "unresolvable endpoint should remain unchanged");
+}
+
+static void ForcesRuntimeRoutingTableOff()
+{
+    var config = ValidConfig().Replace(
+        "Address = 10.7.0.2/32",
+        "Address = 10.7.0.2/32\nTable = auto");
+    var runtimeConfig = WireGuardRuntimeConfigStore.ApplySplitRoutingTableOff(config);
+
+    Assert(runtimeConfig.Contains("[Interface]", StringComparison.Ordinal), "interface section should be preserved");
+    Assert(runtimeConfig.Contains("PrivateKey =", StringComparison.Ordinal), "interface keys should be preserved");
+    Assert(runtimeConfig.Contains("Table = off", StringComparison.Ordinal), "runtime config must disable automatic routes");
+    Assert(!runtimeConfig.Contains("Table = auto", StringComparison.Ordinal), "provider table setting must be overridden");
+    AssertEqual(1, runtimeConfig.Split("Table =", StringSplitOptions.None).Length - 1);
+}
+
+static void SplitsRuntimeDefaultAllowedIps()
+{
+    var runtimeConfig = WireGuardRuntimeConfigStore.ApplySplitRoutingAllowedIps(ValidConfig());
+
+    Assert(!runtimeConfig.Contains("0.0.0.0/0", StringComparison.Ordinal), "IPv4 default route must be split");
+    Assert(!runtimeConfig.Contains("::/0", StringComparison.Ordinal), "IPv6 default route must be split");
+    Assert(runtimeConfig.Contains("0.0.0.0/1, 128.0.0.0/1", StringComparison.Ordinal), "IPv4 coverage must be preserved");
+    Assert(runtimeConfig.Contains("::/1, 8000::/1", StringComparison.Ordinal), "IPv6 coverage must be preserved");
 }
 
 static string ValidConfig() => """
@@ -146,6 +393,24 @@ static byte[] DnsQueryPacket(string domain, ushort queryType)
     bytes.Add((byte)(queryType & 0xFF));
     bytes.Add(0x00);
     bytes.Add(0x01);
+    return bytes.ToArray();
+}
+
+static byte[] DnsAResponsePacket(string domain, byte[] address)
+{
+    var bytes = DnsQueryPacket(domain, 1).ToList();
+    bytes[2] = 0x81;
+    bytes[3] = 0x80;
+    bytes[6] = 0;
+    bytes[7] = 1;
+    bytes.AddRange([
+        0xC0, 0x0C,
+        0x00, 0x01,
+        0x00, 0x01,
+        0x00, 0x00, 0x00, 0x3C,
+        0x00, 0x04
+    ]);
+    bytes.AddRange(address);
     return bytes.ToArray();
 }
 

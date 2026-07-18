@@ -1,15 +1,18 @@
 using System.IO.Pipes;
 using System.Text.Json;
 using VpnRouter.Ipc.NamedPipes;
+using VpnRouter.Service.Recovery;
 
 namespace VpnRouter.Service.Ipc;
 
 public sealed class NamedPipeIpcServer(
     IpcCommandHandler commandHandler,
+    StartupRecoveryGate startupRecoveryGate,
     ILogger<NamedPipeIpcServer> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        await startupRecoveryGate.WaitUntilReadyAsync(stoppingToken);
         logger.LogInformation("Named pipe IPC server listening on {PipeName}.", VpnRouterPipeNames.ServicePipeName);
 
         while (!stoppingToken.IsCancellationRequested)
