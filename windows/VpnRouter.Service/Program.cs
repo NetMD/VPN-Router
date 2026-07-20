@@ -26,7 +26,7 @@ builder.Services.AddSingleton<IDnsProxyController, WindowsDnsProxyController>();
 builder.Services.AddSingleton<IDnsSettingsManager, WindowsDnsSettingsManager>();
 builder.Services.AddSingleton<INetworkSnapshotStore, WindowsNetworkSnapshotStore>();
 builder.Services.AddSingleton<IRouteManager, WindowsRouteManager>();
-builder.Services.AddSingleton<DnsFilterHandoff>();
+builder.Services.AddSingleton<LegacyDnsFilterRecovery>();
 builder.Services.AddSingleton<IDomainPreResolver, SystemDomainPreResolver>();
 builder.Services.AddSingleton<ConnectionOrchestrator>();
 builder.Services.AddSingleton<ConnectionStateStore>();

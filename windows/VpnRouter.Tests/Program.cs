@@ -16,7 +16,9 @@ var tests = new (string Name, Action Body)[]
     ("Reject invalid CIDR", RejectsInvalidCidr),
     ("Parse DNS AAAA query", ParsesDnsAaaaQuery),
     ("Create empty DNS NoError response", CreatesEmptyDnsNoErrorResponse),
+    ("Create DNS IPv4 ownership response", CreatesDnsIpv4OwnershipResponse),
     ("Parse DNS IPv4 answers", ParsesDnsIpv4Answers),
+    ("Detect occupied local DNS port", DetectsOccupiedLocalDnsPort),
     ("Proxy returns empty response for target AAAA query", ProxyReturnsEmptyTargetAaaaResponse),
     ("Record concurrent DNS observations", RecordsConcurrentDnsObservations),
     ("Batch concurrent dynamic route discoveries", BatchesConcurrentDynamicRouteDiscoveries),
@@ -112,6 +114,34 @@ static void CreatesEmptyDnsNoErrorResponse()
     AssertEqual(0, response[9]);
     AssertEqual(0, response[10]);
     AssertEqual(0, response[11]);
+}
+
+static void CreatesDnsIpv4OwnershipResponse()
+{
+    const ushort transactionId = 0x5372;
+    var query = DnsQueryParser.CreateQuery("token.vpnrouter-self-test.invalid", transactionId, 1);
+    var expectedAddress = IPAddress.Parse("127.255.53.53");
+    var response = DnsQueryParser.CreateIpv4Response(query, expectedAddress);
+    var addresses = DnsQueryParser.ParseIpv4Answers(response);
+
+    AssertEqual(query[0], response[0]);
+    AssertEqual(query[1], response[1]);
+    AssertEqual(1, addresses.Count);
+    AssertEqual(expectedAddress, addresses[0]);
+}
+
+static void DetectsOccupiedLocalDnsPort()
+{
+    int port;
+    using (var listener = new System.Net.Sockets.UdpClient(System.Net.Sockets.AddressFamily.InterNetwork))
+    {
+        listener.ExclusiveAddressUse = true;
+        listener.Client.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+        port = ((IPEndPoint)listener.Client.LocalEndPoint!).Port;
+        Assert(DnsConflictDetector.Detect(port) is not null, "occupied DNS port should be reported");
+    }
+
+    Assert(DnsConflictDetector.Detect(port) is null, "released DNS port should be available");
 }
 
 static void ParsesDnsIpv4Answers()

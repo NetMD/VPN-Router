@@ -21,6 +21,12 @@ public sealed class NoopDnsProxyController : IDnsProxyController
     {
         return Task.CompletedTask;
     }
+
+    public async Task<Exception> WaitForFatalFailureAsync(CancellationToken cancellationToken)
+    {
+        await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        throw new OperationCanceledException(cancellationToken);
+    }
 }
 
 public sealed class NoopNetworkSnapshotStore : INetworkSnapshotStore

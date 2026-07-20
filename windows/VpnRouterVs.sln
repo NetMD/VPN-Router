@@ -17,6 +17,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VpnRouter.Service", "VpnRou
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VpnRouter.Tests", "VpnRouter.Tests\VpnRouter.Tests.csproj", "{836A2641-680E-4D9A-A373-C9BEFEF77387}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VpnRouter.Launcher", "VpnRouter.Launcher\VpnRouter.Launcher.csproj", "{1E4A9A00-9F01-44C6-B2F4-2AE7B9ACE67E}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -111,6 +113,18 @@ Global
 		{836A2641-680E-4D9A-A373-C9BEFEF77387}.Release|x64.Build.0 = Release|Any CPU
 		{836A2641-680E-4D9A-A373-C9BEFEF77387}.Release|x86.ActiveCfg = Release|Any CPU
 		{836A2641-680E-4D9A-A373-C9BEFEF77387}.Release|x86.Build.0 = Release|Any CPU
+		{1E4A9A00-9F01-44C6-B2F4-2AE7B9ACE67E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{1E4A9A00-9F01-44C6-B2F4-2AE7B9ACE67E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{1E4A9A00-9F01-44C6-B2F4-2AE7B9ACE67E}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{1E4A9A00-9F01-44C6-B2F4-2AE7B9ACE67E}.Debug|x64.Build.0 = Debug|Any CPU
+		{1E4A9A00-9F01-44C6-B2F4-2AE7B9ACE67E}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{1E4A9A00-9F01-44C6-B2F4-2AE7B9ACE67E}.Debug|x86.Build.0 = Debug|Any CPU
+		{1E4A9A00-9F01-44C6-B2F4-2AE7B9ACE67E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{1E4A9A00-9F01-44C6-B2F4-2AE7B9ACE67E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{1E4A9A00-9F01-44C6-B2F4-2AE7B9ACE67E}.Release|x64.ActiveCfg = Release|Any CPU
+		{1E4A9A00-9F01-44C6-B2F4-2AE7B9ACE67E}.Release|x64.Build.0 = Release|Any CPU
+		{1E4A9A00-9F01-44C6-B2F4-2AE7B9ACE67E}.Release|x86.ActiveCfg = Release|Any CPU
+		{1E4A9A00-9F01-44C6-B2F4-2AE7B9ACE67E}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

@@ -252,10 +252,14 @@ Result artifact:
 
 ## DNS filter and browser DNS handling
 
-Completed on 2026-07-18.
+Revised on 2026-07-19 after dogfooding feedback.
 
-- AdGuard state and startup mode are saved before VpnRouter takes local UDP port 53.
-- AdGuard is paused automatically for the connection and restored after disconnect, connect failure, startup recovery, or manual recovery.
+- VPN Router no longer stops, disables, or otherwise changes AdGuard or another third-party service.
+- Preflight checks actual exclusive availability of local UDP port 53 instead of looking for a product or service name.
+- The DNS proxy binds the port exclusively and proves response ownership with a random local self-test query before Windows DNS is changed.
+- Response ownership is checked every five seconds while connected.
+- If another DNS/security product takes or intercepts the response path, VPN Router fails safe by disconnecting and restoring DNS, routes, and the WireGuard tunnel.
+- The old AdGuard handoff file is read only to restore state left by an earlier build; new connections never create it.
 - Chrome and Edge secure-DNS policies are inspected during connection-plan validation.
 - Installed browsers without an explicit `DnsOverHttpsMode=off` policy receive a user-facing warning.
 - Secure-DNS policy interpretation has focused tests.

@@ -33,6 +33,16 @@ public sealed partial class MainWindow : Window
         _ = RefreshDiagnosticsAsync(false);
     }
 
+    private void MainNavigation_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
+    {
+        var selectedTag = (args.SelectedItemContainer as NavigationViewItem)?.Tag?.ToString() ?? "home";
+        HomePanel.Visibility = selectedTag == "home" ? Visibility.Visible : Visibility.Collapsed;
+        ProfilesPanel.Visibility = selectedTag == "profiles" ? Visibility.Visible : Visibility.Collapsed;
+        SitesPanel.Visibility = selectedTag == "sites" ? Visibility.Visible : Visibility.Collapsed;
+        DiagnosticsPanel.Visibility = selectedTag == "diagnostics" ? Visibility.Visible : Visibility.Collapsed;
+        SettingsPanel.Visibility = selectedTag == "settings" ? Visibility.Visible : Visibility.Collapsed;
+    }
+
     private async void ConnectButton_Click(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
     {
         ConnectButton.IsEnabled = false;

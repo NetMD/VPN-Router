@@ -9,6 +9,7 @@ obj/
 # Build artifacts under nested projects
 **/bin/
 **/obj/
+artifacts/
 
 # Local diagnostics and secrets
 *.log

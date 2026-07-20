@@ -1,6 +1,7 @@
 <Solution>
   <Project Path="VpnRouter.Core/VpnRouter.Core.csproj" />
   <Project Path="VpnRouter.Ipc/VpnRouter.Ipc.csproj" />
+  <Project Path="VpnRouter.Launcher/VpnRouter.Launcher.csproj" />
   <Project Path="VpnRouter.Networking/VpnRouter.Networking.csproj" />
   <Project Path="VpnRouter.Service/VpnRouter.Service.csproj" />
   <Project Path="VpnRouter.Tests/VpnRouter.Tests.csproj" />

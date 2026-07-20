@@ -16,9 +16,13 @@ public sealed class ConnectionOrchestrator(
     IDomainPreResolver domainPreResolver,
     IRouteManager routeManager,
     ConnectionRecoveryStateStore recoveryStateStore,
-    DnsFilterHandoff dnsFilterHandoff,
+    LegacyDnsFilterRecovery legacyDnsFilterRecovery,
+    ConnectionStateStore connectionStateStore,
     ILogger<ConnectionOrchestrator> logger)
 {
+    private readonly object _dnsHealthGate = new();
+    private CancellationTokenSource? _dnsHealthCancellation;
+
     public async Task ConnectAsync(
         VpnProfile profile,
         IReadOnlyList<DomainRule> rules,
@@ -69,7 +73,6 @@ public sealed class ConnectionOrchestrator(
 
             await routeManager.RemoveManagedRoutesAsync(profile.Id, cancellationToken);
             await routeManager.AddHostRoutesAsync(routedIps, profile.Id, interfaceIndex, cancellationToken);
-            await dnsFilterHandoff.PrepareAsync(cancellationToken);
             await dnsProxyController.StartAsync(
                 effectiveRules,
                 upstreamDnsServer,
@@ -77,6 +80,7 @@ public sealed class ConnectionOrchestrator(
                 interfaceIndex,
                 cancellationToken);
             await dnsSettingsManager.PointActiveAdaptersToLocalProxyAsync(cancellationToken);
+            StartDnsHealthMonitor(profile.Id);
         }
         catch
         {
@@ -89,13 +93,14 @@ public sealed class ConnectionOrchestrator(
     public async Task DisconnectAsync(Guid profileId, CancellationToken cancellationToken)
     {
         logger.LogInformation("Disconnecting profile {ProfileId}.", profileId);
+        StopDnsHealthMonitor();
 
         var failures = new List<Exception>();
         await RunDisconnectStepAsync("stop DNS proxy", () => dnsProxyController.StopAsync(cancellationToken), failures);
         await RunDisconnectStepAsync("remove managed routes", () => routeManager.RemoveManagedRoutesAsync(profileId, cancellationToken), failures);
         await RunDisconnectStepAsync("disconnect VPN", () => vpnAdapter.DisconnectAsync(profileId, cancellationToken), failures);
         await RunDisconnectStepAsync("restore network snapshot", () => networkSnapshotStore.RestoreAsync(cancellationToken), failures);
-        await RunDisconnectStepAsync("restore DNS filter", () => dnsFilterHandoff.RestoreAsync(cancellationToken), failures);
+        await RunDisconnectStepAsync("restore legacy DNS filter state", () => legacyDnsFilterRecovery.RestoreAsync(cancellationToken), failures);
 
         if (failures.Count > 0)
         {
@@ -124,6 +129,7 @@ public sealed class ConnectionOrchestrator(
     public async Task RestoreNetworkAsync(CancellationToken cancellationToken)
     {
         logger.LogWarning("Restoring network settings on request.");
+        StopDnsHealthMonitor();
 
         var failures = new List<Exception>();
         await RunDisconnectStepAsync("stop DNS proxy", () => dnsProxyController.StopAsync(cancellationToken), failures);
@@ -133,7 +139,7 @@ public sealed class ConnectionOrchestrator(
             await vpnAdapter.CleanupStaleConnectionsAsync(cancellationToken);
         }, failures);
         await RunDisconnectStepAsync("restore network snapshot", () => networkSnapshotStore.RestoreAsync(cancellationToken), failures);
-        await RunDisconnectStepAsync("restore DNS filter", () => dnsFilterHandoff.RestoreAsync(cancellationToken), failures);
+        await RunDisconnectStepAsync("restore legacy DNS filter state", () => legacyDnsFilterRecovery.RestoreAsync(cancellationToken), failures);
 
         if (failures.Count > 0)
         {
@@ -145,6 +151,7 @@ public sealed class ConnectionOrchestrator(
 
     private async Task SafeCleanupAfterConnectFailureAsync(Guid profileId, CancellationToken cancellationToken)
     {
+        StopDnsHealthMonitor();
         var cleanupSucceeded = true;
         try
         {
@@ -188,7 +195,7 @@ public sealed class ConnectionOrchestrator(
 
         try
         {
-            await dnsFilterHandoff.RestoreAsync(cancellationToken);
+            await legacyDnsFilterRecovery.RestoreAsync(cancellationToken);
         }
         catch (Exception ex)
         {
@@ -199,6 +206,57 @@ public sealed class ConnectionOrchestrator(
         if (cleanupSucceeded)
         {
             await recoveryStateStore.ClearAsync(cancellationToken);
+        }
+    }
+
+    private void StartDnsHealthMonitor(Guid profileId)
+    {
+        StopDnsHealthMonitor();
+        var cancellation = new CancellationTokenSource();
+        lock (_dnsHealthGate)
+        {
+            _dnsHealthCancellation = cancellation;
+        }
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var failure = await dnsProxyController.WaitForFatalFailureAsync(cancellation.Token);
+                logger.LogError(failure, "A local DNS conflict appeared while the VPN connection was active.");
+                connectionStateStore.SetFailed("로컬 DNS 충돌이 감지되어 안전하게 VPN 연결을 해제합니다.");
+                try
+                {
+                    await DisconnectAsync(profileId, CancellationToken.None);
+                    connectionStateStore.SetFailed(
+                        "DNS 보호, 광고 차단, 보안 또는 다른 VPN 프로그램과의 DNS 충돌로 연결이 해제되었습니다.");
+                }
+                catch (Exception cleanupError)
+                {
+                    logger.LogError(cleanupError, "Failed to clean up after a local DNS ownership failure.");
+                    connectionStateStore.SetFailed(
+                        "DNS 충돌 후 네트워크 복구가 완전히 끝나지 않았습니다. 네트워크 복구를 실행해 주세요.");
+                }
+            }
+            catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+            {
+            }
+        }, CancellationToken.None);
+    }
+
+    private void StopDnsHealthMonitor()
+    {
+        CancellationTokenSource? cancellation;
+        lock (_dnsHealthGate)
+        {
+            cancellation = _dnsHealthCancellation;
+            _dnsHealthCancellation = null;
+        }
+
+        if (cancellation is not null)
+        {
+            cancellation.Cancel();
+            cancellation.Dispose();
         }
     }
 }

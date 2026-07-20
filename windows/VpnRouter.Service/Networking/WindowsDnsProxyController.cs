@@ -15,6 +15,8 @@ public sealed class WindowsDnsProxyController(
     ILogger<WindowsDnsProxyController> logger) : IDnsProxyController
 {
     private const int SioUdpConnectionReset = -1744830452;
+    private const string OwnershipTestSuffix = ".vpnrouter-self-test.invalid";
+    private static readonly IPAddress OwnershipTestAddress = IPAddress.Parse("127.255.53.53");
     private readonly object _gate = new();
     private readonly object _routeBatchGate = new();
     private readonly SemaphoreSlim _observationGate = new(1, 1);
@@ -23,6 +25,8 @@ public sealed class WindowsDnsProxyController(
     private CancellationTokenSource? _cts;
     private Task? _proxyTask;
     private Task? _routeMaintenanceTask;
+    private Task? _ownershipMonitorTask;
+    private TaskCompletionSource<Exception>? _fatalFailure;
     private IReadOnlyList<DomainRule> _rules = [];
     private int _listenPort = 53535;
     private IPAddress _upstreamDnsServer = IPAddress.Parse("1.1.1.1");
@@ -33,31 +37,66 @@ public sealed class WindowsDnsProxyController(
         "VpnRouter",
         "dns-observations.json");
 
-    public Task StartAsync(
+    public async Task StartAsync(
         IReadOnlyList<DomainRule> rules,
         IPAddress? upstreamDnsServer,
         Guid profileId,
         int interfaceIndex,
         CancellationToken cancellationToken)
     {
+        var startedNewListener = false;
         lock (_gate)
         {
             if (_proxyTask is { IsCompleted: false })
             {
                 _rules = rules;
-                return Task.CompletedTask;
+            }
+            else
+            {
+                _rules = rules;
+                _listenPort = options.Value.EnableWindowsDnsMutation ? 53 : 53535;
+                _upstreamDnsServer = upstreamDnsServer ?? FindSystemDnsServer() ?? IPAddress.Parse("1.1.1.1");
+                _profileId = profileId;
+                _interfaceIndex = interfaceIndex;
+                var listener = CreateExclusiveListener(_listenPort);
+                DisableUdpConnectionReset(listener);
+                _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                _fatalFailure = new TaskCompletionSource<Exception>(TaskCreationOptions.RunContinuationsAsynchronously);
+                _proxyTask = Task.Run(() => RunProxyAsync(listener, _cts.Token), CancellationToken.None);
+                _routeMaintenanceTask = Task.Run(() => RunRouteMaintenanceAsync(_cts.Token), CancellationToken.None);
+                startedNewListener = true;
+            }
+        }
+
+        try
+        {
+            await VerifyListenerOwnershipAsync(cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            if (startedNewListener)
+            {
+                await StopAsync(CancellationToken.None);
             }
 
-            _rules = rules;
-            _listenPort = options.Value.EnableWindowsDnsMutation ? 53 : 53535;
-            _upstreamDnsServer = upstreamDnsServer ?? FindSystemDnsServer() ?? IPAddress.Parse("1.1.1.1");
-            _profileId = profileId;
-            _interfaceIndex = interfaceIndex;
-            var listener = new UdpClient(new IPEndPoint(IPAddress.Loopback, _listenPort));
-            DisableUdpConnectionReset(listener);
-            _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            _proxyTask = Task.Run(() => RunProxyAsync(listener, _cts.Token), CancellationToken.None);
-            _routeMaintenanceTask = Task.Run(() => RunRouteMaintenanceAsync(_cts.Token), CancellationToken.None);
+            throw new InvalidOperationException(
+                "VPN Router가 로컬 DNS 응답을 안전하게 소유하지 못했습니다. " +
+                "DNS 보호, 광고 차단, 보안 또는 다른 VPN 프로그램의 DNS 기능을 직접 끈 뒤 다시 시도해 주세요. " +
+                "VPN Router는 해당 프로그램을 자동으로 종료하지 않습니다.",
+                ex);
+        }
+
+        if (startedNewListener)
+        {
+            lock (_gate)
+            {
+                if (_cts is not null)
+                {
+                    _ownershipMonitorTask = Task.Run(
+                        () => RunOwnershipMonitorAsync(_cts.Token),
+                        CancellationToken.None);
+                }
+            }
         }
 
         logger.LogInformation(
@@ -66,7 +105,6 @@ public sealed class WindowsDnsProxyController(
             rules.Count,
             _upstreamDnsServer,
             options.Value.EnableWindowsDnsMutation);
-        return Task.CompletedTask;
     }
 
     public async Task StopAsync(CancellationToken cancellationToken)
@@ -74,15 +112,19 @@ public sealed class WindowsDnsProxyController(
         CancellationTokenSource? cts;
         Task? proxyTask;
         Task? routeMaintenanceTask;
+        Task? ownershipMonitorTask;
 
         lock (_gate)
         {
             cts = _cts;
             proxyTask = _proxyTask;
             routeMaintenanceTask = _routeMaintenanceTask;
+            ownershipMonitorTask = _ownershipMonitorTask;
             _cts = null;
             _proxyTask = null;
             _routeMaintenanceTask = null;
+            _ownershipMonitorTask = null;
+            _fatalFailure = null;
         }
 
         if (cts is null || proxyTask is null)
@@ -93,7 +135,10 @@ public sealed class WindowsDnsProxyController(
         await cts.CancelAsync();
         try
         {
-            await Task.WhenAll(proxyTask, routeMaintenanceTask ?? Task.CompletedTask)
+            await Task.WhenAll(
+                    proxyTask,
+                    routeMaintenanceTask ?? Task.CompletedTask,
+                    ownershipMonitorTask ?? Task.CompletedTask)
                 .WaitAsync(TimeSpan.FromSeconds(2), cancellationToken);
         }
         catch (OperationCanceledException)
@@ -107,6 +152,18 @@ public sealed class WindowsDnsProxyController(
         {
             cts.Dispose();
         }
+    }
+
+    public Task<Exception> WaitForFatalFailureAsync(CancellationToken cancellationToken)
+    {
+        Task<Exception> failureTask;
+        lock (_gate)
+        {
+            failureTask = _fatalFailure?.Task
+                ?? Task.FromException<Exception>(new InvalidOperationException("The DNS proxy is not running."));
+        }
+
+        return failureTask.WaitAsync(cancellationToken);
     }
 
     private async Task RunProxyAsync(UdpClient listener, CancellationToken cancellationToken)
@@ -142,6 +199,13 @@ public sealed class WindowsDnsProxyController(
                 try
                 {
                     var query = DnsQueryParser.TryParse(request.Buffer);
+                    if (query is not null && query.Domain.EndsWith(OwnershipTestSuffix, StringComparison.OrdinalIgnoreCase))
+                    {
+                        var ownershipResponse = DnsQueryParser.CreateIpv4Response(request.Buffer, OwnershipTestAddress);
+                        await SendResponseAsync(listener, ownershipResponse, request.RemoteEndPoint, cancellationToken);
+                        return;
+                    }
+
                     var isMatched = query is not null && IsMatched(query.Domain);
                     if (isMatched)
                     {
@@ -197,6 +261,32 @@ public sealed class WindowsDnsProxyController(
         }
     }
 
+    private async Task RunOwnershipMonitorAsync(CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken);
+                await VerifyListenerOwnershipAsync(cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "VPN Router lost ownership of the local DNS response path.");
+                lock (_gate)
+                {
+                    _fatalFailure?.TrySetResult(ex);
+                }
+
+                break;
+            }
+        }
+    }
+
     private static async Task SendResponseAsync(
         UdpClient listener,
         byte[] response,
@@ -215,6 +305,43 @@ public sealed class WindowsDnsProxyController(
         if (OperatingSystem.IsWindows())
         {
             listener.Client.IOControl((IOControlCode)SioUdpConnectionReset, [0, 0, 0, 0], null);
+        }
+    }
+
+    private static UdpClient CreateExclusiveListener(int port)
+    {
+        var listener = new UdpClient(AddressFamily.InterNetwork);
+        try
+        {
+            listener.ExclusiveAddressUse = true;
+            listener.Client.Bind(new IPEndPoint(IPAddress.Loopback, port));
+            return listener;
+        }
+        catch
+        {
+            listener.Dispose();
+            throw;
+        }
+    }
+
+    private async Task VerifyListenerOwnershipAsync(CancellationToken cancellationToken)
+    {
+        var transactionId = (ushort)Random.Shared.Next(ushort.MaxValue + 1);
+        var domain = $"{Guid.NewGuid():N}{OwnershipTestSuffix}";
+        var query = DnsQueryParser.CreateQuery(domain, transactionId, queryType: 1);
+
+        using var client = new UdpClient(AddressFamily.InterNetwork);
+        await client.SendAsync(query, new IPEndPoint(IPAddress.Loopback, _listenPort), cancellationToken);
+        using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutSource.CancelAfter(TimeSpan.FromSeconds(2));
+        var response = await client.ReceiveAsync(timeoutSource.Token);
+
+        if (response.Buffer.Length < 2
+            || response.Buffer[0] != query[0]
+            || response.Buffer[1] != query[1]
+            || !DnsQueryParser.ParseIpv4Answers(response.Buffer).Contains(OwnershipTestAddress))
+        {
+            throw new InvalidDataException("The local DNS ownership response did not come from VPN Router.");
         }
     }
 
@@ -418,6 +545,71 @@ public static class DnsQueryParser
         response[10] = 0;
         response[11] = 0;
 
+        return response;
+    }
+
+    public static byte[] CreateQuery(string domain, ushort transactionId, ushort queryType)
+    {
+        var labels = domain.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (labels.Length == 0 || labels.Any(label => label.Length is 0 or > 63))
+        {
+            throw new ArgumentException("DNS query domain contains an invalid label.", nameof(domain));
+        }
+
+        using var stream = new MemoryStream();
+        stream.WriteByte((byte)(transactionId >> 8));
+        stream.WriteByte((byte)transactionId);
+        stream.Write([0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+        foreach (var label in labels)
+        {
+            var encoded = System.Text.Encoding.ASCII.GetBytes(label);
+            stream.WriteByte((byte)encoded.Length);
+            stream.Write(encoded);
+        }
+
+        stream.WriteByte(0);
+        stream.WriteByte((byte)(queryType >> 8));
+        stream.WriteByte((byte)queryType);
+        stream.Write([0x00, 0x01]);
+        return stream.ToArray();
+    }
+
+    public static byte[] CreateIpv4Response(byte[] queryPacket, IPAddress address)
+    {
+        var addressBytes = address.GetAddressBytes();
+        if (addressBytes.Length != 4)
+        {
+            throw new ArgumentException("An IPv4 address is required.", nameof(address));
+        }
+
+        if (TryParse(queryPacket) is null)
+        {
+            throw new ArgumentException("A valid DNS query packet is required.", nameof(queryPacket));
+        }
+
+        var response = new byte[queryPacket.Length + 16];
+        queryPacket.CopyTo(response, 0);
+        response[2] |= QueryResponseMask;
+        response[3] |= RecursionAvailableMask;
+        response[3] &= 0xF0;
+        response[6] = 0;
+        response[7] = 1;
+        response[8] = 0;
+        response[9] = 0;
+        response[10] = 0;
+        response[11] = 0;
+
+        var offset = queryPacket.Length;
+        byte[] answer =
+        [
+            0xC0, 0x0C,
+            0x00, 0x01,
+            0x00, 0x01,
+            0x00, 0x00, 0x00, 0x00,
+            0x00, 0x04,
+            addressBytes[0], addressBytes[1], addressBytes[2], addressBytes[3]
+        ];
+        answer.CopyTo(response, offset);
         return response;
     }
 

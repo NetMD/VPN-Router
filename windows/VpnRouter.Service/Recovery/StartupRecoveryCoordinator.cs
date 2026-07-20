@@ -9,14 +9,14 @@ public sealed class StartupRecoveryCoordinator(
     IRouteManager routeManager,
     IVpnAdapter vpnAdapter,
     INetworkSnapshotStore networkSnapshotStore,
-    DnsFilterHandoff dnsFilterHandoff,
+    LegacyDnsFilterRecovery legacyDnsFilterRecovery,
     ILogger<StartupRecoveryCoordinator> logger)
 {
     public async Task RecoverAsync(CancellationToken cancellationToken)
     {
         var hasMarker = recoveryStateStore.HasActiveMarker;
         var hasRoutes = await routeManager.HasManagedRoutesAsync(cancellationToken);
-        var hasDnsFilterHandoff = dnsFilterHandoff.HasPendingRestore;
+        var hasDnsFilterHandoff = legacyDnsFilterRecovery.HasPendingRestore;
         var failures = new List<Exception>();
 
         if (hasRoutes)
@@ -47,7 +47,7 @@ public sealed class StartupRecoveryCoordinator(
                 failures);
             await RunStepAsync(
                 "restore DNS filter",
-                () => dnsFilterHandoff.RestoreAsync(cancellationToken),
+                () => legacyDnsFilterRecovery.RestoreAsync(cancellationToken),
                 failures);
         }
 

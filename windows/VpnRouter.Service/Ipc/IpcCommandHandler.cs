@@ -357,7 +357,8 @@ public sealed class IpcCommandHandler(
         var canConnect = request.ProfileId != Guid.Empty
             && wireGuard.IsInstalled
             && enabledRules.Length > 0
-            && routePlans.Any(plan => plan.Ipv4Addresses.Count > 0);
+            && routePlans.Any(plan => plan.Ipv4Addresses.Count > 0)
+            && dnsConflict is null;
 
         var response = new ValidateConnectionPlanResponse(
             canConnect,

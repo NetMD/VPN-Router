@@ -13,4 +13,6 @@ public interface IDnsProxyController
         CancellationToken cancellationToken);
 
     Task StopAsync(CancellationToken cancellationToken);
+
+    Task<Exception> WaitForFatalFailureAsync(CancellationToken cancellationToken);
 }
