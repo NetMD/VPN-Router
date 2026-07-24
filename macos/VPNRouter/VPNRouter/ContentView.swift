@@ -59,6 +59,14 @@ struct ContentView: View {
         .task(id: status) {
             await runConnectedRouteRefreshLoop()
         }
+        .task(
+            id: DNSProxyDynamicRefreshKey(
+                tunnelStatus: status,
+                dnsProxyEnabled: dnsProxyConfigurationController.isEnabled
+            )
+        ) {
+            await runDNSProxyDynamicRouteRefreshLoop()
+        }
         .onChange(of: selectedProfileId) { _, _ in
             loadSiteDomainsForSelectedProfile()
         }
@@ -125,8 +133,7 @@ struct ContentView: View {
                         dnsProxyObservationMessage = "XPC로 대상 도메인을 설정했습니다. 대상 사이트에서 새 DNS 요청을 발생시키세요."
                     } catch {
                         dnsProxyObservationMessage = "DNS Proxy XPC 설정에 실패해 구성을 다시 끕니다: \(error.localizedDescription)"
-                        await dnsProxyConfigurationController.disable(
-                            expectedBundleIdentifier: TunnelIdentifiers.dnsProxySystemExtensionBundleIdentifier,
+                        await disableDNSProxyForDiagnostics(
                             allowOwnedRemovalFallback: false
                         )
                     }
@@ -142,8 +149,7 @@ struct ContentView: View {
         ) {
             Button("즉시 끄기", role: .destructive) {
                 Task {
-                    await dnsProxyConfigurationController.disable(
-                        expectedBundleIdentifier: TunnelIdentifiers.dnsProxySystemExtensionBundleIdentifier,
+                    await disableDNSProxyForDiagnostics(
                         allowOwnedRemovalFallback: true
                     )
                 }
@@ -499,6 +505,19 @@ struct ContentView: View {
         } label: {
             Label("관찰 결과 확인", systemImage: "list.number")
         }
+
+        Button {
+            Task {
+                await applyDNSProxyObservedRoutes()
+            }
+        } label: {
+            Label("관찰 경로 적용", systemImage: "arrow.triangle.branch")
+        }
+        .disabled(
+            status != .connected
+                || !dnsProxyConfigurationController.isEnabled
+                || dnsProxyConfigurationController.isRequestInFlight
+        )
     }
 
     private var settingsView: some View {
@@ -1148,6 +1167,77 @@ struct ContentView: View {
         }
     }
 
+    private func disableDNSProxyForDiagnostics(
+        allowOwnedRemovalFallback: Bool
+    ) async {
+        await dnsProxyConfigurationController.disable(
+            expectedBundleIdentifier: TunnelIdentifiers.dnsProxySystemExtensionBundleIdentifier,
+            allowOwnedRemovalFallback: allowOwnedRemovalFallback
+        )
+        guard !dnsProxyConfigurationController.isEnabled, status == .connected else {
+            return
+        }
+
+        do {
+            let restoredRouteCount = try await restoreStaticRoutePlan()
+            dnsProxyObservationMessage = """
+            DNS Proxy를 끄고 Packet Tunnel을 정적 경로 \(restoredRouteCount)개로 되돌렸습니다.
+            """
+        } catch {
+            manager?.connection.stopVPNTunnel()
+            lastMessage = "정적 경로 복구에 실패해 Packet Tunnel 연결 해제를 요청했습니다."
+            dnsProxyObservationMessage = """
+            DNS Proxy는 꺼졌지만 정적 경로를 복구하지 못해 VPN을 안전하게 해제합니다: \
+            \(error.localizedDescription)
+            """
+        }
+    }
+
+    private func restoreStaticRoutePlan() async throws -> Int {
+        guard
+            let manager,
+            manager.connection.status == .connected,
+            let session = manager.connection as? NETunnelProviderSession,
+            let profileId = providerProfileId(for: manager)
+        else {
+            throw TunnelConfigurationError.missingPacketTunnelSession
+        }
+
+        let store = try DomainRuleStore()
+        let staticPlan = try DomainRoutePlanService(ruleStore: store)
+            .buildPlan(profileId: DomainRuleStore.sharedSiteRulesProfileId)
+        guard !staticPlan.includedRoutes.isEmpty else {
+            throw TunnelConfigurationError.emptyRoutePlan(
+                unresolvedCount: staticPlan.unresolvedDomains.count
+            )
+        }
+
+        let request = TunnelRouteUpdateRequest(
+            profileId: profileId,
+            routePlan: staticPlan
+        )
+        let responseData = try await sendProviderMessage(
+            try JSONEncoder().encode(request),
+            through: session
+        )
+        guard
+            let responseData,
+            let response = try? JSONDecoder().decode(
+                TunnelRouteUpdateResponse.self,
+                from: responseData
+            )
+        else {
+            throw TunnelConfigurationError.unreadableRouteUpdateResponse
+        }
+        guard response.success else {
+            throw TunnelConfigurationError.routeUpdateRejected(response.message)
+        }
+
+        routePlan = staticPlan
+        routePlanProfileId = profileId
+        return response.plannedRouteCount
+    }
+
     private func refreshDNSProxyObservationSummary() async {
         do {
             let summary = try await DNSProxyObservationSettingsStore().summary()
@@ -1171,6 +1261,139 @@ struct ContentView: View {
         } catch {
             dnsProxyObservationMessage = "DNS 관찰 요약을 읽지 못했습니다: \(error.localizedDescription)"
         }
+    }
+
+    private func applyDNSProxyObservedRoutes() async {
+        do {
+            let result = try await updateDNSProxyObservedRoutes()
+            dnsProxyObservationMessage = dynamicRouteUpdateMessage(result)
+        } catch {
+            dnsProxyObservationMessage = "DNS 관찰 경로를 적용하지 못했습니다: \(error.localizedDescription)"
+        }
+    }
+
+    private func updateDNSProxyObservedRoutes() async throws -> DNSProxyDynamicRouteUpdateResult {
+        guard status == .connected else {
+            throw TunnelConfigurationError.packetTunnelNotConnected
+        }
+        guard
+            let manager,
+            manager.connection.status == .connected,
+            let session = manager.connection as? NETunnelProviderSession,
+            let profileId = providerProfileId(for: manager)
+        else {
+            throw TunnelConfigurationError.missingPacketTunnelSession
+        }
+
+        let summary = try await DNSProxyObservationSettingsStore().summary()
+        let now = Date()
+        let observations = summary.routes.map {
+            DynamicRouteObservation(
+                domain: $0.domain,
+                ipv4Address: $0.address,
+                observedAt: $0.observedAt,
+                expiresAt: $0.expiresAt
+            )
+        }
+        guard let payload = providerPayload(for: manager) else {
+            throw TunnelConfigurationError.missingBaseRoutePlan
+        }
+        let basePlan = payload.routePlan
+        let currentPlan = if let routePlan, routePlanProfileId == profileId {
+            routePlan
+        } else {
+            basePlan
+        }
+        let mergedPlan = try DynamicRoutePlanMerger.merge(
+            basePlan: basePlan,
+            observations: observations,
+            at: now
+        )
+        let dynamicRouteCount = mergedPlan.includedRoutes.count - basePlan.includedRoutes.count
+        guard dynamicRouteCount > 0
+                || currentPlan.includedRoutes.count > basePlan.includedRoutes.count else {
+            throw TunnelConfigurationError.noNewObservedRoutes
+        }
+        if currentPlan.includedRoutes == mergedPlan.includedRoutes,
+           abs(currentPlan.expiresAt.timeIntervalSince(mergedPlan.expiresAt)) < 1 {
+            throw TunnelConfigurationError.dynamicRoutePlanUnchanged
+        }
+
+        let request = TunnelRouteUpdateRequest(
+            profileId: profileId,
+            routePlan: mergedPlan
+        )
+        let responseData = try await sendProviderMessage(
+            try JSONEncoder().encode(request),
+            through: session
+        )
+        guard
+            let responseData,
+            let response = try? JSONDecoder().decode(
+                TunnelRouteUpdateResponse.self,
+                from: responseData
+            )
+        else {
+            throw TunnelConfigurationError.unreadableRouteUpdateResponse
+        }
+        guard response.success else {
+            throw TunnelConfigurationError.routeUpdateRejected(response.message)
+        }
+
+        let removedCount = max(
+            0,
+            currentPlan.includedRoutes.count - mergedPlan.includedRoutes.count
+        )
+        routePlan = mergedPlan
+        routePlanProfileId = profileId
+        return DNSProxyDynamicRouteUpdateResult(
+            dynamicRouteCount: dynamicRouteCount,
+            removedRouteCount: removedCount,
+            totalRouteCount: response.plannedRouteCount
+        )
+    }
+
+    private func runDNSProxyDynamicRouteRefreshLoop() async {
+        guard status == .connected, dnsProxyConfigurationController.isEnabled else {
+            return
+        }
+
+        while !Task.isCancelled
+                && status == .connected
+                && dnsProxyConfigurationController.isEnabled {
+            do {
+                let result = try await updateDNSProxyObservedRoutes()
+                dnsProxyObservationMessage = dynamicRouteUpdateMessage(result)
+            } catch let error as TunnelConfigurationError
+                    where error == .noNewObservedRoutes
+                        || error == .dynamicRoutePlanUnchanged {
+                // The active route set already matches the latest DNS snapshot.
+            } catch {
+                dnsProxyObservationMessage = "DNS 관찰 경로 자동 갱신 실패: \(error.localizedDescription)"
+            }
+
+            do {
+                try await Task.sleep(nanoseconds: 15_000_000_000)
+            } catch {
+                return
+            }
+        }
+    }
+
+    private func dynamicRouteUpdateMessage(
+        _ result: DNSProxyDynamicRouteUpdateResult
+    ) -> String {
+        if result.dynamicRouteCount == 0, result.removedRouteCount > 0 {
+            return """
+            만료된 DNS 관찰 경로 \(result.removedRouteCount)개를 제거하고 정적 경로 \
+            \(result.totalRouteCount)개로 되돌렸습니다.
+            """
+        }
+
+        return """
+        DNS 관찰 경로 \(result.dynamicRouteCount)개를 포함해 Packet Tunnel에 총 \
+        \(result.totalRouteCount)개를 적용했습니다. 15초마다 TTL을 다시 확인합니다.
+        """
     }
 
     private func runConnectedRouteRefreshLoop() async {
@@ -1317,14 +1540,49 @@ struct ContentView: View {
         through session: NETunnelProviderSession
     ) async throws -> Data? {
         try await withCheckedThrowingContinuation { continuation in
+            let gate = ProviderMessageContinuationGate(continuation)
+            let timeout = DispatchWorkItem {
+                gate.resume(throwing: TunnelConfigurationError.providerMessageTimedOut)
+            }
+            DispatchQueue.global(qos: .userInitiated).asyncAfter(
+                deadline: .now() + 5,
+                execute: timeout
+            )
             do {
                 try session.sendProviderMessage(message) { response in
-                    continuation.resume(returning: response)
+                    timeout.cancel()
+                    gate.resume(returning: response)
                 }
             } catch {
-                continuation.resume(throwing: error)
+                timeout.cancel()
+                gate.resume(throwing: error)
             }
         }
+    }
+}
+
+private final class ProviderMessageContinuationGate<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Value, Error>?
+
+    init(_ continuation: CheckedContinuation<Value, Error>) {
+        self.continuation = continuation
+    }
+
+    func resume(returning value: Value) {
+        takeContinuation()?.resume(returning: value)
+    }
+
+    func resume(throwing error: Error) {
+        takeContinuation()?.resume(throwing: error)
+    }
+
+    private func takeContinuation() -> CheckedContinuation<Value, Error>? {
+        lock.lock()
+        defer { lock.unlock() }
+        let continuation = continuation
+        self.continuation = nil
+        return continuation
     }
 }
 
@@ -1476,12 +1734,18 @@ struct TunnelDiagnostics: Decodable {
     let updatedAt: Date
 }
 
-enum TunnelConfigurationError: LocalizedError {
+enum TunnelConfigurationError: LocalizedError, Equatable {
     case noSelectedProfile
     case noRouteRules
     case emptyRoutePlan(unresolvedCount: Int)
     case routeUpdateRejected(String)
     case unreadableRouteUpdateResponse
+    case missingBaseRoutePlan
+    case noNewObservedRoutes
+    case packetTunnelNotConnected
+    case missingPacketTunnelSession
+    case dynamicRoutePlanUnchanged
+    case providerMessageTimedOut
 
     var errorDescription: String? {
         switch self {
@@ -1495,8 +1759,31 @@ enum TunnelConfigurationError: LocalizedError {
             return "Packet Tunnel이 경로 새로고침을 거부했습니다: \(message)"
         case .unreadableRouteUpdateResponse:
             return "Packet Tunnel의 응답을 읽지 못했습니다."
+        case .missingBaseRoutePlan:
+            return "현재 Packet Tunnel의 기준 경로 계획을 찾지 못했습니다."
+        case .noNewObservedRoutes:
+            return "현재 기준 경로에 없는 유효한 DNS 관찰 경로가 없습니다."
+        case .packetTunnelNotConnected:
+            return "관찰 경로를 적용하려면 먼저 Packet Tunnel에 연결하세요."
+        case .missingPacketTunnelSession:
+            return "실행 중인 Packet Tunnel 세션을 찾지 못했습니다."
+        case .dynamicRoutePlanUnchanged:
+            return "Packet Tunnel에 이미 같은 DNS 관찰 경로가 적용되어 있습니다."
+        case .providerMessageTimedOut:
+            return "Packet Tunnel 응답 시간이 초과되었습니다."
         }
     }
+}
+
+private struct DNSProxyDynamicRouteUpdateResult {
+    let dynamicRouteCount: Int
+    let removedRouteCount: Int
+    let totalRouteCount: Int
+}
+
+private struct DNSProxyDynamicRefreshKey: Equatable {
+    let tunnelStatus: NEVPNStatus
+    let dnsProxyEnabled: Bool
 }
 
 enum TunnelIdentifiers {

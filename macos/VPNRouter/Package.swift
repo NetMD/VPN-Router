@@ -21,6 +21,7 @@ let package = Package(
             sources: [
                 "Rules/DomainRule.swift",
                 "Rules/DomainRuleExpander.swift",
+                "Rules/DynamicRoutePlanMerger.swift",
                 "Rules/DomainRoutePlanner.swift",
                 "Rules/DomainRouteRefreshPolicy.swift"
             ]

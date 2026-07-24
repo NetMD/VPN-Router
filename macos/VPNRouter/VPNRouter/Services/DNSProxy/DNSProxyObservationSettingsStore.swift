@@ -42,6 +42,7 @@ struct DNSProxyObservationSettingsStore {
             activeCount: activeCount,
             expiredCount: snapshot.routes.count - activeCount,
             latestObservationAt: snapshot.routes.map(\.observedAt).max(),
+            routes: snapshot.routes,
             eventCounts: snapshot.eventCounts,
             lastEventAt: snapshot.lastEventAt,
             lastFailureDomain: snapshot.lastFailureDomain,
@@ -135,6 +136,7 @@ struct DNSProxyObservationSummary {
     let activeCount: Int
     let expiredCount: Int
     let latestObservationAt: Date?
+    let routes: [DNSProxyRouteObservation]
     let eventCounts: [String: Int]
     let lastEventAt: Date?
     let lastFailureDomain: String?
@@ -150,7 +152,7 @@ private struct DNSProxyXPCSnapshot: Decodable {
     let lastFailureCode: Int?
 }
 
-private struct DNSProxyRouteObservation: Decodable {
+struct DNSProxyRouteObservation: Decodable {
     let domain: String
     let address: String
     let observedAt: Date

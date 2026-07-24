@@ -124,8 +124,7 @@ reliably, Phase 3 ends with an explicit decision to retain pre-resolved routes.
 
 ### Checkpoint-C implementation status
 
-The first forwarding candidate is implemented but has not yet been enabled or
-validated with signed DNS traffic:
+The forwarding candidate has been exercised with signed DNS traffic:
 
 - UDP DNS datagrams are forwarded to their original endpoints through bounded,
   per-query Network.framework connections.
@@ -133,31 +132,33 @@ validated with signed DNS traffic:
   length-prefixed DNS responses are inspected without modifying their payloads.
 - Forwarded connections inherit the original flow metadata to prevent recursive
   interception and preserve provider-chain context.
-- The host publishes only saved, normalized, product-expanded target domains to
-  the shared App Group.
+- The host sends only saved, normalized, product-expanded target domains to the
+  provider through the App Group-prefixed `NEMachServiceName` XPC service.
 - The provider retains only schema-versioned target domain, IPv4 address,
-  observation time, and bounded expiry. It does not log or retain DNS payloads or
-  unrelated questions.
+  observation time, bounded expiry, and aggregate counters in memory. It does not
+  log or retain DNS payloads or unrelated questions.
 - The response parser rejects malformed or excessive messages, follows bounded
   CNAME chains, and uses the shorter CNAME/A TTL.
+- The host merges active observations into the installed static plan, deduplicates
+  IPv4 destinations, enforces a combined 512-route limit, and sends a
+  schema-versioned `replace-routes` message to the Packet Tunnel.
+- A diagnostic-only 15-second loop refreshes the observed set while both providers
+  are active. The earliest usable observation TTL bounds the whole plan, so the
+  Packet Tunnel disconnects if refresh stops.
 
 The current Network.framework flow-endpoint implementation requires macOS 15 or
 later. The application target's macOS 14 candidate minimum remains provisional;
 on macOS 14 the provider refuses to start rather than accepting flows it cannot
 forward with the same metadata-preserving path.
 
-Passing unit tests and an unsigned build do not prove live forwarding. The next
-checkpoint is a signed, explicitly enabled diagnostic test covering ordinary UDP
-DNS, forced TCP DNS, provider stop/restart, and unchanged unrelated connectivity.
 The host now provides that explicit diagnostic enable action and a separate
 immediate-disable action. It verifies the provider bundle identifier before every
 mutation, refuses to alter an unknown configuration, and removes preferences only
 as an emergency fallback after confirming they belong to VPN Router. Enabling still
 requires a user confirmation warning that another DNS/security product must not be
-active. The UI reports only aggregate observation counts and timestamps.
-
-The DNS Proxy configuration remains disabled until the updated signed build is
-installed and the diagnostic test is deliberately started.
+active. The UI reports only aggregate observation counts and timestamps. Disabling
+the proxy while Packet Tunnel remains connected reapplies a fresh static plan; if
+that fails or the provider message times out, VPN Router stops its own tunnel.
 
 ### First signed UDP attempt
 
@@ -172,3 +173,66 @@ startup, flow opening, and upstream forwarding. Before another activation, the
 extension now records only aggregate runtime event counts plus the last error
 domain/code in the VPN Router App Group. It does not record query names, endpoints,
 addresses, or payloads in these runtime diagnostics.
+
+### Final signed checkpoint-C results
+
+Signed development builds on the real Mac verified:
+
+- UDP forwarding: a controlled A query returned four answers.
+- TCP forwarding: a forced TCP A query returned four answers and diagnostics
+  recorded one accepted TCP flow.
+- Aggregate forwarding run: 15 responses delivered with zero forwarding failures.
+- XPC diagnostics: the host received bounded observations from the root-owned
+  system extension without using a cross-user App Group preferences file.
+- Simultaneous providers: Packet Tunnel remained connected with 33 selected routes,
+  while UDP and TCP DNS both succeeded and the control address remained on `en6`.
+- Dynamic route update: known media subdomain queries added 22 observed routes;
+  the system `utun` route count increased from 29 to 52 without moving the control
+  address off `en6`.
+- Automatic TTL refresh: over approximately 85 seconds, the VPN remained connected
+  while its system route count changed between 40 and 60 as observations appeared
+  and expired.
+- Fail-safe: a deliberately too-short first plan expired and disconnected the
+  Packet Tunnel, removed its routes, and left normal DNS healthy.
+- Proxy shutdown: disabling DNS Proxy while Packet Tunnel remained connected
+  rebuilt the static plan and reduced the system route count from 74 to 31 without
+  disconnecting.
+- Final cleanup: disabling both providers left VPN Router disconnected, its tested
+  `utun` route count at zero, its Packet Tunnel process stopped, and normal DNS
+  healthy.
+- Provider-message timeout: signed build 11 returned normal Packet Tunnel
+  diagnostics through the new five-second guarded request path, reporting 27
+  applied routes, fail-safe enabled, and seven IPv6 bypass-risk domains.
+
+No third-party DNS, security, or VPN product was stopped, disabled, or reconfigured.
+Two non-VPN Router system extensions remained activated during the tests; their
+declared provider types included App Proxy and Packet Tunnel. This is baseline
+coexistence evidence, not a complete compatibility matrix.
+
+## Phase 3 product decision
+
+Keep static pre-resolution as the default macOS MVP architecture. Retain the DNS
+Proxy path as an explicit development diagnostic and continue hardening it after
+Phase 3; do not enable it automatically in a consumer build yet.
+
+The signed spike proves that the native DNS Proxy architecture is technically
+viable for system UDP/TCP DNS, dynamic IPv4 discovery, Packet Tunnel route updates,
+TTL-bounded fail-safe behavior, and clean provider teardown on this development Mac.
+It does not yet prove all release conditions:
+
+- Developer ID distribution provisioning for `dns-proxy-systemextension` remains
+  unverified.
+- The forwarding implementation currently raises the effective minimum to macOS 15,
+  while the app's earlier candidate minimum was macOS 14.
+- Browser DNS-over-HTTPS, encrypted DNS profiles, Private Relay behavior, captive
+  portals, and an actually connected second VPN were not tested.
+- Losing DNS ownership during an active session is not yet monitored continuously.
+- Dynamic refresh currently depends on the host app's diagnostic loop; the
+  Packet Tunnel fail-safe disconnects when refresh stops, but this is not yet a
+  seamless consumer lifecycle.
+- The route plan remains IPv4-only, so matching IPv6 traffic can bypass the tunnel.
+
+Until those items are resolved, the supported product behavior remains bounded
+pre-resolved IPv4 `/32` routes with the existing refresh and expiry policy, plus a
+clear IPv6 and rotating-DNS limitation. The DNS Proxy code must remain behind
+explicit diagnostic controls and must never alter another product.

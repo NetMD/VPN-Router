@@ -4,7 +4,14 @@ Last updated: 2026-07-24 KST
 
 ## Current phase
 
-Phase 1: WireGuard static split-routing proof.
+Phase 3 complete: dynamic DNS discovery decision.
+
+The signed DNS Proxy spike proved native UDP/TCP forwarding, XPC observations,
+simultaneous Packet Tunnel operation, TTL-bounded dynamic IPv4 route updates, and
+clean teardown on this development Mac. The macOS MVP nevertheless keeps static
+pre-resolution as its default supported architecture because encrypted DNS,
+actually connected second-VPN coexistence, continuous ownership monitoring,
+Developer ID distribution provisioning, and IPv6 routing remain unverified.
 
 The macOS Xcode project has been generated at `macos/VPNRouter/VPNRouter.xcodeproj`
 with a SwiftUI host app and an embedded stub Packet Tunnel extension. The host app
@@ -383,10 +390,79 @@ verification.
   `youtube.com` A query returned four answers through the system resolver.
 - [x] Make the Diagnostics detail vertically scrollable and reflow its DNS Proxy
   controls vertically when the available width cannot fit the horizontal row.
-- [ ] Verify TCP forwarding on a signed real-Mac build before enabling the DNS
-  Proxy configuration outside an explicit diagnostic test.
-- [ ] Verify Packet Tunnel and DNS Proxy simultaneous operation.
-- [ ] Test coexistence without altering third-party DNS or security products.
+- [x] Verify the Diagnostics scrolling change in signed build 5. The owner confirmed
+  that the detail scrolls vertically and the bottom status message remains
+  reachable. The current 720-point minimum detail width prevents shrinking the
+  window far enough to exercise the vertical control fallback.
+- [x] Verify TCP forwarding on a signed real-Mac run. One controlled
+  `youtube.com` TCP A query returned four answers; runtime diagnostics reported
+  TCP flows accepted 1, total flows opened/upstream-ready/responses
+  received/delivered 15, and forwarding failures 0.
+- [x] Verify Packet Tunnel and DNS Proxy simultaneous operation on a signed real
+  Mac. With the Packet Tunnel connected, 33 selected IPv4 routes remained on its
+  `utun` interface and the control address remained on the normal `en6` interface
+  while one UDP and one TCP DNS query each returned four answers. The Packet Tunnel
+  stayed connected, and DNS Proxy diagnostics reported 15 responses delivered,
+  including one accepted TCP flow, with zero forwarding failures.
+- [x] Verify ordered teardown after the simultaneous-provider run. Disabling only
+  the DNS Proxy left the Packet Tunnel connected with all 33 selected routes and
+  normal DNS available. Disconnecting the Packet Tunnel then stopped its provider,
+  removed all routes from that `utun` interface, and left normal DNS healthy.
+- [x] Add an explicit diagnostic route-update candidate that merges active DNS
+  observations into the installed static route plan, deduplicates by IPv4 address,
+  rejects invalid observations without displaying their value, enforces the
+  combined 512-route limit, and bounds the plan by the earliest usable observation
+  TTL. It reuses the existing schema-versioned Packet Tunnel `replace-routes`
+  message and is not an automatic background refresh loop.
+- [x] Confirm the dynamic-plan fail-safe behavior during the first signed update
+  attempt. The Packet Tunnel accepted 17 new observed routes and reported 48 total,
+  but the earliest observation TTL was too close for manual inspection and the
+  expiration timer disconnected the tunnel before the route table was sampled.
+  The `utun` routes were removed and normal DNS remained healthy.
+- [x] Repeat the signed update with at least 60 seconds of remaining TTL. Queries
+  for six known media subdomains produced addresses that were not in the static
+  pre-resolution plan. The Packet Tunnel accepted 22 new observed routes and
+  reported 49 total; the system `utun` route count increased from 29 to 52 while
+  the tunnel stayed connected, the control address stayed on `en6`, and DNS
+  remained healthy.
+- [x] Add a diagnostic-only 15-second refresh loop that runs only while both the
+  Packet Tunnel and explicitly enabled DNS Proxy are active. It reapplies the
+  bounded active observation set, returns to the static plan after observations
+  expire, and leaves the Packet Tunnel's earliest-TTL expiration fail-safe in
+  control if the host or XPC refresh path stops.
+- [x] Run the first signed automatic-refresh attempt. The loop added the observed
+  routes without a button press, increasing the system route count from 29 to 54,
+  but a later identical refresh overlapped the Packet Tunnel's reasserting state
+  and left the VPN reconnecting. Testing stopped and both providers were manually
+  disabled.
+- [x] Repeat signed automatic refresh after skipping identical plans and requiring
+  the live `NETunnelProviderSession` to be connected before every update. Over
+  approximately 85 seconds, the VPN remained connected while the system route
+  count changed from the static 29 to between 40 and 60 as observations appeared
+  and expired. No second reconnecting state occurred.
+- [x] Add explicit DNS Proxy shutdown cleanup. When the user disables the diagnostic
+  proxy while Packet Tunnel is connected, the host now rebuilds and reapplies a
+  fresh static plan. If that restoration fails, it stops only the VPN Router Packet
+  Tunnel instead of leaving dynamic routes active until their TTL fail-safe.
+- [x] Verify signed DNS Proxy shutdown returns the connected Packet Tunnel to a
+  freshly resolved static plan without disconnecting. In build 10, disabling the
+  proxy while the tunnel was connected reduced the system `utun` route count from
+  74 to 31, kept the VPN connected, kept the control address on `en6`, and left DNS
+  healthy.
+- [x] Verify baseline coexistence without altering third-party products. Two
+  non-VPN Router system extensions remained activated while DNS Proxy UDP/TCP,
+  Packet Tunnel simultaneous operation, dynamic route updates, and cleanup passed.
+- [x] Record encrypted DNS, Private Relay, captive portal, and actually connected
+  second-VPN tests as unverified release blockers rather than changing those
+  products automatically.
+- [x] Choose the Phase 3 product direction: keep bounded static pre-resolution as
+  the supported macOS MVP path and retain DNS Proxy as an explicit development
+  diagnostic until the remaining distribution, ownership, coexistence, lifecycle,
+  minimum-version, and IPv6 blockers are resolved.
+- [x] Add a five-second host-to-Packet-Tunnel provider-message timeout so dynamic
+  refresh or static restoration cannot wait indefinitely. Signed build 11 returned
+  normal provider diagnostics through the guarded path with 27 applied routes,
+  fail-safe enabled, and seven IPv6 bypass-risk domains reported.
 
 ## Expected work list
 
