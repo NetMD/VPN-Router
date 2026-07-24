@@ -345,7 +345,14 @@ verification.
 - [x] Activate the minimal system extension in a signed build without accepting DNS
   flows. macOS reported `activated enabled`, while the DNS Proxy configuration
   remained disabled.
-- [ ] Implement safe UDP and TCP forwarding before enabling DNS interception.
+- [x] Implement a bounded UDP and TCP forwarding candidate using Network.framework,
+  preserving DNS payloads and applying flow metadata to forwarded connections.
+- [x] Add defensive DNS response parsing tests for target matching, A records,
+  CNAME TTL propagation, truncation, and compression-pointer loops.
+- [x] Publish only the normalized, expanded saved target-domain set to the shared
+  App Group and retain only bounded target address/TTL observations.
+- [ ] Verify UDP and TCP forwarding on a signed real-Mac build before enabling the
+  DNS Proxy configuration outside an explicit diagnostic test.
 - [ ] Verify Packet Tunnel and DNS Proxy simultaneous operation.
 - [ ] Test coexistence without altering third-party DNS or security products.
 

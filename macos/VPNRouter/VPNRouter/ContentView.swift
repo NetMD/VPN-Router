@@ -673,6 +673,7 @@ struct ContentView: View {
                 .filter(\.enabled)
                 .map { DomainRuleExpander.normalize($0.domain) }
                 .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+            DNSProxyObservationSettingsStore().publish(domains: siteDomains)
             routePlan = nil
             routePlanProfileId = nil
             siteMessage = siteDomains.isEmpty ? "VPN으로 보낼 사이트를 추가하세요." : "공통 VPN 사이트 \(siteDomains.count)개를 불러왔습니다."
@@ -826,6 +827,7 @@ struct ContentView: View {
                 profileId: DomainRuleStore.sharedSiteRulesProfileId,
                 domains: siteDomains
             )
+            DNSProxyObservationSettingsStore().publish(domains: siteDomains)
             let plan = try service.buildPlan(profileId: DomainRuleStore.sharedSiteRulesProfileId)
             routePlan = plan
             routePlanProfileId = selectedProfile.id

@@ -1,3 +1,4 @@
+import Foundation
 import NetworkExtension
 import OSLog
 
@@ -6,12 +7,19 @@ final class DNSProxyProvider: NEDNSProxyProvider {
         subsystem: Bundle.main.bundleIdentifier ?? "VPNRouter.DNSProxyExtension",
         category: "DNSProxy"
     )
+    private let observationStore = DNSObservationStore()
+    private let sessionLock = NSLock()
+    private var sessions: [UUID: DNSFlowSession] = [:]
 
     override func startProxy(
         options: [String: Any]? = nil,
         completionHandler: @escaping (Error?) -> Void
     ) {
-        logger.notice("DNS Proxy provider started in non-intercepting Phase 3 spike mode")
+        guard #available(macOS 15.0, *) else {
+            completionHandler(DNSProxyProviderError.unsupportedOperatingSystem)
+            return
+        }
+        logger.notice("DNS Proxy provider started")
         completionHandler(nil)
     }
 
@@ -19,15 +27,62 @@ final class DNSProxyProvider: NEDNSProxyProvider {
         with reason: NEProviderStopReason,
         completionHandler: @escaping () -> Void
     ) {
+        sessionLock.lock()
+        let activeSessions = Array(sessions.values)
+        sessions.removeAll()
+        sessionLock.unlock()
+        activeSessions.forEach { $0.stop() }
         logger.notice("DNS Proxy provider stopped")
         completionHandler()
     }
 
     override func handleNewFlow(_ flow: NEAppProxyFlow) -> Bool {
-        // Phase 3 checkpoint B never enables the DNS Proxy configuration. If the
-        // provider is started unexpectedly, reject the flow instead of accepting
-        // traffic without a complete UDP/TCP forwarding path.
-        logger.error("Rejected an unexpected DNS flow in non-intercepting spike mode")
-        return false
+        guard #available(macOS 15.0, *) else {
+            logger.error("Rejected a DNS flow on an unsupported macOS version")
+            return false
+        }
+        let id = UUID()
+        let completion: () -> Void = { [weak self] in
+            guard let self else { return }
+            self.removeSession(id)
+        }
+
+        let session: DNSFlowSession
+        if let tcpFlow = flow as? NEAppProxyTCPFlow {
+            session = TCPDNSFlowSession(
+                flow: tcpFlow,
+                observationStore: observationStore,
+                completion: completion
+            )
+        } else if let udpFlow = flow as? NEAppProxyUDPFlow {
+            session = UDPDNSFlowSession(
+                flow: udpFlow,
+                observationStore: observationStore,
+                completion: completion
+            )
+        } else {
+            logger.error("Rejected an unsupported DNS flow type")
+            return false
+        }
+
+        sessionLock.lock()
+        sessions[id] = session
+        sessionLock.unlock()
+        session.start()
+        return true
+    }
+
+    private func removeSession(_ id: UUID) {
+        sessionLock.lock()
+        sessions[id] = nil
+        sessionLock.unlock()
+    }
+}
+
+private enum DNSProxyProviderError: LocalizedError {
+    case unsupportedOperatingSystem
+
+    var errorDescription: String? {
+        "DNS Proxy 전달 기능은 macOS 15 이상에서 지원됩니다."
     }
 }

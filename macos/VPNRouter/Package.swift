@@ -9,7 +9,8 @@ let package = Package(
     ],
     products: [
         .library(name: "VPNRouterCore", targets: ["VPNRouterCore"]),
-        .library(name: "VPNRouterSettings", targets: ["VPNRouterSettings"])
+        .library(name: "VPNRouterSettings", targets: ["VPNRouterSettings"]),
+        .library(name: "VPNRouterDNSObservation", targets: ["VPNRouterDNSObservation"])
     ],
     targets: [
         .target(
@@ -27,9 +28,26 @@ let package = Package(
             name: "VPNRouterSettings",
             path: "VPNRouter/Services/Settings"
         ),
+        .target(
+            name: "VPNRouterDNSObservation",
+            path: "DNSProxyExtension",
+            exclude: [
+                "DNSFlowSessions.swift",
+                "DNSObservationStore.swift",
+                "DNSProxyExtension.entitlements",
+                "DNSProxyProvider.swift",
+                "Info.plist",
+                "main.swift"
+            ],
+            sources: ["DNSMessageParser.swift"]
+        ),
         .testTarget(
             name: "VPNRouterCoreTests",
-            dependencies: ["VPNRouterCore", "VPNRouterSettings"]
+            dependencies: [
+                "VPNRouterCore",
+                "VPNRouterSettings",
+                "VPNRouterDNSObservation"
+            ]
         )
     ]
 )

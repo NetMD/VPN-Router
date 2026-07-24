@@ -92,9 +92,8 @@ After checkpoint A passes:
    recording private Team or provisioning data.
 8. Do not enable the DNS Proxy configuration until safe forwarding is implemented.
 
-The repository now includes the checkpoint-B target and explicit activation action.
-Its `handleNewFlow` returns `false`; activation alone does not save or enable an
-`NEDNSProxyManager` configuration.
+The repository includes the checkpoint-B target and explicit activation action.
+Activation alone does not save or enable an `NEDNSProxyManager` configuration.
 
 First activation finding on 2026-07-24 KST: NetworkExtension category validation
 rejected the system extension because `NEMachServiceName` was based on the provider
@@ -122,3 +121,32 @@ The forwarding spike must:
 
 If the system extension cannot be provisioned, cannot coexist, or cannot forward
 reliably, Phase 3 ends with an explicit decision to retain pre-resolved routes.
+
+### Checkpoint-C implementation status
+
+The first forwarding candidate is implemented but has not yet been enabled or
+validated with signed DNS traffic:
+
+- UDP DNS datagrams are forwarded to their original endpoints through bounded,
+  per-query Network.framework connections.
+- TCP flows are copied in both directions with completion-driven flow control, and
+  length-prefixed DNS responses are inspected without modifying their payloads.
+- Forwarded connections inherit the original flow metadata to prevent recursive
+  interception and preserve provider-chain context.
+- The host publishes only saved, normalized, product-expanded target domains to
+  the shared App Group.
+- The provider retains only schema-versioned target domain, IPv4 address,
+  observation time, and bounded expiry. It does not log or retain DNS payloads or
+  unrelated questions.
+- The response parser rejects malformed or excessive messages, follows bounded
+  CNAME chains, and uses the shorter CNAME/A TTL.
+
+The current Network.framework flow-endpoint implementation requires macOS 15 or
+later. The application target's macOS 14 candidate minimum remains provisional;
+on macOS 14 the provider refuses to start rather than accepting flows it cannot
+forward with the same metadata-preserving path.
+
+Passing unit tests and an unsigned build do not prove live forwarding. The next
+checkpoint is a signed, explicitly enabled diagnostic test covering ordinary UDP
+DNS, forced TCP DNS, provider stop/restart, and unchanged unrelated connectivity.
+The DNS Proxy configuration remains disabled until that test is prepared and run.
