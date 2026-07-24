@@ -102,6 +102,11 @@ bundle identifier rather than prefixed by an App Group in the signed extension
 entitlements. The invalid staged copy was automatically removed. The Info.plist now
 uses the shared App Group as the Mach service prefix.
 
+Checkpoint-B result on 2026-07-24 KST: passed after the Mach service correction.
+The owner approved the signed system extension, macOS reported it as
+`activated enabled`, and the host app reported that the DNS Proxy configuration
+remained disabled. No DNS flows were intercepted during this checkpoint.
+
 ## Signed checkpoint C: forwarding and coexistence
 
 The forwarding spike must:

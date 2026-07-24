@@ -340,8 +340,11 @@ verification.
   extension's App Group; the system automatically removed the invalid staged copy.
 - [x] Align `NEMachServiceName` with the shared App Group while keeping DNS Proxy
   configuration disabled.
-- [ ] Confirm provisioning for a separate `dns-proxy-systemextension` target.
-- [ ] Activate the minimal system extension in a signed build without accepting DNS flows.
+- [x] Confirm development provisioning for the separate DNS Proxy system-extension
+  target.
+- [x] Activate the minimal system extension in a signed build without accepting DNS
+  flows. macOS reported `activated enabled`, while the DNS Proxy configuration
+  remained disabled.
 - [ ] Implement safe UDP and TCP forwarding before enabling DNS interception.
 - [ ] Verify Packet Tunnel and DNS Proxy simultaneous operation.
 - [ ] Test coexistence without altering third-party DNS or security products.
