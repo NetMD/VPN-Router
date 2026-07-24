@@ -1,10 +1,12 @@
 import SwiftUI
 import NetworkExtension
 import UniformTypeIdentifiers
+import AppKit
 
 struct ContentView: View {
     @StateObject private var dnsProxySystemExtensionController = DNSProxySystemExtensionController()
     @StateObject private var dnsProxyConfigurationController = DNSProxyConfigurationController()
+    @StateObject private var lifecycleMonitor = LifecycleMonitor()
     @State private var selectedSection: SidebarSection = .home
     @State private var status: NEVPNStatus = .invalid
     @State private var lastMessage = "설치된 VPN 구성이 없습니다."
@@ -17,6 +19,7 @@ struct ContentView: View {
     @State private var importMessage = "가져온 VPN 프로필이 없습니다."
     @State private var selectedProfileId: ProfileMetadata.ID?
     @State private var profilePendingDeletion: ProfileMetadata?
+    @State private var isShowingConfigurationRemovalConfirmation = false
     @State private var siteDomainInput = ""
     @State private var siteDomains: [String] = []
     @State private var siteMessage = "VPN 프로필을 선택하고 VPN으로 보낼 사이트를 추가하세요."
@@ -30,6 +33,17 @@ struct ContentView: View {
     @State private var isShowingDNSProxyEnableConfirmation = false
     @State private var isShowingDNSProxyEmergencyDisableConfirmation = false
     @State private var dnsProxyObservationMessage = "이번 진단 실행에서 확인한 대상 DNS 관찰이 없습니다."
+    @State private var diagnosticExportMessage = "진단 파일에는 상태와 개수만 포함되며, 개인 키·설정 원문·도메인·IP 주소는 포함되지 않습니다."
+    @State private var troubleshootingReportDocument: TroubleshootingReportDocument?
+    @State private var troubleshootingReportFilename = "VPNRouter-Diagnostics"
+    @State private var isExportingTroubleshootingReport = false
+    @State private var activeOperation: AppOperation?
+    @AppStorage(AppAppearance.storageKey)
+    private var appAppearanceRawValue = AppAppearance.automatic.rawValue
+    @FocusState private var focusedField: FocusedField?
+#if DEBUG
+    @State private var developerDiagnosticsEnabled = false
+#endif
 
     var body: some View {
         NavigationSplitView {
@@ -42,15 +56,32 @@ struct ContentView: View {
             }
             .navigationSplitViewColumnWidth(min: 180, ideal: 210)
         } detail: {
-            detailView
-                .padding(32)
-                .frame(minWidth: 720, minHeight: 520, alignment: .topLeading)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    if let activeOperation {
+                        HStack(spacing: 10) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text(activeOperation.progressLabel)
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                        }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel(activeOperation.accessibilityLabel)
+                    }
+
+                    detailView
+                }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+            .padding(32)
+            .frame(minWidth: 440, minHeight: 420, alignment: .topLeading)
         }
         .task {
             installStatusObserverIfNeeded()
             await loadStatus()
-            loadProfiles()
-            loadSiteDomainsForSelectedProfile()
+            await loadProfiles()
+            await loadSiteDomainsForSelectedProfile()
             loadFailSafeSetting()
             await dnsProxyConfigurationController.refresh(
                 expectedBundleIdentifier: TunnelIdentifiers.dnsProxySystemExtensionBundleIdentifier
@@ -68,7 +99,17 @@ struct ContentView: View {
             await runDNSProxyDynamicRouteRefreshLoop()
         }
         .onChange(of: selectedProfileId) { _, _ in
-            loadSiteDomainsForSelectedProfile()
+            Task {
+                await loadSiteDomainsForSelectedProfile()
+            }
+        }
+        .onChange(of: status) { _, _ in
+            announceForVoiceOver("VPN 상태: \(statusText)")
+        }
+        .onChange(of: lifecycleMonitor.wakeCount) { _, _ in
+            Task {
+                await loadStatus()
+            }
         }
         .onDisappear {
             removeStatusObserver()
@@ -78,6 +119,13 @@ struct ContentView: View {
             allowedContentTypes: supportedWireGuardConfigTypes,
             allowsMultipleSelection: false,
             onCompletion: importConfigFile
+        )
+        .fileExporter(
+            isPresented: $isExportingTroubleshootingReport,
+            document: troubleshootingReportDocument,
+            contentType: .json,
+            defaultFilename: troubleshootingReportFilename,
+            onCompletion: finishTroubleshootingExport
         )
         .confirmationDialog(
             "VPN 프로필 삭제",
@@ -93,7 +141,9 @@ struct ContentView: View {
         ) { profile in
             Button("\(profile.displayName) 삭제", role: .destructive) {
                 Task {
-                    await deleteProfile(profile)
+                    await performOperation(.deletingProfile) {
+                        await deleteProfile(profile)
+                    }
                 }
             }
             Button("취소", role: .cancel) {
@@ -114,6 +164,21 @@ struct ContentView: View {
             Button("취소", role: .cancel) {}
         } message: {
             Text("경로가 15분 이상 갱신되지 않아도 VPN 연결을 유지합니다. 선택한 사이트가 일반 네트워크로 우회할 수 있습니다.")
+        }
+        .confirmationDialog(
+            "설치된 VPN Router 구성을 제거할까요?",
+            isPresented: $isShowingConfigurationRemovalConfirmation
+        ) {
+            Button("VPN Router 구성 제거", role: .destructive) {
+                Task {
+                    await performOperation(.removingConfiguration) {
+                        await removeVPNRouterConfigurations()
+                    }
+                }
+            }
+            Button("취소", role: .cancel) {}
+        } message: {
+            Text("VPN Router가 소유한 macOS VPN 구성만 제거합니다. 저장된 프로필, 키체인 개인 키, 사이트 목록과 다른 앱의 구성은 변경하지 않습니다.")
         }
         .confirmationDialog(
             "DNS Proxy 진단을 활성화할까요?",
@@ -184,7 +249,7 @@ struct ContentView: View {
             ipv6BypassWarning
             Divider()
             VStack(alignment: .leading, spacing: 8) {
-                Text("1단계")
+                Text("선택 사이트 보호")
                     .font(.headline)
                 Text("WireGuard 프로필과 선택한 사이트만 VPN으로 보내는 분할 라우팅을 관리합니다.")
                     .foregroundStyle(.secondary)
@@ -195,202 +260,307 @@ struct ContentView: View {
     }
 
     private var profilesView: some View {
-        HStack(alignment: .top, spacing: 28) {
-            VStack(alignment: .leading, spacing: 16) {
-                header(title: "VPN 프로필", subtitle: "가져온 프로필 \(profiles.count)개")
-
-                VStack(alignment: .leading, spacing: 10) {
-                    TextField("프로필 이름", text: $profileName)
-                        .textFieldStyle(.roundedBorder)
-
-                    HStack(spacing: 12) {
-                        Image(systemName: "doc.badge.plus")
-                            .font(.title2)
-                            .foregroundStyle(.secondary)
-                            .frame(width: 32)
-
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(selectedConfigFileName)
-                                .font(.headline)
-                                .lineLimit(1)
-                            Text("WireGuard .conf 파일을 선택하세요. 개인 키는 키체인에 안전하게 저장됩니다.")
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(.quaternary)
-                    }
-
-                    HStack(spacing: 12) {
-                        Button {
-                            isImportingConfigFile = true
-                        } label: {
-                            Label("파일 가져오기", systemImage: "folder")
-                        }
-                        .buttonStyle(.borderedProminent)
-
-                        Button {
-                            selectedConfigFileName = "선택한 파일 없음"
-                            profileName = ""
-                        } label: {
-                            Label("입력 지우기", systemImage: "xmark.circle")
-                        }
-                        .disabled(selectedConfigFileName == "선택한 파일 없음" && profileName.isEmpty)
-                    }
-                }
-
-                Text(importMessage)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: 28) {
+                profileImportPanel
+                    .frame(minWidth: 320, idealWidth: 400, maxWidth: 520)
+                storedProfilesPanel
+                    .frame(minWidth: 260, maxWidth: .infinity)
             }
-            .frame(minWidth: 360, idealWidth: 420, maxWidth: 520, alignment: .topLeading)
 
-            VStack(alignment: .leading, spacing: 14) {
-                Text("저장된 프로필")
-                    .font(.headline)
-
-                if profiles.isEmpty {
-                    ContentUnavailableView("저장된 프로필 없음", systemImage: "doc.text.magnifyingglass")
-                } else {
-                    List(selection: $selectedProfileId) {
-                        ForEach(profiles) { profile in
-                            HStack(spacing: 12) {
-                                ProfileRow(profile: profile)
-                                Spacer()
-                                Button(role: .destructive) {
-                                    profilePendingDeletion = profile
-                                } label: {
-                                    Image(systemName: "trash")
-                                }
-                                .buttonStyle(.borderless)
-                                .help("\(profile.displayName) 삭제")
-                            }
-                            .tag(profile.id)
-                        }
-                    }
-                    .listStyle(.inset)
-
-                    HStack(spacing: 12) {
-                        Button {
-                            Task {
-                                await installSelectedProfileConfiguration()
-                            }
-                        } label: {
-                            Label("선택한 프로필 설치", systemImage: "arrow.down.doc")
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(selectedProfile == nil)
-
-                        Button(role: .destructive) {
-                            if let selectedProfile {
-                                profilePendingDeletion = selectedProfile
-                            }
-                        } label: {
-                            Label("선택한 프로필 삭제", systemImage: "trash")
-                        }
-                        .disabled(selectedProfile == nil)
-                    }
-                }
+            VStack(alignment: .leading, spacing: 28) {
+                profileImportPanel
+                Divider()
+                storedProfilesPanel
             }
-            .frame(minWidth: 280, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
     }
 
-    private var sitesView: some View {
-        HStack(alignment: .top, spacing: 28) {
-            VStack(alignment: .leading, spacing: 16) {
-                header(
-                    title: "VPN 사이트",
-                    subtitle: selectedProfile.map { "\($0.displayName) 프로필로 보낼 사이트" } ?? "연결할 프로필에 공통으로 적용되는 사이트"
-                )
+    private var profileImportPanel: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            header(title: "VPN 프로필", subtitle: "가져온 프로필 \(profiles.count)개")
 
-                HStack(spacing: 10) {
-                    TextField("example.com", text: $siteDomainInput)
-                        .textFieldStyle(.roundedBorder)
-                        .onSubmit(addSiteDomain)
+            TextField("프로필 이름", text: $profileName)
+                .textFieldStyle(.roundedBorder)
+                .focused($focusedField, equals: .profileName)
+                .accessibilityLabel("VPN 프로필 이름")
+                .accessibilityHint("비워 두면 선택한 파일 이름을 사용합니다.")
 
-                    Button {
-                        addSiteDomain()
-                    } label: {
-                        Label("사이트 추가", systemImage: "plus")
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(normalizedSiteDomainInput == nil)
-                }
-
-                if siteDomains.isEmpty {
-                    ContentUnavailableView("등록된 사이트 없음", systemImage: "globe.badge.chevron.backward")
-                        .frame(minHeight: 220)
-                } else {
-                    List {
-                        ForEach(siteDomains, id: \.self) { domain in
-                            HStack(spacing: 8) {
-                                Text(domain)
-                                    .font(.system(.body, design: .monospaced))
-                                Spacer()
-                                Button {
-                                    removeSiteDomain(domain)
-                                } label: {
-                                    Image(systemName: "trash")
-                                }
-                                .buttonStyle(.borderless)
-                                .help("\(domain) 삭제")
-                            }
-                        }
-                    }
-                    .listStyle(.inset)
-                    .frame(minHeight: 220)
-                }
-
-                HStack(spacing: 12) {
-                    Button {
-                        Task {
-                            await saveDomainsAndBuildRoutePlan()
-                        }
-                    } label: {
-                        Label("경로 만들기", systemImage: "point.3.connected.trianglepath.dotted")
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(selectedProfile == nil || siteDomains.isEmpty)
-
-                    Button {
-                        siteDomains.removeAll()
-                        routePlan = nil
-                        routePlanProfileId = nil
-                        siteMessage = "입력 중인 사이트 목록을 지웠습니다."
-                    } label: {
-                        Label("목록 지우기", systemImage: "xmark.circle")
-                    }
-                    .disabled(siteDomains.isEmpty)
-                }
-
-                Text(siteMessage)
-                    .font(.callout)
+            HStack(spacing: 12) {
+                Image(systemName: "doc.badge.plus")
+                    .font(.title2)
                     .foregroundStyle(.secondary)
-            }
-            .frame(minWidth: 360, idealWidth: 420, maxWidth: 520, alignment: .topLeading)
+                    .frame(width: 32)
 
-            VStack(alignment: .leading, spacing: 14) {
-                Text("경로 계획")
-                    .font(.headline)
-
-                if let routePlan, routePlanProfileId == selectedProfile?.id {
-                    RoutePlanSummary(plan: routePlan)
-                } else {
-                    ContentUnavailableView("만든 경로 없음", systemImage: "map")
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(selectedConfigFileName)
+                        .font(.headline)
+                        .lineLimit(1)
+                    Text("WireGuard .conf 파일을 선택하세요. 개인 키는 키체인에 저장됩니다.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
                 }
             }
-            .frame(minWidth: 280, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .overlay {
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(.quaternary)
+            }
+
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) {
+                    profileImportButtons
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    profileImportButtons
+                }
+            }
+
+            Text(importMessage)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private var profileImportButtons: some View {
+        Button {
+            isImportingConfigFile = true
+        } label: {
+            Label("파일 가져오기", systemImage: "folder")
+        }
+        .buttonStyle(.borderedProminent)
+        .disabled(activeOperation != nil)
+        .keyboardShortcut("o", modifiers: .command)
+
+        Button {
+            selectedConfigFileName = "선택한 파일 없음"
+            profileName = ""
+        } label: {
+            Label("입력 지우기", systemImage: "xmark.circle")
+        }
+        .disabled(selectedConfigFileName == "선택한 파일 없음" && profileName.isEmpty)
+    }
+
+    private var storedProfilesPanel: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("저장된 프로필")
+                .font(.headline)
+
+            if profiles.isEmpty {
+                ContentUnavailableView("저장된 프로필 없음", systemImage: "doc.text.magnifyingglass")
+                    .frame(minHeight: 160)
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(profiles) { profile in
+                        HStack(spacing: 12) {
+                            Button {
+                                selectedProfileId = profile.id
+                            } label: {
+                                ProfileRow(profile: profile)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("\(profile.displayName) 프로필")
+                            .accessibilityValue(
+                                selectedProfileId == profile.id ? "선택됨" : "선택되지 않음"
+                            )
+                            .accessibilityHint("이 프로필을 연결 대상으로 선택합니다.")
+                            Spacer()
+                            Button(role: .destructive) {
+                                profilePendingDeletion = profile
+                            } label: {
+                                Image(systemName: "trash")
+                            }
+                            .buttonStyle(.borderless)
+                            .accessibilityLabel("\(profile.displayName) 프로필 삭제")
+                            .accessibilityHint("확인 후 프로필 정보와 키체인 개인 키를 삭제합니다.")
+                            .help("\(profile.displayName) 삭제")
+                        }
+                        .padding(10)
+                        .background(
+                            selectedProfileId == profile.id
+                                ? Color.accentColor.opacity(0.12)
+                                : Color.clear,
+                            in: RoundedRectangle(cornerRadius: 8)
+                        )
+                    }
+                }
+
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 12) {
+                        profileManagementButtons
+                    }
+                    VStack(alignment: .leading, spacing: 8) {
+                        profileManagementButtons
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var profileManagementButtons: some View {
+        Button {
+            Task {
+                await performOperation(.installingProfile) {
+                    await installSelectedProfileConfiguration()
+                }
+            }
+        } label: {
+            Label("선택한 프로필 설치", systemImage: "arrow.down.doc")
+        }
+        .buttonStyle(.borderedProminent)
+        .disabled(selectedProfile == nil || activeOperation != nil)
+
+        Button(role: .destructive) {
+            if let selectedProfile {
+                profilePendingDeletion = selectedProfile
+            }
+        } label: {
+            Label("선택한 프로필 삭제", systemImage: "trash")
+        }
+        .disabled(selectedProfile == nil || activeOperation != nil)
+    }
+
+    private var sitesView: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: 28) {
+                siteEditorPanel
+                    .frame(minWidth: 320, idealWidth: 400, maxWidth: 520)
+                routePlanPanel
+                    .frame(minWidth: 260, maxWidth: .infinity)
+            }
+
+            VStack(alignment: .leading, spacing: 28) {
+                siteEditorPanel
+                Divider()
+                routePlanPanel
+            }
+        }
+    }
+
+    private var siteEditorPanel: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            header(
+                title: "VPN 사이트",
+                subtitle: selectedProfile.map { "\($0.displayName) 프로필로 보낼 사이트" }
+                    ?? "연결할 프로필에 공통으로 적용되는 사이트"
+            )
+
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    siteInputField
+                    addSiteButton
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    siteInputField
+                    addSiteButton
+                }
+            }
+
+            if siteDomains.isEmpty {
+                ContentUnavailableView("등록된 사이트 없음", systemImage: "globe.badge.chevron.backward")
+                    .frame(minHeight: 160)
+            } else {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(siteDomains, id: \.self) { domain in
+                        HStack(spacing: 8) {
+                            Text(domain)
+                                .font(.system(.body, design: .monospaced))
+                            Spacer()
+                            Button {
+                                removeSiteDomain(domain)
+                            } label: {
+                                Image(systemName: "trash")
+                            }
+                            .buttonStyle(.borderless)
+                            .accessibilityLabel("\(domain) 사이트 삭제")
+                            .accessibilityHint("VPN으로 보낼 사이트 목록에서 제거합니다.")
+                            .help("\(domain) 삭제")
+                        }
+                        .padding(.vertical, 6)
+                    }
+                }
+            }
+
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) {
+                    siteManagementButtons
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    siteManagementButtons
+                }
+            }
+
+            Text(siteMessage)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var siteInputField: some View {
+        TextField("example.com", text: $siteDomainInput)
+            .textFieldStyle(.roundedBorder)
+            .onSubmit(addSiteDomain)
+            .focused($focusedField, equals: .siteDomain)
+            .accessibilityLabel("VPN으로 보낼 사이트")
+            .accessibilityHint("example.com 형식으로 입력하고 Return을 누르세요.")
+    }
+
+    private var addSiteButton: some View {
+        Button {
+            addSiteDomain()
+        } label: {
+            Label("사이트 추가", systemImage: "plus")
+        }
+        .buttonStyle(.borderedProminent)
+        .disabled(normalizedSiteDomainInput == nil)
+        .keyboardShortcut(.return, modifiers: [])
+    }
+
+    @ViewBuilder
+    private var siteManagementButtons: some View {
+        Button {
+            Task {
+                await performOperation(.buildingRoutes) {
+                    await saveDomainsAndBuildRoutePlan()
+                }
+            }
+        } label: {
+            Label("경로 만들기", systemImage: "point.3.connected.trianglepath.dotted")
+        }
+        .buttonStyle(.borderedProminent)
+        .disabled(selectedProfile == nil || siteDomains.isEmpty || activeOperation != nil)
+
+        Button {
+            siteDomains.removeAll()
+            routePlan = nil
+            routePlanProfileId = nil
+            siteMessage = "입력 중인 사이트 목록을 지웠습니다."
+        } label: {
+            Label("목록 지우기", systemImage: "xmark.circle")
+        }
+        .disabled(siteDomains.isEmpty)
+    }
+
+    private var routePlanPanel: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("경로 계획")
+                .font(.headline)
+
+            if let routePlan, routePlanProfileId == selectedProfile?.id {
+                RoutePlanSummary(plan: routePlan)
+            } else {
+                ContentUnavailableView("만든 경로 없음", systemImage: "map")
+                    .frame(minHeight: 160)
+            }
         }
     }
 
     private var diagnosticsView: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
+        VStack(alignment: .leading, spacing: 24) {
                 header(title: "진단", subtitle: statusText)
                 tunnelControls
                 ipv6BypassWarning
@@ -401,10 +571,51 @@ struct ContentView: View {
                     DiagnosticMessageView(message: lastMessage)
                 }
                 Divider()
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Phase 3 DNS Proxy 준비 상태")
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Mac 및 네트워크 상태")
                         .font(.headline)
-                    Text("이 검사는 DNS 설정을 저장하거나 활성화하지 않고 현재 서명 빌드의 preferences 읽기 권한만 확인합니다.")
+                    LabeledContent("기본 네트워크", value: lifecycleMonitor.networkState)
+                    LabeledContent("네트워크 변경", value: "\(lifecycleMonitor.networkChangeCount)회")
+                    LabeledContent(
+                        "잠자기 / 깨우기",
+                        value: "\(lifecycleMonitor.sleepCount)회 / \(lifecycleMonitor.wakeCount)회"
+                    )
+                    DiagnosticMessageView(message: lifecycleMonitor.latestEvent)
+                    Text("이 정보는 읽기 전용입니다. VPN Router는 다른 VPN이나 보안 제품을 자동으로 변경하지 않습니다.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Divider()
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("문제 해결 파일")
+                        .font(.headline)
+                    Text("지원 요청에 첨부할 수 있는 JSON 파일을 저장합니다. 개인 키, WireGuard 설정 원문, 사이트 이름, IP 주소와 DNS 내용은 제외합니다.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    Button {
+                        prepareTroubleshootingExport()
+                    } label: {
+                        Label("진단 파일 저장", systemImage: "square.and.arrow.down")
+                    }
+                    .disabled(activeOperation != nil || isExportingTroubleshootingReport)
+                    DiagnosticMessageView(message: diagnosticExportMessage)
+
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 12) {
+                            recoveryButtons
+                        }
+                        VStack(alignment: .leading, spacing: 8) {
+                            recoveryButtons
+                        }
+                    }
+                }
+                #if DEBUG
+                if developerDiagnosticsEnabled {
+                    Divider()
+                    VStack(alignment: .leading, spacing: 10) {
+                    Text("개발자용 DNS Proxy 실험")
+                        .font(.headline)
+                    Text("지원되는 소비자 기능이 아닙니다. DNS 설정을 저장하지 않고 현재 서명 빌드의 preferences 읽기 권한부터 확인합니다.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                     Button {
@@ -455,10 +666,11 @@ struct ContentView: View {
                     }
                     DiagnosticMessageView(message: dnsProxyConfigurationController.message)
                     DiagnosticMessageView(message: dnsProxyObservationMessage)
+                    }
                 }
-            }
-            .frame(maxWidth: .infinity, alignment: .topLeading)
+                #endif
         }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 
     @ViewBuilder
@@ -520,9 +732,49 @@ struct ContentView: View {
         )
     }
 
+    @ViewBuilder
+    private var recoveryButtons: some View {
+        Button {
+            Task {
+                await performOperation(.checkingTunnel) {
+                    await loadStatus()
+                }
+            }
+        } label: {
+            Label("시스템 상태 다시 불러오기", systemImage: "arrow.clockwise")
+        }
+        .disabled(activeOperation != nil)
+
+        Button(role: .destructive) {
+            isShowingConfigurationRemovalConfirmation = true
+        } label: {
+            Label("설치 구성 제거", systemImage: "trash.slash")
+        }
+        .disabled(activeOperation != nil || canStop)
+        .accessibilityHint("VPN 연결이 끊어진 상태에서 VPN Router가 소유한 시스템 구성만 제거합니다.")
+    }
+
     private var settingsView: some View {
         VStack(alignment: .leading, spacing: 24) {
             header(title: "설정", subtitle: "연결 보호 동작을 관리합니다.")
+
+            GroupBox("화면") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Picker("화면 테마", selection: $appAppearanceRawValue) {
+                        ForEach(AppAppearance.allCases) { appearance in
+                            Text(appearance.title)
+                                .tag(appearance.rawValue)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
+                    Text("자동은 macOS의 현재 화면 모양을 따릅니다.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 4)
+            }
 
             GroupBox("연결 보호") {
                 VStack(alignment: .leading, spacing: 12) {
@@ -560,55 +812,94 @@ struct ContentView: View {
             }
 
             DiagnosticMessageView(message: settingsMessage)
+
+#if DEBUG
+            GroupBox("개발자 옵션") {
+                Toggle(
+                    "DNS Proxy 실험 도구 표시",
+                    isOn: $developerDiagnosticsEnabled
+                )
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 4)
+            }
+#endif
             Spacer()
         }
     }
 
     private var tunnelControls: some View {
-        HStack(spacing: 12) {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) {
+                tunnelControlButtons
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                tunnelControlButtons
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var tunnelControlButtons: some View {
+#if DEBUG
+        if developerDiagnosticsEnabled {
             Button {
                 Task {
-                    await installStubConfiguration()
+                    await performOperation(.installingTestConfiguration) {
+                        await installStubConfiguration()
+                    }
                 }
             } label: {
                 Label("테스트 구성 설치", systemImage: "plus.circle")
             }
+            .disabled(activeOperation != nil)
+        }
+#endif
 
-            Button {
-                Task {
+        Button {
+            Task {
+                await performOperation(.connecting) {
                     await startTunnel()
                 }
-            } label: {
-                Label("연결", systemImage: "power")
             }
-            .buttonStyle(.borderedProminent)
-            .disabled(!canStart)
+        } label: {
+            Label("연결", systemImage: "power")
+        }
+        .buttonStyle(.borderedProminent)
+        .disabled(!canStart)
+        .keyboardShortcut(.return, modifiers: .command)
+        .accessibilityHint("선택한 프로필과 사이트 경로로 VPN 연결을 시작합니다.")
 
-            Button {
-                Task {
+        Button {
+            Task {
+                await performOperation(.checkingTunnel) {
                     await requestProviderDiagnostics()
                 }
-            } label: {
-                Label("터널 상태 확인", systemImage: "waveform.path.ecg")
             }
-            .disabled(status != .connected)
+        } label: {
+            Label("터널 상태 확인", systemImage: "waveform.path.ecg")
+        }
+        .disabled(status != .connected || activeOperation != nil)
+        .keyboardShortcut("r", modifiers: .command)
 
-            Button {
-                Task {
+        Button {
+            Task {
+                await performOperation(.refreshingRoutes) {
                     await refreshConnectedRoutePlan()
                 }
-            } label: {
-                Label("경로 새로고침", systemImage: "arrow.clockwise")
             }
-            .disabled(status != .connected)
-
-            Button {
-                stopTunnel()
-            } label: {
-                Label("연결 해제", systemImage: "stop.circle")
-            }
-            .disabled(!canStop)
+        } label: {
+            Label("경로 새로고침", systemImage: "arrow.clockwise")
         }
+        .disabled(status != .connected || activeOperation != nil)
+
+        Button {
+            stopTunnel()
+        } label: {
+            Label("연결 해제", systemImage: "stop.circle")
+        }
+        .disabled(!canStop)
+        .keyboardShortcut(.return, modifiers: [.command, .shift])
+        .accessibilityHint("현재 VPN 연결을 안전하게 해제합니다.")
     }
 
     @ViewBuilder
@@ -648,14 +939,6 @@ struct ContentView: View {
         }
     }
 
-    private func placeholderView(title: String, systemImage: String, message: String) -> some View {
-        VStack(alignment: .leading, spacing: 18) {
-            header(title: title, subtitle: message)
-            ContentUnavailableView(title, systemImage: systemImage)
-            Spacer()
-        }
-    }
-
     private var statusText: String {
         switch status {
         case .invalid:
@@ -676,7 +959,7 @@ struct ContentView: View {
     }
 
     private var canStart: Bool {
-        status == .disconnected
+        status == .disconnected && activeOperation == nil
     }
 
     private var canStop: Bool {
@@ -745,15 +1028,17 @@ struct ContentView: View {
         self.statusObserver = nil
     }
 
-    private func loadProfiles() {
+    private func loadProfiles() async {
         do {
-            let store = try ProfileStore()
-            profiles = try store.loadProfiles().sorted { $0.updatedAt > $1.updatedAt }
+            profiles = try await AppBackgroundWork.loadProfiles()
             if selectedProfileId == nil,
                let manager,
                let installedProfileId = providerProfileId(for: manager),
                profiles.contains(where: { $0.id == installedProfileId }) {
                 selectedProfileId = installedProfileId
+            }
+            if selectedProfileId == nil {
+                selectedProfileId = profiles.first?.id
             }
             importMessage = profiles.isEmpty ? "가져온 VPN 프로필이 없습니다." : "저장된 VPN 프로필을 불러왔습니다."
         } catch {
@@ -802,38 +1087,15 @@ struct ContentView: View {
         }
     }
 
-    private func loadSiteDomainsForSelectedProfile() {
+    private func loadSiteDomainsForSelectedProfile() async {
         do {
-            let store = try DomainRuleStore()
-            try migrateLegacyProfileSiteRulesIfNeeded(store: store)
-            siteDomains = try store.loadRules(profileId: DomainRuleStore.sharedSiteRulesProfileId)
-                .filter(\.enabled)
-                .map { DomainRuleExpander.normalize($0.domain) }
-                .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+            siteDomains = try await AppBackgroundWork.loadSharedSiteDomains()
             routePlan = nil
             routePlanProfileId = nil
             siteMessage = siteDomains.isEmpty ? "VPN으로 보낼 사이트를 추가하세요." : "공통 VPN 사이트 \(siteDomains.count)개를 불러왔습니다."
         } catch {
             siteMessage = "VPN 사이트를 불러오지 못했습니다: \(error.localizedDescription)"
         }
-    }
-
-    private func migrateLegacyProfileSiteRulesIfNeeded(store: DomainRuleStore) throws {
-        guard try store.loadRules(profileId: DomainRuleStore.sharedSiteRulesProfileId).isEmpty else {
-            return
-        }
-
-        let legacyDomains = try store.loadRules()
-            .filter { $0.profileId != DomainRuleStore.sharedSiteRulesProfileId && $0.enabled }
-            .map { DomainRuleExpander.normalize($0.domain) }
-        guard !legacyDomains.isEmpty else {
-            return
-        }
-
-        _ = try DomainRoutePlanService(ruleStore: store).replaceRules(
-            profileId: DomainRuleStore.sharedSiteRulesProfileId,
-            domains: legacyDomains
-        )
     }
 
     private func importConfigFile(_ result: Result<[URL], Error>) {
@@ -843,36 +1105,33 @@ struct ContentView: View {
                 return
             }
 
-            try importProfile(from: fileURL)
+            Task {
+                await performOperation(.importingProfile) {
+                    await importProfile(from: fileURL)
+                }
+            }
         } catch {
             importMessage = "프로필을 가져오지 못했습니다: \(error.localizedDescription)"
         }
     }
 
-    private func importProfile(from fileURL: URL) throws {
-        let didStartAccessing = fileURL.startAccessingSecurityScopedResource()
-        defer {
-            if didStartAccessing {
-                fileURL.stopAccessingSecurityScopedResource()
-            }
-        }
-
-        let configText = try String(contentsOf: fileURL, encoding: .utf8)
+    private func importProfile(from fileURL: URL) async {
         let safeDisplayName = profileName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? fileURL.deletingPathExtension().lastPathComponent
             : profileName
-        let store = try ProfileStore()
-        let service = ProfileImportService(profileStore: store)
-        let profile = try service.importProfile(
-            displayName: safeDisplayName,
-            configText: configText
-        )
-
-        profiles = try store.loadProfiles().sorted { $0.updatedAt > $1.updatedAt }
-        selectedProfileId = profile.id
-        profileName = ""
-        selectedConfigFileName = fileURL.lastPathComponent
-        importMessage = "\(profile.displayName) 프로필을 가져왔습니다. 개인 키는 키체인에 저장했습니다."
+        do {
+            let result = try await AppBackgroundWork.importProfile(
+                from: fileURL,
+                displayName: safeDisplayName
+            )
+            profiles = result.profiles
+            selectedProfileId = result.profile.id
+            profileName = ""
+            selectedConfigFileName = fileURL.lastPathComponent
+            importMessage = "\(result.profile.displayName) 프로필을 가져왔습니다. 개인 키는 키체인에 저장했습니다."
+        } catch {
+            importMessage = "프로필을 가져오지 못했습니다: \(error.localizedDescription)"
+        }
     }
 
     private func deleteProfile(_ profile: ProfileMetadata) async {
@@ -891,10 +1150,7 @@ struct ContentView: View {
                 }
             }
 
-            let profileStore = try ProfileStore()
-            let remainingProfiles = try profileStore.deleteProfile(id: profile.id)
-                .sorted { $0.updatedAt > $1.updatedAt }
-            try KeychainSecretStore().deletePrivateKey(profileId: profile.id)
+            let remainingProfiles = try await AppBackgroundWork.deleteProfile(id: profile.id)
 
             profiles = remainingProfiles
             if selectedProfileId == profile.id {
@@ -905,7 +1161,7 @@ struct ContentView: View {
                 routePlanProfileId = nil
             }
             profilePendingDeletion = nil
-            loadSiteDomainsForSelectedProfile()
+            await loadSiteDomainsForSelectedProfile()
             importMessage = "\(profile.displayName) 프로필과 키체인 개인 키를 삭제했습니다. VPN 사이트 목록은 유지했습니다."
             lastMessage = "\(profile.displayName) 프로필을 삭제했습니다. VPN 사이트 목록은 다른 프로필에도 사용할 수 있습니다."
         } catch {
@@ -916,6 +1172,7 @@ struct ContentView: View {
     private func addSiteDomain() {
         guard let domain = normalizedSiteDomainInput else {
             siteMessage = "example.com과 같은 올바른 도메인을 입력하세요."
+            focusedField = .siteDomain
             return
         }
 
@@ -957,13 +1214,9 @@ struct ContentView: View {
         }
 
         do {
-            let store = try DomainRuleStore()
-            let service = DomainRoutePlanService(ruleStore: store)
-            _ = try service.replaceRules(
-                profileId: DomainRuleStore.sharedSiteRulesProfileId,
+            let plan = try await AppBackgroundWork.replaceRulesAndBuildPlan(
                 domains: siteDomains
             )
-            let plan = try service.buildPlan(profileId: DomainRuleStore.sharedSiteRulesProfileId)
             routePlan = plan
             routePlanProfileId = selectedProfile.id
             if plan.includedRoutes.isEmpty {
@@ -981,21 +1234,14 @@ struct ContentView: View {
         }
     }
 
-    private func routePlanForInstall(profileId: ProfileMetadata.ID) throws -> DomainRoutePlan {
+    private func routePlanForInstall(profileId: ProfileMetadata.ID) async throws -> DomainRoutePlan {
         let plan: DomainRoutePlan
         if let routePlan,
            routePlanProfileId == profileId,
            !DomainRouteRefreshPolicy.standard.needsRefresh(routePlan) {
             plan = routePlan
         } else {
-            let store = try DomainRuleStore()
-            try migrateLegacyProfileSiteRulesIfNeeded(store: store)
-            let rules = try store.loadRules(profileId: DomainRuleStore.sharedSiteRulesProfileId)
-            guard !rules.isEmpty else {
-                throw TunnelConfigurationError.noRouteRules
-            }
-
-            plan = try DomainRoutePlanService(ruleStore: store).buildPlan(profileId: DomainRuleStore.sharedSiteRulesProfileId)
+            plan = try await AppBackgroundWork.buildSharedRoutePlan()
             routePlan = plan
             routePlanProfileId = profileId
         }
@@ -1046,7 +1292,7 @@ struct ContentView: View {
         }
 
         do {
-            let selectedRoutePlan = try routePlanForInstall(profileId: selectedProfile.id)
+            let selectedRoutePlan = try await routePlanForInstall(profileId: selectedProfile.id)
             let tunnelProtocol = try makeSelectedProfileProtocol(selectedProfile, routePlan: selectedRoutePlan)
             let manager = try await loadOrCreateManager(preferPhase1: true)
 
@@ -1092,7 +1338,7 @@ struct ContentView: View {
         do {
             var manager = try await loadOrCreateManager(preferPhase1: true)
             if let selectedProfile {
-                let selectedRoutePlan = try routePlanForInstall(profileId: selectedProfile.id)
+                let selectedRoutePlan = try await routePlanForInstall(profileId: selectedProfile.id)
                 let tunnelProtocol = try makeSelectedProfileProtocol(selectedProfile, routePlan: selectedRoutePlan)
                 try await saveTunnelConfiguration(
                     manager: manager,
@@ -1203,9 +1449,7 @@ struct ContentView: View {
             throw TunnelConfigurationError.missingPacketTunnelSession
         }
 
-        let store = try DomainRuleStore()
-        let staticPlan = try DomainRoutePlanService(ruleStore: store)
-            .buildPlan(profileId: DomainRuleStore.sharedSiteRulesProfileId)
+        let staticPlan = try await AppBackgroundWork.buildSharedRoutePlan()
         guard !staticPlan.includedRoutes.isEmpty else {
             throw TunnelConfigurationError.emptyRoutePlan(
                 unresolvedCount: staticPlan.unresolvedDomains.count
@@ -1413,7 +1657,12 @@ struct ContentView: View {
             guard !Task.isCancelled && status == .connected else {
                 return
             }
-            await refreshConnectedRoutePlan()
+            guard activeOperation == nil else {
+                continue
+            }
+            await performOperation(.refreshingRoutes) {
+                await refreshConnectedRoutePlan()
+            }
         }
     }
 
@@ -1433,9 +1682,7 @@ struct ContentView: View {
         }
 
         do {
-            let store = try DomainRuleStore()
-            let refreshedPlan = try DomainRoutePlanService(ruleStore: store)
-                .buildPlan(profileId: DomainRuleStore.sharedSiteRulesProfileId)
+            let refreshedPlan = try await AppBackgroundWork.buildSharedRoutePlan()
             guard !refreshedPlan.includedRoutes.isEmpty else {
                 throw TunnelConfigurationError.emptyRoutePlan(
                     unresolvedCount: refreshedPlan.unresolvedDomains.count
@@ -1559,6 +1806,215 @@ struct ContentView: View {
             }
         }
     }
+
+    private func performOperation(
+        _ operation: AppOperation,
+        action: () async -> Void
+    ) async {
+        guard activeOperation == nil else {
+            lastMessage = "현재 \(activeOperation?.progressLabel ?? "다른 작업")이 끝난 뒤 다시 시도하세요."
+            return
+        }
+
+        activeOperation = operation
+        defer {
+            activeOperation = nil
+        }
+        await action()
+    }
+
+    private func prepareTroubleshootingExport() {
+        do {
+            let report = makeTroubleshootingReport()
+            let data = try TroubleshootingReportEncoder.encode(report)
+            troubleshootingReportDocument = TroubleshootingReportDocument(data: data)
+            troubleshootingReportFilename = "VPNRouter-Diagnostics-\(exportTimestamp())"
+            isExportingTroubleshootingReport = true
+        } catch {
+            diagnosticExportMessage = "진단 파일을 준비하지 못했습니다: \(error.localizedDescription)"
+        }
+    }
+
+    private func finishTroubleshootingExport(_ result: Result<URL, Error>) {
+        troubleshootingReportDocument = nil
+
+        switch result {
+        case .success(let fileURL):
+            diagnosticExportMessage = "비밀정보를 제외한 진단 파일을 저장했습니다: \(fileURL.lastPathComponent)"
+        case .failure(let error):
+            let cocoaError = error as NSError
+            if cocoaError.domain == NSCocoaErrorDomain,
+               cocoaError.code == NSUserCancelledError {
+                diagnosticExportMessage = "진단 파일 저장을 취소했습니다."
+            } else {
+                diagnosticExportMessage = "진단 파일을 저장하지 못했습니다: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func removeVPNRouterConfigurations() async {
+        guard !canStop else {
+            diagnosticExportMessage = "VPN 연결을 먼저 해제한 뒤 설치 구성을 제거하세요."
+            return
+        }
+
+        do {
+            let managers = try await NETunnelProviderManager.loadAllFromPreferences()
+            let ownedManagers = managers.filter(isVPNRouterOwnedManager)
+            for ownedManager in ownedManagers {
+                try await ownedManager.removeFromPreferences()
+            }
+
+            manager = nil
+            status = .invalid
+            routePlan = nil
+            routePlanProfileId = nil
+            diagnosticExportMessage = ownedManagers.isEmpty
+                ? "제거할 VPN Router 시스템 구성이 없습니다."
+                : "VPN Router 시스템 구성 \(ownedManagers.count)개를 제거했습니다. 저장된 프로필과 사이트 목록은 유지했습니다."
+        } catch {
+            diagnosticExportMessage = "VPN Router 시스템 구성을 제거하지 못했습니다: \(error.localizedDescription)"
+        }
+    }
+
+    private func isVPNRouterOwnedManager(_ candidate: NETunnelProviderManager) -> Bool {
+        guard
+            candidate.localizedDescription == "VPN Router",
+            let tunnelProtocol = candidate.protocolConfiguration as? NETunnelProviderProtocol
+        else {
+            return false
+        }
+        return tunnelProtocol.providerBundleIdentifier
+            == TunnelIdentifiers.packetTunnelBundleIdentifier
+    }
+
+    private func makeTroubleshootingReport() -> TroubleshootingReport {
+        let activePlan = routePlan ?? manager.flatMap(providerPayload(for:))?.routePlan
+        let info = Bundle.main.infoDictionary
+        return TroubleshootingReport(
+            app: .init(
+                version: info?["CFBundleShortVersionString"] as? String ?? "0.1.0",
+                build: info?["CFBundleVersion"] as? String ?? "unknown"
+            ),
+            system: .init(
+                operatingSystem: ProcessInfo.processInfo.operatingSystemVersionString,
+                architecture: currentArchitecture
+            ),
+            connection: .init(
+                state: diagnosticConnectionState,
+                configurationInstalled: manager?.protocolConfiguration != nil,
+                packetTunnelSessionAvailable: manager?.connection is NETunnelProviderSession
+            ),
+            routing: .init(
+                plannedRouteCount: activePlan?.includedRoutes.count ?? 0,
+                unresolvedDomainCount: activePlan?.unresolvedDomains.count ?? 0,
+                ipv6BypassRiskDomainCount: activePlan?.ipv6BypassDomains.count ?? 0,
+                generatedAt: activePlan?.generatedAt,
+                expiresAt: activePlan?.expiresAt
+            ),
+            storage: .init(
+                profileCount: profiles.count,
+                selectedSiteCount: siteDomains.count
+            ),
+            protection: .init(
+                routeExpiryDisconnectEnabled: failSafeEnabled,
+                stateOwnership: "vpn-router-only"
+            ),
+            lifecycle: .init(
+                networkState: lifecycleMonitor.networkState,
+                networkChangeCount: lifecycleMonitor.networkChangeCount,
+                sleepCount: lifecycleMonitor.sleepCount,
+                wakeCount: lifecycleMonitor.wakeCount
+            )
+        )
+    }
+
+    private var diagnosticConnectionState: String {
+        switch status {
+        case .invalid: return "invalid"
+        case .disconnected: return "disconnected"
+        case .connecting: return "connecting"
+        case .connected: return "connected"
+        case .reasserting: return "reasserting"
+        case .disconnecting: return "disconnecting"
+        @unknown default: return "unknown"
+        }
+    }
+
+    private var currentArchitecture: String {
+#if arch(arm64)
+        return "arm64"
+#elseif arch(x86_64)
+        return "x86_64"
+#else
+        return "unknown"
+#endif
+    }
+
+    private func exportTimestamp() -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        return formatter.string(from: Date())
+    }
+
+    private func announceForVoiceOver(_ message: String) {
+        guard let application = NSApp else {
+            return
+        }
+        NSAccessibility.post(
+            element: application,
+            notification: .announcementRequested,
+            userInfo: [
+                .announcement: message,
+                .priority: 50
+            ]
+        )
+    }
+}
+
+private enum AppOperation: String {
+    case importingProfile
+    case deletingProfile
+    case buildingRoutes
+    case installingProfile
+    case installingTestConfiguration
+    case connecting
+    case refreshingRoutes
+    case checkingTunnel
+    case removingConfiguration
+
+    var progressLabel: String {
+        switch self {
+        case .importingProfile:
+            return "VPN 프로필을 가져오는 중"
+        case .deletingProfile:
+            return "VPN 프로필을 삭제하는 중"
+        case .buildingRoutes:
+            return "사이트 주소와 경로를 확인하는 중"
+        case .installingProfile:
+            return "VPN 프로필 구성을 설치하는 중"
+        case .installingTestConfiguration:
+            return "테스트 구성을 설치하는 중"
+        case .connecting:
+            return "VPN 연결을 준비하는 중"
+        case .refreshingRoutes:
+            return "VPN 경로를 새로고치는 중"
+        case .checkingTunnel:
+            return "Packet Tunnel 상태를 확인하는 중"
+        case .removingConfiguration:
+            return "VPN Router 시스템 구성을 제거하는 중"
+        }
+    }
+
+    var accessibilityLabel: String {
+        "\(progressLabel)입니다. 완료될 때까지 관련 작업을 사용할 수 없습니다."
+    }
+}
+
+private enum FocusedField: Hashable {
+    case profileName
+    case siteDomain
 }
 
 private final class ProviderMessageContinuationGate<Value>: @unchecked Sendable {
@@ -1603,8 +2059,8 @@ private struct RoutePlanSummary: View {
             .font(.callout)
             .foregroundStyle(.secondary)
 
-            List {
-                Section("VPN으로 보내는 경로") {
+            VStack(alignment: .leading, spacing: 14) {
+                DisclosureGroup("VPN으로 보내는 경로") {
                     ForEach(plan.includedRoutes.prefix(24), id: \.destinationAddress) { route in
                         VStack(alignment: .leading, spacing: 4) {
                             Text("\(route.destinationAddress)/32")
@@ -1613,28 +2069,30 @@ private struct RoutePlanSummary: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
+                        .padding(.vertical, 4)
                     }
                 }
 
                 if !plan.unresolvedDomains.isEmpty {
-                    Section("주소를 찾지 못한 도메인") {
+                    DisclosureGroup("주소를 찾지 못한 도메인") {
                         ForEach(plan.unresolvedDomains.prefix(24), id: \.self) { domain in
                             Text(domain)
                                 .font(.system(.body, design: .monospaced))
+                                .padding(.vertical, 2)
                         }
                     }
                 }
 
                 if !plan.ipv6BypassDomains.isEmpty {
-                    Section("IPv6 우회 위험") {
+                    DisclosureGroup("IPv6 우회 위험") {
                         ForEach(plan.ipv6BypassDomains.prefix(24), id: \.self) { domain in
                             Text(domain)
                                 .font(.system(.body, design: .monospaced))
+                                .padding(.vertical, 2)
                         }
                     }
                 }
             }
-            .listStyle(.inset)
         }
     }
 }
@@ -1643,14 +2101,36 @@ private struct DiagnosticMessageView: View {
     let message: String
 
     var body: some View {
-        ScrollView {
-            Text(message)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
+        Text(message)
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .textSelection(.enabled)
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .topLeading)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(message)
+    }
+}
+
+private struct TroubleshootingReportDocument: FileDocument {
+    static var readableContentTypes: [UTType] {
+        [.json]
+    }
+
+    let data: Data
+
+    init(data: Data) {
+        self.data = data
+    }
+
+    init(configuration: ReadConfiguration) throws {
+        guard let data = configuration.file.regularFileContents else {
+            throw CocoaError(.fileReadCorruptFile)
         }
-        .frame(minHeight: 64, maxHeight: 140)
+        self.data = data
+    }
+
+    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
+        FileWrapper(regularFileWithContents: data)
     }
 }
 

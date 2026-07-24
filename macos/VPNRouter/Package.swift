@@ -19,6 +19,7 @@ let package = Package(
             path: "VPNRouter/Shared",
             exclude: ["Profiles", "WireGuard"],
             sources: [
+                "Diagnostics/TroubleshootingReport.swift",
                 "Rules/DomainRule.swift",
                 "Rules/DomainRuleExpander.swift",
                 "Rules/DynamicRoutePlanMerger.swift",

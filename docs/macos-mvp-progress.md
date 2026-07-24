@@ -1,10 +1,10 @@
 # VPN Router macOS MVP progress
 
-Last updated: 2026-07-24 KST
+Last updated: 2026-07-25 KST
 
 ## Current phase
 
-Phase 3 complete: dynamic DNS discovery decision.
+Phase 4 complete for signed private dogfooding: consumer UI and release hardening.
 
 The signed DNS Proxy spike proved native UDP/TCP forwarding, XPC observations,
 simultaneous Packet Tunnel operation, TTL-bounded dynamic IPv4 route updates, and
@@ -12,6 +12,19 @@ clean teardown on this development Mac. The macOS MVP nevertheless keeps static
 pre-resolution as its default supported architecture because encrypted DNS,
 actually connected second-VPN coexistence, continuous ownership monitoring,
 Developer ID distribution provisioning, and IPv6 routing remain unverified.
+
+The Phase 4 technical baseline and remediation audit are recorded in
+`docs/macos-phase4-quality-audit.md`. The initial score was 12/20 with no P0
+blockers and five P1 findings. The automated remediation pass raises it to 17/20;
+the completed signed remediation and acceptance pass raises it to 18/20. Public
+distribution still requires a clean Release optimizer result without the
+documented Xcode 26.6 workaround.
+
+The automated Phase 4 implementation and owner-operated signed UI/lifecycle
+matrix are complete. Public Developer ID distribution remains intentionally
+blocked; `0.1.0` is approved only as a signed private Apple Silicon dogfood build.
+The connected-status VoiceOver announcement was owner-skipped and remains
+explicitly unverified.
 
 The macOS Xcode project has been generated at `macos/VPNRouter/VPNRouter.xcodeproj`
 with a SwiftUI host app and an embedded stub Packet Tunnel extension. The host app
@@ -29,14 +42,14 @@ and ignored.
 - Active developer directory: `/Applications/Xcode.app/Contents/Developer`.
 - Command Line Tools Swift: Apple Swift 6.3.3, targeting arm64 macOS 26.0.
 - Xcode first-launch check: complete.
-- Candidate minimum deployment target: macOS 14.0.
+- Supported dogfood deployment target: macOS 15.0.
 
 The active developer directory now points at Xcode, and an unqualified `xcodebuild`
 successfully reports Xcode 26.6.
 
-The macOS 14.0 deployment target is provisional. It keeps the first dogfooding build
-focused on currently supported Apple Silicon systems while leaving room to revise
-the support range after WireGuardKit integration and signed-device testing.
+The Phase 4 private-dogfood baseline is macOS 15.0 on Apple Silicon. The release
+verification script overrides older local project defaults without modifying or
+committing the owner's signing settings.
 
 ## Signing and entitlement inventory
 
@@ -463,6 +476,95 @@ verification.
   refresh or static restoration cannot wait indefinitely. Signed build 11 returned
   normal provider diagnostics through the guarded path with 27 applied routes,
   fail-safe enabled, and seven IPv6 bypass-risk domains reported.
+
+## Phase 4 progress
+
+- [x] Record a scored technical audit with P0-P3 priorities.
+- [x] Move profile, Keychain, rule persistence, DNS resolution, and route planning
+  work away from the SwiftUI main execution path.
+- [x] Add one-operation-at-a-time state, disabled conflicting controls, visible
+  progress, and VoiceOver progress labels.
+- [x] Hide the Phase 0 stub and DNS Proxy spike behind a Debug-only developer
+  option.
+- [x] Reduce the detail minimum width from 720 to 440 points.
+- [x] Reflow Profiles, Sites, tunnel controls, and action groups between horizontal
+  and vertical layouts using content-driven `ViewThatFits`.
+- [x] Give each detail page one vertical scroll owner and remove nested message and
+  route-list scroll views.
+- [x] Add target-specific delete labels, focusable profile selection, form hints,
+  keyboard shortcuts, and VPN status VoiceOver announcements.
+- [x] Add a schema-versioned troubleshooting export containing only bounded status,
+  counts, and timestamps. It has no fields for raw configuration, keys, domains,
+  addresses, DNS payloads, or free-form provider logs.
+- [x] Add disconnected-only removal of VPN Router-owned system preferences with
+  bundle-identifier ownership checks.
+- [x] Add read-only network path and sleep/wake diagnostics. Wake reloads
+  `NEVPNStatus`; no third-party or manual route state is changed.
+- [x] Add an accessible coral accent and a complete original 16-1024 pixel macOS
+  app icon set.
+- [x] Add an arm64/macOS 15 `0.1.0 (1)` release-verification script, privacy and
+  recovery README, distribution decision, notarization gate, and signed test
+  matrix.
+- [x] Verify the unsigned Release app, embedded Packet Tunnel, explicit version,
+  minimum OS override, and WireGuard Go archive checksum.
+- [x] Inspect compact/wide behavior in the final signed build. The owner confirmed
+  horizontal/vertical reflow, no clipping or overlap, full-page scrolling, visible
+  bottom status messages, and no trapped nested list scrolling on 2026-07-24.
+- [x] Inspect offline keyboard and VoiceOver behavior in the final signed build.
+  The owner confirmed the import shortcut, forward/reverse focus order, named
+  profile and site controls, selection state, and meaningful primary-button
+  descriptions on 2026-07-24. The owner chose to skip the connected-status
+  VoiceOver announcement check, so that item remains explicitly unverified.
+- [x] Inspect dark/high-contrast behavior in the final signed build. The owner
+  confirmed legible text, controls, selection, accent, warnings, disabled states,
+  and compact content with increased contrast on 2026-07-24.
+- [x] Add a persisted per-app screen-theme choice in Settings. Automatic follows
+  the current macOS appearance; Light and Dark override only VPN Router.
+- [x] Verify the per-app theme selector in the signed owner build. All three
+  choices applied immediately, Dark persisted across relaunch, and Automatic
+  followed the current macOS appearance on 2026-07-24.
+- [x] Run signed sleep/wake and network-change checks while connected.
+  Sleep/wake passed on 2026-07-25: both counters incremented, the Packet Tunnel
+  remained healthy with a future route-plan expiry, primary and `utun` routes
+  remained correctly separated, and selected/control sites worked. USB LAN path
+  transition also passed: the read-only counter advanced, 31 static routes were
+  refreshed, the tunnel stayed healthy, the default route returned to USB LAN,
+  and selected/control sites continued working.
+- [x] Save and inspect a redacted troubleshooting file from the signed UI.
+  The first attempt hit `EXC_BREAKPOINT` while constructing a direct
+  `NSSavePanel`. That modal AppKit path has been replaced with SwiftUI
+  `fileExporter`. The next attempt exposed a missing user-selected file write
+  entitlement; the Host App now has read/write access only for files selected
+  through the system panel. The final signed retry saved valid schema-versioned
+  JSON; owner inspection confirmed bounded status/count fields and no
+  configuration, key, domain, IP, DNS payload, or free-form log on 2026-07-24.
+- [x] Restore the arm64 Debug `libwg-go.a` after the signed-test Clean Build Folder
+  action removed the manually prepared WireGuard Go bridge product. This is the
+  known upstream Swift package integration limitation; another clean requires
+  rebuilding the bridge before Packet Tunnel can link.
+- [x] Re-test owned configuration removal while disconnected. The signed recovery
+  action removed the only VPN Router system preference and left zero connected
+  services and no routes on the previous `utun`, while preserving one imported
+  profile and three selected sites. After reinstalling from the preserved profile,
+  the owner also confirmed removal was disabled while connected and enabled after
+  disconnect.
+- [x] Re-run connect, selected/control routing, disconnect, relaunch, and extension
+  termination checks for the final signed build.
+  Signed connect and split-routing passed on 2026-07-24: 31 app routes were
+  applied, the system default route remained on the primary interface, VPN routes
+  were present on one `utun`, and both selected and control sites loaded. The
+  Host quit/relaunch also passed: the tunnel and routes survived without the Host
+  App, and relaunch resynchronized to connected without another connect request.
+  Sleep/wake, network transition, and final-build extension termination also
+  passed. Force-terminating only Packet Tunnel changed the app to disconnected,
+  removed all routes from its previous `utun`, preserved the primary default
+  route, and left ordinary internet access working. Disconnected owned
+  configuration removal and the final normal disconnect also passed. After normal
+  disconnect, the preference remained installed while the connection, provider
+  process, and VPN `utun` routes were gone.
+- [x] Decide/fix findings from the signed matrix, re-run the final audit at 18/20,
+  pass 35 core tests and Xcode Analyze, and verify the unsigned arm64/macOS 15
+  `0.1.0 (1)` Release package.
 
 ## Expected work list
 
