@@ -10,6 +10,40 @@ nonisolated struct TunnelProfileProviderConfiguration: Codable, Equatable {
     let routePlan: DomainRoutePlan
 }
 
+nonisolated struct TunnelRouteUpdateRequest: Codable, Equatable {
+    let schemaVersion: Int
+    let command: String
+    let profileId: UUID
+    let routePlan: DomainRoutePlan
+
+    init(profileId: UUID, routePlan: DomainRoutePlan) {
+        schemaVersion = 1
+        command = "replace-routes"
+        self.profileId = profileId
+        self.routePlan = routePlan
+    }
+}
+
+nonisolated struct TunnelRouteUpdateResponse: Codable, Equatable {
+    let schemaVersion: Int
+    let success: Bool
+    let message: String
+    let plannedRouteCount: Int
+    let routePlanExpiresAt: Date?
+}
+
+nonisolated struct TunnelFailSafeUpdateRequest: Codable, Equatable {
+    let schemaVersion: Int
+    let command: String
+    let failSafeEnabled: Bool
+
+    init(failSafeEnabled: Bool) {
+        schemaVersion = 1
+        command = "update-fail-safe"
+        self.failSafeEnabled = failSafeEnabled
+    }
+}
+
 enum TunnelProfileConfigurationFactory {
     nonisolated static func makeProtocol(
         profile: ProfileMetadata,

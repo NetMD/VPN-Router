@@ -40,6 +40,6 @@ struct ProfileImportService {
 
     private static func normalizedDisplayName(_ displayName: String) -> String {
         let trimmed = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? "Imported WireGuard Profile" : trimmed
+        return trimmed.isEmpty ? "가져온 WireGuard 프로필" : trimmed
     }
 }

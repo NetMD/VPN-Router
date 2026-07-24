@@ -7,7 +7,7 @@ enum WireGuardConfigParser {
 
     nonisolated static func parse(_ configText: String) throws -> WireGuardConfig {
         guard !configText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw WireGuardConfigError.invalid("WireGuard config is empty.")
+            throw WireGuardConfigError.invalid("WireGuard 설정 파일이 비어 있습니다.")
         }
 
         let sections = try parseSections(configText)
@@ -17,7 +17,7 @@ enum WireGuardConfigParser {
             .map(parsePeer)
 
         guard !peers.isEmpty else {
-            throw WireGuardConfigError.invalid("WireGuard config must contain at least one [Peer] section.")
+            throw WireGuardConfigError.invalid("WireGuard 설정에 [Peer] 항목이 하나 이상 필요합니다.")
         }
 
         let config = WireGuardConfig(
@@ -98,7 +98,7 @@ enum WireGuardConfigParser {
 
     private nonisolated static func validate(_ config: WireGuardConfig) throws {
         guard !config.interface.addresses.isEmpty else {
-            throw WireGuardConfigError.invalid("[Interface] must contain at least one Address.")
+            throw WireGuardConfigError.invalid("[Interface]에 Address가 하나 이상 필요합니다.")
         }
 
         try validateBase64LikeKey(config.interface.privateKey, key: "PrivateKey")
@@ -108,7 +108,7 @@ enum WireGuardConfigParser {
         }
 
         for dnsServer in config.interface.dnsServers where IPv4Address(dnsServer) == nil && IPv6Address(dnsServer) == nil {
-            throw WireGuardConfigError.invalid("DNS value is not a valid IP address: \(dnsServer)")
+            throw WireGuardConfigError.invalid("DNS 값이 올바른 IP 주소가 아닙니다: \(dnsServer)")
         }
 
         for peer in config.peers {
@@ -119,7 +119,7 @@ enum WireGuardConfigParser {
             }
 
             guard !peer.allowedIPs.isEmpty else {
-                throw WireGuardConfigError.invalid("[Peer] must contain at least one AllowedIPs value.")
+                throw WireGuardConfigError.invalid("[Peer]에 AllowedIPs 값이 하나 이상 필요합니다.")
             }
 
             for allowedIP in peer.allowedIPs {
@@ -143,7 +143,7 @@ enum WireGuardConfigParser {
             if line.hasPrefix("["), line.hasSuffix("]") {
                 let sectionName = String(line.dropFirst().dropLast()).trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !sectionName.isEmpty else {
-                    throw WireGuardConfigError.invalid("Empty section name at line \(lineNumber).")
+                    throw WireGuardConfigError.invalid("\(lineNumber)번째 줄의 섹션 이름이 비어 있습니다.")
                 }
 
                 currentSection = ParsedSection(name: sectionName)
@@ -152,11 +152,11 @@ enum WireGuardConfigParser {
             }
 
             guard currentSection != nil else {
-                throw WireGuardConfigError.invalid("Key/value pair appears before any section at line \(lineNumber).")
+                throw WireGuardConfigError.invalid("\(lineNumber)번째 줄의 키/값이 섹션보다 먼저 나왔습니다.")
             }
 
             guard let split = splitKeyValue(line) else {
-                throw WireGuardConfigError.invalid("Invalid key/value line at line \(lineNumber).")
+                throw WireGuardConfigError.invalid("\(lineNumber)번째 줄의 키/값 형식이 올바르지 않습니다.")
             }
 
             currentSection?.values[split.key.lowercased()] = split.value
@@ -168,7 +168,7 @@ enum WireGuardConfigParser {
 
     private nonisolated static func requiredSection(_ sections: [ParsedSection], named name: String) throws -> ParsedSection {
         guard let section = sections.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) else {
-            throw WireGuardConfigError.invalid("WireGuard config must contain [\(name)] section.")
+            throw WireGuardConfigError.invalid("WireGuard 설정에 [\(name)] 섹션이 필요합니다.")
         }
 
         return section
@@ -176,7 +176,7 @@ enum WireGuardConfigParser {
 
     private nonisolated static func requiredValue(_ values: [String: String], key: String, sectionName: String) throws -> String {
         guard let value = values[key.lowercased()], !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw WireGuardConfigError.invalid("[\(sectionName)] must contain \(key).")
+            throw WireGuardConfigError.invalid("[\(sectionName)]에 \(key) 값이 필요합니다.")
         }
 
         return value
@@ -209,7 +209,7 @@ enum WireGuardConfigParser {
         }
 
         guard let parsed = Int(value), parsed >= 0, parsed <= 65_535 else {
-            throw WireGuardConfigError.invalid("\(key) must be a valid port/interval integer.")
+            throw WireGuardConfigError.invalid("\(key) 값은 올바른 포트 또는 간격 정수여야 합니다.")
         }
 
         return parsed
@@ -217,14 +217,14 @@ enum WireGuardConfigParser {
 
     private nonisolated static func validateBase64LikeKey(_ value: String, key: String) throws {
         guard value.count >= 32 else {
-            throw WireGuardConfigError.invalid("\(key) is too short to be a valid WireGuard key.")
+            throw WireGuardConfigError.invalid("\(key) 값이 올바른 WireGuard 키로 사용하기에 너무 짧습니다.")
         }
     }
 
     private nonisolated static func validateCIDR(_ value: String, key: String) throws {
         let parts = value.split(separator: "/", omittingEmptySubsequences: false)
         guard parts.count == 2, let prefix = Int(parts[1]) else {
-            throw WireGuardConfigError.invalid("\(key) value must be CIDR notation: \(value)")
+            throw WireGuardConfigError.invalid("\(key) 값은 CIDR 형식이어야 합니다: \(value)")
         }
 
         let address = String(parts[0])
@@ -234,11 +234,11 @@ enum WireGuardConfigParser {
         } else if IPv6Address(address) != nil {
             maxPrefix = 128
         } else {
-            throw WireGuardConfigError.invalid("\(key) value must be CIDR notation: \(value)")
+            throw WireGuardConfigError.invalid("\(key) 값은 CIDR 형식이어야 합니다: \(value)")
         }
 
         guard prefix >= 0, prefix <= maxPrefix else {
-            throw WireGuardConfigError.invalid("\(key) prefix is out of range: \(value)")
+            throw WireGuardConfigError.invalid("\(key) 접두사 범위를 벗어났습니다: \(value)")
         }
     }
 

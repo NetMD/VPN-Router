@@ -1,6 +1,6 @@
 # VPN Router macOS MVP progress
 
-Last updated: 2026-07-21 KST
+Last updated: 2026-07-24 KST
 
 ## Current phase
 
@@ -208,6 +208,80 @@ A fake-key `RunCodeSnippet` check verified that:
   address (`172.217.209.136`) routed through `utun7`. A forced HTTPS request to
   `www.youtube.com` resolved to that routed IP returned `HTTP/2 200`, confirming
   selected traffic can pass through the tunnel.
+- A Swift Package test harness now compiles the app's actual shared rule and route
+  planner sources. The initial focused tests cover domain normalization, YouTube and
+  Netflix expansion, disabled rules, IPv4 validation, subdomain matching, route
+  deduplication, and route-count enforcement. `swift test` passes all eight tests.
+- Static route plans now deduplicate by destination IPv4 address rather than by
+  address/domain pair. If multiple selected CDN domains resolve to the same address,
+  Network Extension receives one `/32` route with a deterministic source-domain
+  label. Plans exceeding 512 unique IPv4 routes fail before tunnel installation.
+- The unsigned Xcode build succeeds after preparing `libwg-go.a` in the selected
+  temporary DerivedData products directory. A fresh DerivedData directory still
+  requires the existing WireGuard Go bridge preparation step before linking.
+- Static route plans now carry generation and expiration timestamps. The provisional
+  Phase 2 policy refreshes after five minutes and expires a plan after fifteen
+  minutes. Previously installed payloads without timestamps receive a bounded
+  fifteen-minute lifetime when the provider loads them.
+- While connected, the host app rebuilds the pre-resolved route plan every five
+  minutes and sends a schema-versioned `replace-routes` provider message containing
+  only the profile id and route plan. It does not send sanitized configuration text
+  or Keychain material in the live-update message. A manual **Refresh Routes** action
+  uses the same path.
+- PacketTunnel validates the active profile, non-empty `/32` routes, uniqueness,
+  expiry, and the 512-route limit before calling `WireGuardAdapter.update`. A failed
+  update retains the previous bounded plan. A successful update replaces the
+  WireGuard AllowedIPs and Network Extension settings and resets the provider-owned
+  expiration timer. If no refresh succeeds before expiry, the provider requests
+  tunnel cancellation instead of allowing an indefinitely stale split-route plan.
+- A signed real-Mac run verified live route replacement. A manual update at
+  01:09:08 KST and the next automatic five-minute update at 01:14:19 KST each
+  entered `reasserting` briefly and returned to Connected without replacing
+  `utun7`. After the automatic update, 25 selected `/32` routes remained on
+  `utun7`, the control address and WireGuard endpoint remained on `en6`, and a
+  forced YouTube request returned HTTP/2 200. Expiry cancellation remains an
+  intentionally disruptive signed test and has not yet been run.
+- Route planning now checks selected and media-expanded domains for usable AAAA
+  answers without recording the IPv6 addresses themselves. Matching domains are
+  carried as an IPv6 bypass-risk list in the versioned plan. Home, VPN Sites,
+  connect/refresh status, and provider diagnostics clearly warn that the current
+  IPv4-only MVP cannot route those IPv6 connections.
+- `swift test` now passes thirteen focused tests, including deterministic lifetime,
+  refresh/expiration boundaries, and backward-compatible decoding of older route
+  plans plus IPv6 bypass-domain filtering. The unsigned Xcode host/extension build
+  also succeeds. The new IPv6 warning UI still needs inspection in a signed build.
+- Settings now provides **경로 계획 만료 시 자동으로 연결 해제**. The value is
+  shared with PacketTunnel through App Group `UserDefaults`, defaults to enabled,
+  and updates the active provider immediately through a schema-versioned message.
+  Disabling it requires a destructive-style confirmation that explains stale routes
+  may allow selected sites to bypass the VPN. Home also keeps an orange warning
+  visible while the protection is disabled.
+- The SwiftUI navigation, forms, buttons, empty states, confirmation dialogs, status
+  messages, route summaries, diagnostics, and user-facing parser/runtime errors are
+  now written in Korean. Protocol names such as WireGuard and Packet Tunnel, IP
+  terminology, domain names, and internal configuration keys retain their technical
+  names where translation would reduce clarity.
+- Two focused settings tests verify that fail-safe protection defaults to enabled and
+  persists both enabled and disabled values. `swift test` now passes fifteen tests,
+  and the unsigned Xcode host/extension build succeeds.
+- A signed real-Mac expiry test paused only the host app after a manual route refresh,
+  leaving PacketTunnel connected without its five-minute refresh source. With the
+  fail-safe at its default enabled value, the VPN changed from Connected to
+  Disconnected at the fifteen-minute plan boundary. The selected `utun` routes were
+  removed, and resuming the host app did not silently reconnect the expired tunnel.
+- A connected-app lifecycle check confirmed that quitting the SwiftUI host leaves the
+  Packet Tunnel connected, and reopening the signed app starts one host instance and
+  resynchronizes to Connected. Terminating the PacketTunnel process changed the VPN
+  to Disconnected within about five seconds and removed the selected routes; a normal
+  reconnect launched a new extension process and restored the selected routes.
+- Streaming dogfooding is only partially successful. Forcing `www.youtube.com` to a
+  currently routed YouTube IPv4 address returned HTTP/2 200 and YouTube context
+  country `JP`, confirming that selected traffic can use the Japanese exit. However,
+  fresh `www.youtube.com` and `www.netflix.com` answers, and later rotating root-domain
+  answers, were not always present in the static route plan and therefore used the
+  normal `en6` route. The current pre-resolution expansion must cover the concrete
+  `www` hosts and address DNS answer rotation before the combined YouTube/Netflix
+  Japan-exit acceptance item can pass.
 
 No real WireGuard `.conf` or private key was read, printed, or stored during this
 verification.
@@ -229,6 +303,19 @@ verification.
 - [x] Connect parsed configuration to WireGuardKit and the Packet Tunnel provider.
 - [x] Keep profile deletion separate from the shared VPN Sites list.
 - [x] Avoid installing WireGuard profile DNS globally in Phase 1 split-route mode.
+
+## Phase 2 progress
+
+- [x] Add domain normalization tests.
+- [x] Add YouTube and Netflix expansion tests.
+- [x] Deduplicate resolved routes by destination IPv4 address.
+- [x] Reject route plans above a bounded 512-route safety limit.
+- [x] Add a five-minute refresh and fifteen-minute route-plan TTL policy.
+- [x] Implement schema-versioned live route replacement through `WireGuardAdapter.update`.
+- [x] Verify live route replacement on a signed real-Mac build.
+- [x] Verify expiry cancellation on a signed real-Mac build.
+- [x] Detect AAAA answers and clearly report IPv6 bypass risk.
+- [x] Record YouTube and Netflix Japan-exit dogfooding checks (partial failure: static DNS answer coverage).
 
 ## Expected work list
 

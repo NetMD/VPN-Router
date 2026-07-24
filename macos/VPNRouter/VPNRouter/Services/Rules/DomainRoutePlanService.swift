@@ -18,21 +18,25 @@ nonisolated struct DomainRoutePlanService {
             .filter(\.enabled)
             .map { DomainRuleExpander.normalize($0.domain) }
         let resolvedAddresses = try resolver.resolveIPv4Addresses(for: expandedDomains)
+        let resolvedIPv6Domains = try resolver.resolveIPv6Domains(for: expandedDomains)
 
         return try DomainRoutePlanner.buildPlan(
             rules: rules,
-            resolvedAddresses: resolvedAddresses
+            resolvedAddresses: resolvedAddresses,
+            resolvedIPv6Domains: resolvedIPv6Domains
         )
     }
 
     func buildPlan(
         profileId: UUID,
-        resolvedAddresses: [ResolvedDomainAddress]
+        resolvedAddresses: [ResolvedDomainAddress],
+        resolvedIPv6Domains: [String] = []
     ) throws -> DomainRoutePlan {
         let rules = try ruleStore.loadRules(profileId: profileId)
         return try DomainRoutePlanner.buildPlan(
             rules: rules,
-            resolvedAddresses: resolvedAddresses
+            resolvedAddresses: resolvedAddresses,
+            resolvedIPv6Domains: resolvedIPv6Domains
         )
     }
 

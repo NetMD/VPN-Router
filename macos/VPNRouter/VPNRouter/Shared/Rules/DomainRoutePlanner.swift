@@ -21,15 +21,63 @@ nonisolated struct DomainRoutePlan: Codable, Equatable {
     let domains: [String]
     let includedRoutes: [IPv4RouteDescriptor]
     let unresolvedDomains: [String]
+    let ipv6BypassDomains: [String]
+    let generatedAt: Date
+    let expiresAt: Date
+
+    init(
+        domains: [String],
+        includedRoutes: [IPv4RouteDescriptor],
+        unresolvedDomains: [String],
+        ipv6BypassDomains: [String] = [],
+        generatedAt: Date,
+        expiresAt: Date
+    ) {
+        self.domains = domains
+        self.includedRoutes = includedRoutes
+        self.unresolvedDomains = unresolvedDomains
+        self.ipv6BypassDomains = ipv6BypassDomains
+        self.generatedAt = generatedAt
+        self.expiresAt = expiresAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case domains
+        case includedRoutes
+        case unresolvedDomains
+        case ipv6BypassDomains
+        case generatedAt
+        case expiresAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        domains = try container.decode([String].self, forKey: .domains)
+        includedRoutes = try container.decode([IPv4RouteDescriptor].self, forKey: .includedRoutes)
+        unresolvedDomains = try container.decode([String].self, forKey: .unresolvedDomains)
+        ipv6BypassDomains = try container.decodeIfPresent([String].self, forKey: .ipv6BypassDomains) ?? []
+
+        let decodedGeneratedAt = try container.decodeIfPresent(Date.self, forKey: .generatedAt) ?? Date()
+        generatedAt = decodedGeneratedAt
+        expiresAt = try container.decodeIfPresent(Date.self, forKey: .expiresAt)
+            ?? DomainRouteRefreshPolicy.standard.expirationDate(for: decodedGeneratedAt)
+    }
 }
 
 enum DomainRoutePlanner {
+    nonisolated static let defaultMaximumRouteCount = 512
     private nonisolated static let hostRouteSubnetMask = "255.255.255.255"
 
     nonisolated static func buildPlan(
         rules: [DomainRule],
-        resolvedAddresses: [ResolvedDomainAddress]
+        resolvedAddresses: [ResolvedDomainAddress],
+        resolvedIPv6Domains: [String] = [],
+        maximumRouteCount: Int = defaultMaximumRouteCount,
+        generatedAt: Date = Date(),
+        refreshPolicy: DomainRouteRefreshPolicy = .standard
     ) throws -> DomainRoutePlan {
+        precondition(maximumRouteCount >= 0, "maximumRouteCount must not be negative")
+
         let expandedRules = DomainRuleExpander.expand(rules).filter(\.enabled)
         let normalizedRules = expandedRules.map { rule in
             NormalizedRule(
@@ -38,9 +86,12 @@ enum DomainRoutePlanner {
             )
         }
         let plannedDomains = Array(Set(normalizedRules.map(\.domain))).sorted()
+        let ipv6BypassDomains = Array(Set(resolvedIPv6Domains.compactMap { value -> String? in
+            let domain = DomainRuleExpander.normalize(value)
+            return normalizedRules.contains(where: { $0.matches(domain) }) ? domain : nil
+        })).sorted()
 
-        var plannedRoutes: [IPv4RouteDescriptor] = []
-        var routeKeys = Set<String>()
+        var sourceDomainsByAddress: [String: String] = [:]
         var resolvedDomains = Set<String>()
 
         for address in resolvedAddresses {
@@ -54,16 +105,26 @@ enum DomainRoutePlanner {
             }
 
             resolvedDomains.insert(domain)
-            let routeKey = "\(address.ipv4Address)|\(domain)"
-            guard routeKeys.insert(routeKey).inserted else {
-                continue
+            if let existingDomain = sourceDomainsByAddress[address.ipv4Address] {
+                sourceDomainsByAddress[address.ipv4Address] = min(existingDomain, domain)
+            } else {
+                sourceDomainsByAddress[address.ipv4Address] = domain
             }
+        }
 
-            plannedRoutes.append(IPv4RouteDescriptor(
-                destinationAddress: address.ipv4Address,
+        guard sourceDomainsByAddress.count <= maximumRouteCount else {
+            throw DomainRoutePlannerError.routeLimitExceeded(
+                limit: maximumRouteCount,
+                actual: sourceDomainsByAddress.count
+            )
+        }
+
+        let plannedRoutes = sourceDomainsByAddress.map { address, sourceDomain in
+            IPv4RouteDescriptor(
+                destinationAddress: address,
                 subnetMask: hostRouteSubnetMask,
-                sourceDomain: domain
-            ))
+                sourceDomain: sourceDomain
+            )
         }
 
         return DomainRoutePlan(
@@ -76,18 +137,24 @@ enum DomainRoutePlanner {
             },
             unresolvedDomains: plannedDomains.filter { domain in
                 !resolvedDomains.contains(domain)
-            }
+            },
+            ipv6BypassDomains: ipv6BypassDomains,
+            generatedAt: generatedAt,
+            expiresAt: refreshPolicy.expirationDate(for: generatedAt)
         )
     }
 }
 
 enum DomainRoutePlannerError: LocalizedError, Equatable {
     case invalidIPv4Address(String)
+    case routeLimitExceeded(limit: Int, actual: Int)
 
     var errorDescription: String? {
         switch self {
         case .invalidIPv4Address(let address):
-            return "Resolved address is not a valid IPv4 address: \(address)"
+            return "확인된 주소가 올바른 IPv4 주소가 아닙니다: \(address)"
+        case .routeLimitExceeded(let limit, let actual):
+            return "경로 계획에 IPv4 경로가 \(actual)개 있어 안전 제한 \(limit)개를 초과했습니다."
         }
     }
 }

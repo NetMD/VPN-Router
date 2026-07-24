@@ -114,9 +114,9 @@ enum KeychainSecretStoreError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .invalidSecretEncoding:
-            return "Secret could not be encoded or decoded as UTF-8."
+            return "개인 키 데이터를 처리하지 못했습니다."
         case .unexpectedStatus(let status):
-            return "Keychain operation failed with status \(status)."
+            return "키체인 작업에 실패했습니다. 상태 코드: \(status)"
         }
     }
 }

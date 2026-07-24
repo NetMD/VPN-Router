@@ -3,6 +3,7 @@
 .DS_Store
 xcuserdata/
 *.xcuserstate
+.build/
 bin/
 obj/
 *.user

@@ -5,21 +5,24 @@ import UniformTypeIdentifiers
 struct ContentView: View {
     @State private var selectedSection: SidebarSection = .home
     @State private var status: NEVPNStatus = .invalid
-    @State private var lastMessage = "No tunnel configuration loaded."
+    @State private var lastMessage = "설치된 VPN 구성이 없습니다."
     @State private var manager: NETunnelProviderManager?
     @State private var statusObserver: NSObjectProtocol?
     @State private var profiles: [ProfileMetadata] = []
     @State private var profileName = ""
-    @State private var selectedConfigFileName = "No file selected."
+    @State private var selectedConfigFileName = "선택한 파일 없음"
     @State private var isImportingConfigFile = false
-    @State private var importMessage = "No imported profiles."
+    @State private var importMessage = "가져온 VPN 프로필이 없습니다."
     @State private var selectedProfileId: ProfileMetadata.ID?
     @State private var profilePendingDeletion: ProfileMetadata?
     @State private var siteDomainInput = ""
     @State private var siteDomains: [String] = []
-    @State private var siteMessage = "Select a profile and add domains to plan split routes."
+    @State private var siteMessage = "VPN 프로필을 선택하고 VPN으로 보낼 사이트를 추가하세요."
     @State private var routePlan: DomainRoutePlan?
     @State private var routePlanProfileId: ProfileMetadata.ID?
+    @State private var failSafeEnabled = true
+    @State private var settingsMessage = "만료 시 자동 연결 해제가 켜져 있습니다."
+    @State private var isShowingFailSafeDisableConfirmation = false
 
     var body: some View {
         NavigationSplitView {
@@ -41,6 +44,10 @@ struct ContentView: View {
             await loadStatus()
             loadProfiles()
             loadSiteDomainsForSelectedProfile()
+            loadFailSafeSetting()
+        }
+        .task(id: status) {
+            await runConnectedRouteRefreshLoop()
         }
         .onChange(of: selectedProfileId) { _, _ in
             loadSiteDomainsForSelectedProfile()
@@ -55,7 +62,7 @@ struct ContentView: View {
             onCompletion: importConfigFile
         )
         .confirmationDialog(
-            "Delete Profile",
+            "VPN 프로필 삭제",
             isPresented: Binding(
                 get: { profilePendingDeletion != nil },
                 set: { isPresented in
@@ -66,16 +73,29 @@ struct ContentView: View {
             ),
             presenting: profilePendingDeletion
         ) { profile in
-            Button("Delete \(profile.displayName)", role: .destructive) {
+            Button("\(profile.displayName) 삭제", role: .destructive) {
                 Task {
                     await deleteProfile(profile)
                 }
             }
-            Button("Cancel", role: .cancel) {
+            Button("취소", role: .cancel) {
                 profilePendingDeletion = nil
             }
         } message: { profile in
-            Text("This removes the profile, its saved site rules, and its Keychain private key from this Mac.")
+            Text("이 Mac에서 프로필 정보와 키체인 개인 키를 삭제합니다. VPN 사이트 목록은 유지됩니다.")
+        }
+        .confirmationDialog(
+            "만료 보호 기능을 끌까요?",
+            isPresented: $isShowingFailSafeDisableConfirmation
+        ) {
+            Button("보호 기능 끄기", role: .destructive) {
+                Task {
+                    await updateFailSafeSetting(false)
+                }
+            }
+            Button("취소", role: .cancel) {}
+        } message: {
+            Text("경로가 15분 이상 갱신되지 않아도 VPN 연결을 유지합니다. 선택한 사이트가 일반 네트워크로 우회할 수 있습니다.")
         }
     }
 
@@ -91,11 +111,7 @@ struct ContentView: View {
         case .diagnostics:
             diagnosticsView
         case .settings:
-            placeholderView(
-                title: "Settings",
-                systemImage: "gearshape",
-                message: "Signing, entitlements, and Network Extension capabilities are managed in Xcode."
-            )
+            settingsView
         }
     }
 
@@ -103,11 +119,13 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 24) {
             header(title: "VPN Router", subtitle: statusText)
             tunnelControls
+            failSafeWarning
+            ipv6BypassWarning
             Divider()
             VStack(alignment: .leading, spacing: 8) {
-                Text("Phase 1")
+                Text("1단계")
                     .font(.headline)
-                Text("WireGuard import, local profile storage, and static split-route planning foundation.")
+                Text("WireGuard 프로필과 선택한 사이트만 VPN으로 보내는 분할 라우팅을 관리합니다.")
                     .foregroundStyle(.secondary)
                 DiagnosticMessageView(message: lastMessage)
             }
@@ -118,10 +136,10 @@ struct ContentView: View {
     private var profilesView: some View {
         HStack(alignment: .top, spacing: 28) {
             VStack(alignment: .leading, spacing: 16) {
-                header(title: "VPN Profiles", subtitle: "Imported profiles: \(profiles.count)")
+                header(title: "VPN 프로필", subtitle: "가져온 프로필 \(profiles.count)개")
 
                 VStack(alignment: .leading, spacing: 10) {
-                    TextField("Profile name", text: $profileName)
+                    TextField("프로필 이름", text: $profileName)
                         .textFieldStyle(.roundedBorder)
 
                     HStack(spacing: 12) {
@@ -134,7 +152,7 @@ struct ContentView: View {
                             Text(selectedConfigFileName)
                                 .font(.headline)
                                 .lineLimit(1)
-                            Text("Choose a WireGuard .conf file. The private key is stored in Keychain.")
+                            Text("WireGuard .conf 파일을 선택하세요. 개인 키는 키체인에 안전하게 저장됩니다.")
                                 .font(.callout)
                                 .foregroundStyle(.secondary)
                         }
@@ -150,17 +168,17 @@ struct ContentView: View {
                         Button {
                             isImportingConfigFile = true
                         } label: {
-                            Label("Import File", systemImage: "folder")
+                            Label("파일 가져오기", systemImage: "folder")
                         }
                         .buttonStyle(.borderedProminent)
 
                         Button {
-                            selectedConfigFileName = "No file selected."
+                            selectedConfigFileName = "선택한 파일 없음"
                             profileName = ""
                         } label: {
-                            Label("Clear", systemImage: "xmark.circle")
+                            Label("입력 지우기", systemImage: "xmark.circle")
                         }
-                        .disabled(selectedConfigFileName == "No file selected." && profileName.isEmpty)
+                        .disabled(selectedConfigFileName == "선택한 파일 없음" && profileName.isEmpty)
                     }
                 }
 
@@ -171,11 +189,11 @@ struct ContentView: View {
             .frame(minWidth: 360, idealWidth: 420, maxWidth: 520, alignment: .topLeading)
 
             VStack(alignment: .leading, spacing: 14) {
-                Text("Stored Profiles")
+                Text("저장된 프로필")
                     .font(.headline)
 
                 if profiles.isEmpty {
-                    ContentUnavailableView("No Profiles", systemImage: "doc.text.magnifyingglass")
+                    ContentUnavailableView("저장된 프로필 없음", systemImage: "doc.text.magnifyingglass")
                 } else {
                     List(selection: $selectedProfileId) {
                         ForEach(profiles) { profile in
@@ -188,7 +206,7 @@ struct ContentView: View {
                                     Image(systemName: "trash")
                                 }
                                 .buttonStyle(.borderless)
-                                .help("Delete \(profile.displayName)")
+                                .help("\(profile.displayName) 삭제")
                             }
                             .tag(profile.id)
                         }
@@ -201,7 +219,7 @@ struct ContentView: View {
                                 await installSelectedProfileConfiguration()
                             }
                         } label: {
-                            Label("Install Selected", systemImage: "arrow.down.doc")
+                            Label("선택한 프로필 설치", systemImage: "arrow.down.doc")
                         }
                         .buttonStyle(.borderedProminent)
                         .disabled(selectedProfile == nil)
@@ -211,7 +229,7 @@ struct ContentView: View {
                                 profilePendingDeletion = selectedProfile
                             }
                         } label: {
-                            Label("Delete Selected", systemImage: "trash")
+                            Label("선택한 프로필 삭제", systemImage: "trash")
                         }
                         .disabled(selectedProfile == nil)
                     }
@@ -225,8 +243,8 @@ struct ContentView: View {
         HStack(alignment: .top, spacing: 28) {
             VStack(alignment: .leading, spacing: 16) {
                 header(
-                    title: "VPN Sites",
-                    subtitle: selectedProfile.map { "Shared sites, currently previewing routes for \($0.displayName)" } ?? "Shared sites for whichever profile you connect"
+                    title: "VPN 사이트",
+                    subtitle: selectedProfile.map { "\($0.displayName) 프로필로 보낼 사이트" } ?? "연결할 프로필에 공통으로 적용되는 사이트"
                 )
 
                 HStack(spacing: 10) {
@@ -237,14 +255,14 @@ struct ContentView: View {
                     Button {
                         addSiteDomain()
                     } label: {
-                        Label("Add Site", systemImage: "plus")
+                        Label("사이트 추가", systemImage: "plus")
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(normalizedSiteDomainInput == nil)
                 }
 
                 if siteDomains.isEmpty {
-                    ContentUnavailableView("No Sites", systemImage: "globe.badge.chevron.backward")
+                    ContentUnavailableView("등록된 사이트 없음", systemImage: "globe.badge.chevron.backward")
                         .frame(minHeight: 220)
                 } else {
                     List {
@@ -259,7 +277,7 @@ struct ContentView: View {
                                     Image(systemName: "trash")
                                 }
                                 .buttonStyle(.borderless)
-                                .help("Remove \(domain)")
+                                .help("\(domain) 삭제")
                             }
                         }
                     }
@@ -273,7 +291,7 @@ struct ContentView: View {
                             await saveDomainsAndBuildRoutePlan()
                         }
                     } label: {
-                        Label("Build Plan", systemImage: "point.3.connected.trianglepath.dotted")
+                        Label("경로 만들기", systemImage: "point.3.connected.trianglepath.dotted")
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(selectedProfile == nil || siteDomains.isEmpty)
@@ -282,9 +300,9 @@ struct ContentView: View {
                         siteDomains.removeAll()
                         routePlan = nil
                         routePlanProfileId = nil
-                        siteMessage = "Cleared pending site rules."
+                        siteMessage = "입력 중인 사이트 목록을 지웠습니다."
                     } label: {
-                        Label("Clear", systemImage: "xmark.circle")
+                        Label("목록 지우기", systemImage: "xmark.circle")
                     }
                     .disabled(siteDomains.isEmpty)
                 }
@@ -296,13 +314,13 @@ struct ContentView: View {
             .frame(minWidth: 360, idealWidth: 420, maxWidth: 520, alignment: .topLeading)
 
             VStack(alignment: .leading, spacing: 14) {
-                Text("Route Plan")
+                Text("경로 계획")
                     .font(.headline)
 
                 if let routePlan, routePlanProfileId == selectedProfile?.id {
                     RoutePlanSummary(plan: routePlan)
                 } else {
-                    ContentUnavailableView("No Route Plan", systemImage: "map")
+                    ContentUnavailableView("만든 경로 없음", systemImage: "map")
                 }
             }
             .frame(minWidth: 280, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -311,14 +329,59 @@ struct ContentView: View {
 
     private var diagnosticsView: some View {
         VStack(alignment: .leading, spacing: 24) {
-            header(title: "Diagnostics", subtitle: statusText)
+            header(title: "진단", subtitle: statusText)
             tunnelControls
+            ipv6BypassWarning
             Divider()
             VStack(alignment: .leading, spacing: 8) {
-                Text("Provider")
+                Text("Packet Tunnel 상태")
                     .font(.headline)
                 DiagnosticMessageView(message: lastMessage)
             }
+            Spacer()
+        }
+    }
+
+    private var settingsView: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            header(title: "설정", subtitle: "연결 보호 동작을 관리합니다.")
+
+            GroupBox("연결 보호") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Toggle(
+                        "경로 계획 만료 시 자동으로 연결 해제",
+                        isOn: Binding(
+                            get: { failSafeEnabled },
+                            set: { newValue in
+                                if newValue {
+                                    Task {
+                                        await updateFailSafeSetting(true)
+                                    }
+                                } else {
+                                    isShowingFailSafeDisableConfirmation = true
+                                }
+                            }
+                        )
+                    )
+
+                    Text("켜면 15분 안에 경로를 갱신하지 못했을 때 VPN을 자동으로 끊어 오래된 경로로 인한 우회를 막습니다.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+
+                    if !failSafeEnabled {
+                        Label(
+                            "보호 기능이 꺼져 있습니다. 경로가 오래되어도 VPN 연결이 유지되며 선택한 사이트가 일반 네트워크로 우회할 수 있습니다.",
+                            systemImage: "exclamationmark.triangle.fill"
+                        )
+                        .font(.callout)
+                        .foregroundStyle(.orange)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 4)
+            }
+
+            DiagnosticMessageView(message: settingsMessage)
             Spacer()
         }
     }
@@ -330,7 +393,7 @@ struct ContentView: View {
                     await installStubConfiguration()
                 }
             } label: {
-                Label("Install Stub", systemImage: "plus.circle")
+                Label("테스트 구성 설치", systemImage: "plus.circle")
             }
 
             Button {
@@ -338,7 +401,7 @@ struct ContentView: View {
                     await startTunnel()
                 }
             } label: {
-                Label("Connect", systemImage: "power")
+                Label("연결", systemImage: "power")
             }
             .buttonStyle(.borderedProminent)
             .disabled(!canStart)
@@ -348,16 +411,52 @@ struct ContentView: View {
                     await requestProviderDiagnostics()
                 }
             } label: {
-                Label("Check Provider", systemImage: "waveform.path.ecg")
+                Label("터널 상태 확인", systemImage: "waveform.path.ecg")
+            }
+            .disabled(status != .connected)
+
+            Button {
+                Task {
+                    await refreshConnectedRoutePlan()
+                }
+            } label: {
+                Label("경로 새로고침", systemImage: "arrow.clockwise")
             }
             .disabled(status != .connected)
 
             Button {
                 stopTunnel()
             } label: {
-                Label("Disconnect", systemImage: "stop.circle")
+                Label("연결 해제", systemImage: "stop.circle")
             }
             .disabled(!canStop)
+        }
+    }
+
+    @ViewBuilder
+    private var ipv6BypassWarning: some View {
+        let domains = currentIPv6BypassDomains
+        if !domains.isEmpty {
+            Label {
+                Text("IPv6 우회 위험: 선택하거나 자동 확장한 도메인 중 \(domains.count)개에서 AAAA 응답을 확인했습니다. 현재 IPv4 전용 버전은 해당 IPv6 연결을 VPN으로 보내지 못합니다.")
+            } icon: {
+                Image(systemName: "exclamationmark.triangle.fill")
+            }
+            .font(.callout)
+            .foregroundStyle(.orange)
+            .accessibilityLabel("IPv6 우회 경고")
+        }
+    }
+
+    @ViewBuilder
+    private var failSafeWarning: some View {
+        if !failSafeEnabled {
+            Label(
+                "만료 시 자동 연결 해제가 꺼져 있습니다.",
+                systemImage: "shield.slash.fill"
+            )
+            .font(.callout)
+            .foregroundStyle(.orange)
         }
     }
 
@@ -382,19 +481,19 @@ struct ContentView: View {
     private var statusText: String {
         switch status {
         case .invalid:
-            return "No installed tunnel configuration"
+            return "설치된 VPN 구성 없음"
         case .disconnected:
-            return "Disconnected"
+            return "연결 안 됨"
         case .connecting:
-            return "Connecting"
+            return "연결 중"
         case .connected:
-            return "Connected"
+            return "연결됨"
         case .reasserting:
-            return "Reasserting"
+            return "경로 갱신 중"
         case .disconnecting:
-            return "Disconnecting"
+            return "연결 해제 중"
         @unknown default:
-            return "Unknown"
+            return "알 수 없는 상태"
         }
     }
 
@@ -412,6 +511,16 @@ struct ContentView: View {
         }
 
         return profiles.first { $0.id == selectedProfileId }
+    }
+
+    private var currentIPv6BypassDomains: [String] {
+        if let routePlan {
+            return routePlan.ipv6BypassDomains
+        }
+        if let manager, let payload = providerPayload(for: manager) {
+            return payload.routePlan.ipv6BypassDomains
+        }
+        return []
     }
 
     private var supportedWireGuardConfigTypes: [UTType] {
@@ -462,9 +571,56 @@ struct ContentView: View {
         do {
             let store = try ProfileStore()
             profiles = try store.loadProfiles().sorted { $0.updatedAt > $1.updatedAt }
-            importMessage = profiles.isEmpty ? "No imported profiles." : "Loaded imported profile metadata."
+            if selectedProfileId == nil,
+               let manager,
+               let installedProfileId = providerProfileId(for: manager),
+               profiles.contains(where: { $0.id == installedProfileId }) {
+                selectedProfileId = installedProfileId
+            }
+            importMessage = profiles.isEmpty ? "가져온 VPN 프로필이 없습니다." : "저장된 VPN 프로필을 불러왔습니다."
         } catch {
-            importMessage = "Unable to load profiles: \(error.localizedDescription)"
+            importMessage = "VPN 프로필을 불러오지 못했습니다: \(error.localizedDescription)"
+        }
+    }
+
+    private func loadFailSafeSetting() {
+        failSafeEnabled = FailSafeSettingsStore().isEnabled
+        settingsMessage = failSafeEnabled
+            ? "만료 시 자동 연결 해제가 켜져 있습니다."
+            : "만료 시 자동 연결 해제가 꺼져 있습니다."
+    }
+
+    private func updateFailSafeSetting(_ isEnabled: Bool) async {
+        failSafeEnabled = isEnabled
+        FailSafeSettingsStore().setEnabled(isEnabled)
+
+        guard status == .connected,
+              let session = manager?.connection as? NETunnelProviderSession else {
+            settingsMessage = isEnabled
+                ? "보호 기능을 켰습니다. 다음 연결부터 적용됩니다."
+                : "보호 기능을 껐습니다. 다음 연결부터 적용됩니다."
+            return
+        }
+
+        do {
+            let request = TunnelFailSafeUpdateRequest(failSafeEnabled: isEnabled)
+            let responseData = try await sendProviderMessage(
+                try JSONEncoder().encode(request),
+                through: session
+            )
+            guard
+                let responseData,
+                let response = try? JSONDecoder().decode(TunnelRouteUpdateResponse.self, from: responseData),
+                response.success
+            else {
+                throw TunnelConfigurationError.unreadableRouteUpdateResponse
+            }
+
+            settingsMessage = isEnabled
+                ? "보호 기능을 켰습니다. 현재 연결에도 바로 적용했습니다."
+                : "보호 기능을 껐습니다. 현재 연결은 경로가 만료되어도 자동으로 끊기지 않습니다."
+        } catch {
+            settingsMessage = "설정은 저장했지만 현재 연결에는 적용하지 못했습니다: \(error.localizedDescription)"
         }
     }
 
@@ -478,9 +634,9 @@ struct ContentView: View {
                 .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
             routePlan = nil
             routePlanProfileId = nil
-            siteMessage = siteDomains.isEmpty ? "Add domains to plan split routes." : "Loaded \(siteDomains.count) shared site rule(s)."
+            siteMessage = siteDomains.isEmpty ? "VPN으로 보낼 사이트를 추가하세요." : "공통 VPN 사이트 \(siteDomains.count)개를 불러왔습니다."
         } catch {
-            siteMessage = "Unable to load site rules: \(error.localizedDescription)"
+            siteMessage = "VPN 사이트를 불러오지 못했습니다: \(error.localizedDescription)"
         }
     }
 
@@ -505,13 +661,13 @@ struct ContentView: View {
     private func importConfigFile(_ result: Result<[URL], Error>) {
         do {
             guard let fileURL = try result.get().first else {
-                importMessage = "No WireGuard config file was selected."
+                importMessage = "선택한 WireGuard 설정 파일이 없습니다."
                 return
             }
 
             try importProfile(from: fileURL)
         } catch {
-            importMessage = "Import failed: \(error.localizedDescription)"
+            importMessage = "프로필을 가져오지 못했습니다: \(error.localizedDescription)"
         }
     }
 
@@ -538,7 +694,7 @@ struct ContentView: View {
         selectedProfileId = profile.id
         profileName = ""
         selectedConfigFileName = fileURL.lastPathComponent
-        importMessage = "Imported \(profile.displayName). Private key stored in Keychain."
+        importMessage = "\(profile.displayName) 프로필을 가져왔습니다. 개인 키는 키체인에 저장했습니다."
     }
 
     private func deleteProfile(_ profile: ProfileMetadata) async {
@@ -572,16 +728,16 @@ struct ContentView: View {
             }
             profilePendingDeletion = nil
             loadSiteDomainsForSelectedProfile()
-            importMessage = "Deleted \(profile.displayName). Profile and Keychain secret were removed. Shared site rules were kept."
-            lastMessage = "Deleted \(profile.displayName). Shared site rules are still available for another profile."
+            importMessage = "\(profile.displayName) 프로필과 키체인 개인 키를 삭제했습니다. VPN 사이트 목록은 유지했습니다."
+            lastMessage = "\(profile.displayName) 프로필을 삭제했습니다. VPN 사이트 목록은 다른 프로필에도 사용할 수 있습니다."
         } catch {
-            importMessage = "Delete failed: \(error.localizedDescription)"
+            importMessage = "프로필을 삭제하지 못했습니다: \(error.localizedDescription)"
         }
     }
 
     private func addSiteDomain() {
         guard let domain = normalizedSiteDomainInput else {
-            siteMessage = "Enter a valid domain such as example.com."
+            siteMessage = "example.com과 같은 올바른 도메인을 입력하세요."
             return
         }
 
@@ -590,14 +746,14 @@ struct ContentView: View {
         siteDomainInput = ""
         routePlan = nil
         routePlanProfileId = nil
-        siteMessage = "Added \(domain)."
+        siteMessage = "\(domain)을 추가했습니다."
     }
 
     private func removeSiteDomain(_ domain: String) {
         siteDomains.removeAll { $0.caseInsensitiveCompare(domain) == .orderedSame }
         routePlan = nil
         routePlanProfileId = nil
-        siteMessage = "Removed \(domain)."
+        siteMessage = "\(domain)을 삭제했습니다."
     }
 
     private func isValidSiteDomain(_ domain: String) -> Bool {
@@ -618,7 +774,7 @@ struct ContentView: View {
 
     private func saveDomainsAndBuildRoutePlan() async {
         guard let selectedProfile else {
-            siteMessage = "Select an imported profile first."
+            siteMessage = "먼저 가져온 VPN 프로필을 선택하세요."
             return
         }
 
@@ -633,20 +789,25 @@ struct ContentView: View {
             routePlan = plan
             routePlanProfileId = selectedProfile.id
             if plan.includedRoutes.isEmpty {
-                siteMessage = "Saved \(siteDomains.count) site rule(s), but no IPv4 routes were resolved yet."
+                siteMessage = "사이트 \(siteDomains.count)개를 저장했지만 사용할 수 있는 IPv4 주소를 찾지 못했습니다."
             } else if plan.unresolvedDomains.isEmpty {
-                siteMessage = "Built \(plan.includedRoutes.count) IPv4 /32 routes for \(plan.domains.count) expanded domains."
+                siteMessage = "확장된 도메인 \(plan.domains.count)개에서 IPv4 경로 \(plan.includedRoutes.count)개를 만들었습니다."
             } else {
-                siteMessage = "Built \(plan.includedRoutes.count) IPv4 /32 routes. \(plan.unresolvedDomains.count) domain(s) had no IPv4 answer yet."
+                siteMessage = "IPv4 경로 \(plan.includedRoutes.count)개를 만들었습니다. 도메인 \(plan.unresolvedDomains.count)개는 IPv4 주소를 찾지 못했습니다."
+            }
+            if !plan.ipv6BypassDomains.isEmpty {
+                siteMessage += " 주의: 도메인 \(plan.ipv6BypassDomains.count)개에서 현재 경로 계획으로 처리할 수 없는 IPv6 주소를 확인했습니다."
             }
         } catch {
-            siteMessage = "Route planning failed: \(error.localizedDescription)"
+            siteMessage = "경로를 만들지 못했습니다: \(error.localizedDescription)"
         }
     }
 
     private func routePlanForInstall(profileId: ProfileMetadata.ID) throws -> DomainRoutePlan {
         let plan: DomainRoutePlan
-        if let routePlan, routePlanProfileId == profileId {
+        if let routePlan,
+           routePlanProfileId == profileId,
+           !DomainRouteRefreshPolicy.standard.needsRefresh(routePlan) {
             plan = routePlan
         } else {
             let store = try DomainRuleStore()
@@ -672,10 +833,10 @@ struct ContentView: View {
         do {
             manager = try await loadOrCreateManager(preferPhase1: true)
             status = manager?.connection.status ?? .invalid
-            lastMessage = "Loaded Network Extension status from NEVPNStatus."
+            lastMessage = "시스템에서 현재 VPN 상태를 불러왔습니다."
         } catch {
             status = .invalid
-            lastMessage = "Unable to load tunnel configuration: \(error.localizedDescription)"
+            lastMessage = "VPN 구성을 불러오지 못했습니다: \(error.localizedDescription)"
         }
     }
 
@@ -693,16 +854,16 @@ struct ContentView: View {
             try await saveTunnelConfiguration(
                 manager: manager,
                 tunnelProtocol: tunnelProtocol,
-                successMessage: "Installed stub Packet Tunnel configuration."
+                successMessage: "Packet Tunnel 테스트 구성을 설치했습니다."
             )
         } catch {
-            lastMessage = "Failed to install stub configuration: \(error.localizedDescription)"
+            lastMessage = "테스트 구성을 설치하지 못했습니다: \(error.localizedDescription)"
         }
     }
 
     private func installSelectedProfileConfiguration() async {
         guard let selectedProfile else {
-            importMessage = "Select an imported profile first."
+            importMessage = "먼저 가져온 VPN 프로필을 선택하세요."
             return
         }
 
@@ -714,11 +875,14 @@ struct ContentView: View {
             try await saveTunnelConfiguration(
                 manager: manager,
                 tunnelProtocol: tunnelProtocol,
-                successMessage: "Installed \(selectedProfile.displayName) with \(selectedRoutePlan.includedRoutes.count) split route(s)."
+                successMessage: "\(selectedProfile.displayName) 프로필과 분할 경로 \(selectedRoutePlan.includedRoutes.count)개를 설치했습니다."
             )
-            importMessage = "Installed \(selectedProfile.displayName) with \(selectedRoutePlan.includedRoutes.count) route(s). Connect will start WireGuardKit."
+            importMessage = "\(selectedProfile.displayName) 프로필과 경로 \(selectedRoutePlan.includedRoutes.count)개를 설치했습니다. 연결하면 WireGuard 터널을 시작합니다."
+            if !selectedRoutePlan.ipv6BypassDomains.isEmpty {
+                importMessage += " 도메인 \(selectedRoutePlan.ipv6BypassDomains.count)개에 IPv6 우회 위험이 있습니다."
+            }
         } catch {
-            importMessage = "Install failed: \(error.localizedDescription)"
+            importMessage = "VPN 프로필을 설치하지 못했습니다: \(error.localizedDescription)"
         }
     }
 
@@ -755,7 +919,7 @@ struct ContentView: View {
                 try await saveTunnelConfiguration(
                     manager: manager,
                     tunnelProtocol: tunnelProtocol,
-                    successMessage: "Prepared \(selectedProfile.displayName) with \(selectedRoutePlan.includedRoutes.count) split route(s)."
+                    successMessage: "\(selectedProfile.displayName) 프로필과 분할 경로 \(selectedRoutePlan.includedRoutes.count)개를 준비했습니다."
                 )
                 manager = self.manager ?? manager
             } else if providerMode(for: manager) != TunnelProviderModes.phase1WireGuard || providerRouteCount(for: manager) == 0 {
@@ -764,21 +928,24 @@ struct ContentView: View {
 
             try manager.connection.startVPNTunnel()
             status = manager.connection.status
-            lastMessage = "Start requested through NETunnelProviderManager using \(providerMode(for: manager) ?? "unknown") mode with \(providerRouteCount(for: manager)) route(s)."
+            lastMessage = "VPN 연결을 요청했습니다. 경로 \(providerRouteCount(for: manager))개를 적용합니다."
+            if let payload = providerPayload(for: manager), !payload.routePlan.ipv6BypassDomains.isEmpty {
+                lastMessage += " 주의: 도메인 \(payload.routePlan.ipv6BypassDomains.count)개가 IPv6로 우회할 수 있습니다."
+            }
         } catch {
-            lastMessage = "Failed to start tunnel: \(error.localizedDescription)"
+            lastMessage = "VPN에 연결하지 못했습니다: \(error.localizedDescription)"
         }
     }
 
     private func stopTunnel() {
         manager?.connection.stopVPNTunnel()
         status = manager?.connection.status ?? .invalid
-        lastMessage = "Stop requested through NEVPNConnection."
+        lastMessage = "VPN 연결 해제를 요청했습니다."
     }
 
     private func requestProviderDiagnostics() async {
         guard let session = manager?.connection as? NETunnelProviderSession else {
-            lastMessage = "No active Packet Tunnel provider session is available."
+            lastMessage = "실행 중인 Packet Tunnel 세션이 없습니다."
             return
         }
 
@@ -788,13 +955,97 @@ struct ContentView: View {
                 let response,
                 let diagnostics = try? JSONDecoder().decode(TunnelDiagnostics.self, from: response)
             else {
-                lastMessage = "Provider responded without readable diagnostics."
+                lastMessage = "Packet Tunnel의 진단 응답을 읽지 못했습니다."
                 return
             }
 
-            lastMessage = "Provider reachable: \(diagnostics.providerState), routes: \(diagnostics.plannedRouteCount). \(diagnostics.message)"
+            let expiryMessage = diagnostics.routePlanExpiresAt.map {
+                " 경로 계획 만료 시각: \($0.formatted(date: .omitted, time: .standard))."
+            } ?? ""
+            let ipv6Message = (diagnostics.ipv6BypassDomainCount ?? 0) > 0
+                ? " IPv6 우회 위험 도메인: \(diagnostics.ipv6BypassDomainCount ?? 0)개."
+                : ""
+            let failSafeMessage = diagnostics.failSafeEnabled == false
+                ? " 만료 시 자동 연결 해제: 꺼짐."
+                : " 만료 시 자동 연결 해제: 켜짐."
+            lastMessage = "Packet Tunnel 응답 정상. 적용 경로: \(diagnostics.plannedRouteCount)개. \(diagnostics.message)\(expiryMessage)\(ipv6Message)\(failSafeMessage)"
         } catch {
-            lastMessage = "Provider diagnostics failed: \(error.localizedDescription)"
+            lastMessage = "Packet Tunnel 상태를 확인하지 못했습니다: \(error.localizedDescription)"
+        }
+    }
+
+    private func runConnectedRouteRefreshLoop() async {
+        guard status == .connected else {
+            return
+        }
+
+        let interval = DomainRouteRefreshPolicy.standard.refreshInterval
+        let nanoseconds = UInt64(interval * 1_000_000_000)
+        while !Task.isCancelled && status == .connected {
+            do {
+                try await Task.sleep(nanoseconds: nanoseconds)
+            } catch {
+                return
+            }
+
+            guard !Task.isCancelled && status == .connected else {
+                return
+            }
+            await refreshConnectedRoutePlan()
+        }
+    }
+
+    private func refreshConnectedRoutePlan() async {
+        guard status == .connected else {
+            lastMessage = "경로를 새로고치려면 먼저 VPN에 연결하세요."
+            return
+        }
+        guard
+            let manager,
+            let session = manager.connection as? NETunnelProviderSession,
+            let profileId = providerProfileId(for: manager),
+            profiles.contains(where: { $0.id == profileId })
+        else {
+            lastMessage = "현재 VPN 연결에 해당하는 저장된 프로필을 찾지 못했습니다."
+            return
+        }
+
+        do {
+            let store = try DomainRuleStore()
+            let refreshedPlan = try DomainRoutePlanService(ruleStore: store)
+                .buildPlan(profileId: DomainRuleStore.sharedSiteRulesProfileId)
+            guard !refreshedPlan.includedRoutes.isEmpty else {
+                throw TunnelConfigurationError.emptyRoutePlan(
+                    unresolvedCount: refreshedPlan.unresolvedDomains.count
+                )
+            }
+
+            let request = TunnelRouteUpdateRequest(
+                profileId: profileId,
+                routePlan: refreshedPlan
+            )
+            let responseData = try await sendProviderMessage(
+                try JSONEncoder().encode(request),
+                through: session
+            )
+            guard
+                let responseData,
+                let response = try? JSONDecoder().decode(TunnelRouteUpdateResponse.self, from: responseData)
+            else {
+                throw TunnelConfigurationError.unreadableRouteUpdateResponse
+            }
+            guard response.success else {
+                throw TunnelConfigurationError.routeUpdateRejected(response.message)
+            }
+
+            routePlan = refreshedPlan
+            routePlanProfileId = profileId
+            lastMessage = "분할 경로 \(response.plannedRouteCount)개를 새로고쳤습니다."
+            if !refreshedPlan.ipv6BypassDomains.isEmpty {
+                lastMessage += " 도메인 \(refreshedPlan.ipv6BypassDomains.count)개에 IPv6 우회 위험이 남아 있습니다."
+            }
+        } catch {
+            lastMessage = "경로를 새로고치지 못했습니다: \(error.localizedDescription). 기존 경로는 만료 전까지 유지됩니다."
         }
     }
 
@@ -832,15 +1083,7 @@ struct ContentView: View {
     }
 
     private func providerRouteCount(for manager: NETunnelProviderManager) -> Int {
-        guard
-            let tunnelProtocol = manager.protocolConfiguration as? NETunnelProviderProtocol,
-            let payloadData = tunnelProtocol.providerConfiguration?[TunnelProviderConfigurationKeys.payload] as? Data,
-            let payload = try? JSONDecoder().decode(TunnelProfileProviderConfiguration.self, from: payloadData)
-        else {
-            return 0
-        }
-
-        return payload.routePlan.includedRoutes.count
+        providerPayload(for: manager)?.routePlan.includedRoutes.count ?? 0
     }
 
     private func providerProfileId(for manager: NETunnelProviderManager) -> ProfileMetadata.ID? {
@@ -848,9 +1091,7 @@ struct ContentView: View {
             return nil
         }
 
-        if
-            let payloadData = tunnelProtocol.providerConfiguration?[TunnelProviderConfigurationKeys.payload] as? Data,
-            let payload = try? JSONDecoder().decode(TunnelProfileProviderConfiguration.self, from: payloadData) {
+        if let payload = providerPayload(for: manager) {
             return payload.profileId
         }
 
@@ -859,6 +1100,17 @@ struct ContentView: View {
         }
 
         return UUID(uuidString: profileId)
+    }
+
+    private func providerPayload(for manager: NETunnelProviderManager) -> TunnelProfileProviderConfiguration? {
+        guard
+            let tunnelProtocol = manager.protocolConfiguration as? NETunnelProviderProtocol,
+            let payloadData = tunnelProtocol.providerConfiguration?[TunnelProviderConfigurationKeys.payload] as? Data
+        else {
+            return nil
+        }
+
+        return try? JSONDecoder().decode(TunnelProfileProviderConfiguration.self, from: payloadData)
     }
 
     private func sendProviderMessage(
@@ -886,12 +1138,16 @@ private struct RoutePlanSummary: View {
                 Label("\(plan.domains.count)", systemImage: "globe")
                 Label("\(plan.includedRoutes.count)", systemImage: "arrow.triangle.branch")
                 Label("\(plan.unresolvedDomains.count)", systemImage: "questionmark.circle")
+                if !plan.ipv6BypassDomains.isEmpty {
+                    Label("\(plan.ipv6BypassDomains.count)", systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.orange)
+                }
             }
             .font(.callout)
             .foregroundStyle(.secondary)
 
             List {
-                Section("Included Routes") {
+                Section("VPN으로 보내는 경로") {
                     ForEach(plan.includedRoutes.prefix(24), id: \.destinationAddress) { route in
                         VStack(alignment: .leading, spacing: 4) {
                             Text("\(route.destinationAddress)/32")
@@ -904,8 +1160,17 @@ private struct RoutePlanSummary: View {
                 }
 
                 if !plan.unresolvedDomains.isEmpty {
-                    Section("Unresolved Domains") {
+                    Section("주소를 찾지 못한 도메인") {
                         ForEach(plan.unresolvedDomains.prefix(24), id: \.self) { domain in
+                            Text(domain)
+                                .font(.system(.body, design: .monospaced))
+                        }
+                    }
+                }
+
+                if !plan.ipv6BypassDomains.isEmpty {
+                    Section("IPv6 우회 위험") {
+                        ForEach(plan.ipv6BypassDomains.prefix(24), id: \.self) { domain in
                             Text(domain)
                                 .font(.system(.body, design: .monospaced))
                         }
@@ -970,15 +1235,15 @@ private enum SidebarSection: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .home:
-            return "Home"
+            return "홈"
         case .profiles:
-            return "VPN Profiles"
+            return "VPN 프로필"
         case .sites:
-            return "VPN Sites"
+            return "VPN 사이트"
         case .diagnostics:
-            return "Diagnostics"
+            return "진단"
         case .settings:
-            return "Settings"
+            return "설정"
         }
     }
 
@@ -1004,6 +1269,9 @@ struct TunnelDiagnostics: Decodable {
     let profileId: String?
     let profileDisplayName: String?
     let plannedRouteCount: Int
+    let ipv6BypassDomainCount: Int?
+    let routePlanExpiresAt: Date?
+    let failSafeEnabled: Bool?
     let wireGuardKitLinked: Bool
     let message: String
     let updatedAt: Date
@@ -1013,15 +1281,21 @@ enum TunnelConfigurationError: LocalizedError {
     case noSelectedProfile
     case noRouteRules
     case emptyRoutePlan(unresolvedCount: Int)
+    case routeUpdateRejected(String)
+    case unreadableRouteUpdateResponse
 
     var errorDescription: String? {
         switch self {
         case .noSelectedProfile:
-            return "Select and install an imported profile before connecting."
+            return "연결하기 전에 가져온 VPN 프로필을 선택하고 설치하세요."
         case .noRouteRules:
-            return "Add at least one site and build a route plan before installing or connecting."
+            return "사이트를 하나 이상 추가하고 경로를 만든 뒤 설치하거나 연결하세요."
         case .emptyRoutePlan(let unresolvedCount):
-            return "The route plan has no IPv4 routes (\(unresolvedCount) unresolved domain(s)). Add a resolvable site or rebuild the plan before connecting."
+            return "사용할 수 있는 IPv4 경로가 없습니다. 주소를 찾지 못한 도메인: \(unresolvedCount)개. 사이트를 확인하고 경로를 다시 만드세요."
+        case .routeUpdateRejected(let message):
+            return "Packet Tunnel이 경로 새로고침을 거부했습니다: \(message)"
+        case .unreadableRouteUpdateResponse:
+            return "Packet Tunnel의 응답을 읽지 못했습니다."
         }
     }
 }

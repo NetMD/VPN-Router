@@ -14,7 +14,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         self?.logger.log(level: level.osLogType, "WireGuardKit: \(message, privacy: .public)")
     }
     private var activeConfiguration = ProviderRuntimeConfiguration.phase0Stub
-    private var wireGuardRuntimeMessage = "WireGuardKit has not started yet."
+    private var wireGuardRuntimeMessage = "WireGuard가 아직 시작되지 않았습니다."
+    private var routeExpirationTimer: DispatchSourceTimer?
 
     override func startTunnel(
         options: [String: NSObject]?,
@@ -39,6 +40,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         completionHandler: @escaping () -> Void
     ) {
         logger.info("Stopping packet tunnel. Reason: \(reason.rawValue)")
+        cancelRouteExpirationTimer()
         wireGuardAdapter.stop { [logger] error in
             if let error {
                 logger.error("WireGuardKit stop returned: \(String(describing: error), privacy: .public)")
@@ -51,12 +53,20 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         _ messageData: Data,
         completionHandler: ((Data?) -> Void)?
     ) {
+        if !messageData.isEmpty {
+            handleRouteUpdate(messageData, completionHandler: completionHandler)
+            return
+        }
+
         let diagnostics = TunnelDiagnostics(
-            schemaVersion: 1,
+            schemaVersion: 2,
             providerState: activeConfiguration.mode,
             profileId: activeConfiguration.profileId,
             profileDisplayName: activeConfiguration.profileDisplayName,
             plannedRouteCount: activeConfiguration.includedRoutes.count,
+            ipv6BypassDomainCount: activeConfiguration.ipv6BypassDomains.count,
+            routePlanExpiresAt: activeConfiguration.routePlanExpiresAt,
+            failSafeEnabled: SharedFailSafeSettingsStore().isEnabled,
             wireGuardKitLinked: true,
             message: activeConfiguration.mode == "phase1-wireguard" ? wireGuardRuntimeMessage : activeConfiguration.diagnosticMessage,
             updatedAt: Date()
@@ -87,17 +97,18 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                 privateKey: privateKey
             )
 
-            wireGuardRuntimeMessage = "WireGuardKit start requested."
+            wireGuardRuntimeMessage = "WireGuard 시작을 요청했습니다."
             wireGuardAdapter.start(tunnelConfiguration: tunnelConfiguration) { [weak self] error in
                 if let error {
-                    self?.wireGuardRuntimeMessage = "WireGuardKit start failed: \(String(describing: error))"
+                    self?.wireGuardRuntimeMessage = "WireGuard를 시작하지 못했습니다: \(String(describing: error))"
                     self?.logger.error("WireGuardKit start failed: \(String(describing: error), privacy: .public)")
                     completionHandler(error)
                     return
                 }
 
-                self?.wireGuardRuntimeMessage = "WireGuardKit adapter start completed."
+                self?.wireGuardRuntimeMessage = "WireGuard 연결을 시작했습니다."
                 self?.logger.info("WireGuardKit adapter started.")
+                self?.scheduleRouteExpiration()
                 completionHandler(nil)
             }
         } catch {
@@ -129,15 +140,174 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             completionHandler(nil)
         }
     }
+
+    private func handleRouteUpdate(
+        _ messageData: Data,
+        completionHandler: ((Data?) -> Void)?
+    ) {
+        do {
+            let request = try JSONDecoder().decode(ProviderAppRequest.self, from: messageData)
+            guard request.schemaVersion == 1 else {
+                throw PacketTunnelRuntimeError.unsupportedProviderMessage
+            }
+
+            if request.command == "update-fail-safe" {
+                guard let isEnabled = request.failSafeEnabled else {
+                    throw PacketTunnelRuntimeError.unsupportedProviderMessage
+                }
+                SharedFailSafeSettingsStore().setEnabled(isEnabled)
+                if isEnabled {
+                    scheduleRouteExpiration()
+                } else {
+                    cancelRouteExpirationTimer()
+                }
+                completeRouteUpdate(
+                    success: true,
+                    message: isEnabled ? "만료 시 자동 연결 해제를 켰습니다." : "만료 시 자동 연결 해제를 껐습니다.",
+                    completionHandler: completionHandler
+                )
+                return
+            }
+
+            guard
+                request.command == "replace-routes",
+                let profileId = request.profileId,
+                let routePlan = request.routePlan
+            else {
+                throw PacketTunnelRuntimeError.unsupportedProviderMessage
+            }
+            guard profileId.uuidString == activeConfiguration.profileId else {
+                throw PacketTunnelRuntimeError.routeUpdateProfileMismatch
+            }
+            guard !routePlan.includedRoutes.isEmpty else {
+                throw PacketTunnelRuntimeError.emptyRoutePlan
+            }
+            guard routePlan.includedRoutes.count <= ProviderRuntimeConfiguration.maximumRouteCount else {
+                throw PacketTunnelRuntimeError.routeLimitExceeded(
+                    routePlan.includedRoutes.count
+                )
+            }
+            let now = Date()
+            guard
+                let generatedAt = routePlan.generatedAt,
+                let expiresAt = routePlan.expiresAt,
+                generatedAt <= now.addingTimeInterval(60),
+                expiresAt > now,
+                expiresAt.timeIntervalSince(generatedAt) <= ProviderRuntimeConfiguration.routeLifetime
+            else {
+                throw PacketTunnelRuntimeError.routePlanExpired
+            }
+
+            let replacement = try activeConfiguration.replacingRoutes(
+                routePlan.includedRoutes,
+                ipv6BypassDomains: routePlan.ipv6BypassDomains ?? [],
+                generatedAt: generatedAt,
+                expiresAt: expiresAt
+            )
+            guard let profileId = replacement.profileId.flatMap(UUID.init(uuidString:)) else {
+                throw PacketTunnelRuntimeError.missingProfileId
+            }
+            guard let privateKey = try SharedKeychainSecretStore().loadPrivateKey(profileId: profileId) else {
+                throw PacketTunnelRuntimeError.missingPrivateKey
+            }
+
+            let tunnelConfiguration = try WireGuardKitConfigurationBuilder.build(
+                runtimeConfiguration: replacement,
+                privateKey: privateKey
+            )
+            wireGuardAdapter.update(tunnelConfiguration: tunnelConfiguration) { [weak self] error in
+                guard let self else {
+                    completionHandler?(nil)
+                    return
+                }
+                if let error {
+                    self.wireGuardRuntimeMessage = "WireGuard 경로를 새로고치지 못했습니다: \(String(describing: error))"
+                    self.logger.error("WireGuardKit route update failed: \(String(describing: error), privacy: .public)")
+                    self.completeRouteUpdate(
+                        success: false,
+                        message: "WireGuardKit이 새 경로 계획을 적용하지 못했습니다.",
+                        completionHandler: completionHandler
+                    )
+                    return
+                }
+
+                self.activeConfiguration = replacement
+                self.wireGuardRuntimeMessage = "WireGuard에 새 분할 경로를 적용했습니다."
+                self.scheduleRouteExpiration()
+                self.logger.info("Applied refreshed split-route plan with \(replacement.includedRoutes.count) route(s).")
+                self.completeRouteUpdate(
+                    success: true,
+                    message: "새 경로 계획을 적용했습니다.",
+                    completionHandler: completionHandler
+                )
+            }
+        } catch {
+            logger.error("Rejected provider route update: \(error.localizedDescription, privacy: .public)")
+            completeRouteUpdate(
+                success: false,
+                message: error.localizedDescription,
+                completionHandler: completionHandler
+            )
+        }
+    }
+
+    private func completeRouteUpdate(
+        success: Bool,
+        message: String,
+        completionHandler: ((Data?) -> Void)?
+    ) {
+        let response = ProviderRouteUpdateResponse(
+            schemaVersion: 1,
+            success: success,
+            message: message,
+            plannedRouteCount: activeConfiguration.includedRoutes.count,
+            routePlanExpiresAt: activeConfiguration.routePlanExpiresAt
+        )
+        completionHandler?(try? JSONEncoder().encode(response))
+    }
+
+    private func scheduleRouteExpiration() {
+        cancelRouteExpirationTimer()
+        guard SharedFailSafeSettingsStore().isEnabled else {
+            logger.warning("Route-plan expiration fail-safe is disabled by the user setting.")
+            return
+        }
+        guard let expiresAt = activeConfiguration.routePlanExpiresAt else {
+            return
+        }
+
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now() + max(0, expiresAt.timeIntervalSinceNow))
+        timer.setEventHandler { [weak self] in
+            guard let self else {
+                return
+            }
+            self.logger.error("Split-route plan expired before a successful refresh; cancelling tunnel.")
+            self.wireGuardRuntimeMessage = "경로 계획이 만료되어 VPN 연결 해제를 요청했습니다."
+            self.cancelTunnelWithError(PacketTunnelRuntimeError.routePlanExpired)
+        }
+        routeExpirationTimer = timer
+        timer.resume()
+    }
+
+    private func cancelRouteExpirationTimer() {
+        routeExpirationTimer?.cancel()
+        routeExpirationTimer = nil
+    }
 }
 
 private struct ProviderRuntimeConfiguration {
+    static let maximumRouteCount = 512
+    static let routeLifetime: TimeInterval = 15 * 60
     static let phase0Stub = ProviderRuntimeConfiguration(
         mode: "phase0-stub",
         profileId: nil,
         profileDisplayName: nil,
         sanitizedConfiguration: "",
-        includedRoutes: []
+        includedRoutes: [],
+        ipv6BypassDomains: [],
+        routePlanGeneratedAt: nil,
+        routePlanExpiresAt: nil
     )
 
     let mode: String
@@ -145,13 +315,16 @@ private struct ProviderRuntimeConfiguration {
     let profileDisplayName: String?
     let sanitizedConfiguration: String
     let includedRoutes: [ProviderRouteDescriptor]
+    let ipv6BypassDomains: [String]
+    let routePlanGeneratedAt: Date?
+    let routePlanExpiresAt: Date?
 
     var diagnosticMessage: String {
         if mode == "phase1-wireguard" {
-            return "WireGuardKit is linked and configured for selected IPv4 routes."
+            return "선택한 IPv4 경로에 WireGuard를 사용하도록 구성했습니다."
         }
 
-        return "PacketTunnelProvider is reachable."
+        return "Packet Tunnel이 응답했습니다."
     }
 
     static func from(
@@ -163,13 +336,54 @@ private struct ProviderRuntimeConfiguration {
             ?? providerConfiguration["mode"] as? String
             ?? phase0Stub.mode
         let payload = payload(from: providerConfiguration["payload"])
+        let loadedAt = Date()
+        let generatedAt = payload?.routePlan.generatedAt ?? loadedAt
+        let requestedExpiresAt = payload?.routePlan.expiresAt
+            ?? generatedAt.addingTimeInterval(routeLifetime)
+        let boundedExpiresAt = min(
+            requestedExpiresAt,
+            loadedAt.addingTimeInterval(routeLifetime)
+        )
 
         return ProviderRuntimeConfiguration(
             mode: mode,
             profileId: providerConfiguration["profileId"] as? String ?? payload?.profileId.uuidString,
             profileDisplayName: providerConfiguration["profileDisplayName"] as? String ?? payload?.profileDisplayName,
             sanitizedConfiguration: payload?.sanitizedConfiguration ?? "",
-            includedRoutes: payload?.routePlan.includedRoutes ?? []
+            includedRoutes: payload?.routePlan.includedRoutes ?? [],
+            ipv6BypassDomains: payload?.routePlan.ipv6BypassDomains ?? [],
+            routePlanGeneratedAt: payload == nil ? nil : generatedAt,
+            routePlanExpiresAt: payload == nil
+                ? nil
+                : boundedExpiresAt
+        )
+    }
+
+    func replacingRoutes(
+        _ routes: [ProviderRouteDescriptor],
+        ipv6BypassDomains: [String],
+        generatedAt: Date?,
+        expiresAt: Date
+    ) throws -> ProviderRuntimeConfiguration {
+        var addresses = Set<String>()
+        for route in routes {
+            guard route.subnetMask == "255.255.255.255", IPAddressRange(from: route.cidr) != nil else {
+                throw PacketTunnelRuntimeError.invalidRoutePlanAddress(route.destinationAddress)
+            }
+            guard addresses.insert(route.destinationAddress).inserted else {
+                throw PacketTunnelRuntimeError.duplicateRoutePlanAddress(route.destinationAddress)
+            }
+        }
+
+        return ProviderRuntimeConfiguration(
+            mode: mode,
+            profileId: profileId,
+            profileDisplayName: profileDisplayName,
+            sanitizedConfiguration: sanitizedConfiguration,
+            includedRoutes: routes,
+            ipv6BypassDomains: Array(Set(ipv6BypassDomains)).sorted(),
+            routePlanGeneratedAt: generatedAt ?? Date(),
+            routePlanExpiresAt: expiresAt
         )
     }
 
@@ -191,6 +405,9 @@ private struct ProviderConfigurationPayload: Decodable {
 
 private struct ProviderRoutePlan: Decodable {
     let includedRoutes: [ProviderRouteDescriptor]
+    let ipv6BypassDomains: [String]?
+    let generatedAt: Date?
+    let expiresAt: Date?
 }
 
 private struct ProviderRouteDescriptor: Decodable {
@@ -201,6 +418,22 @@ private struct ProviderRouteDescriptor: Decodable {
     var cidr: String {
         "\(destinationAddress)/32"
     }
+}
+
+private struct ProviderAppRequest: Decodable {
+    let schemaVersion: Int
+    let command: String
+    let profileId: UUID?
+    let routePlan: ProviderRoutePlan?
+    let failSafeEnabled: Bool?
+}
+
+private struct ProviderRouteUpdateResponse: Encodable {
+    let schemaVersion: Int
+    let success: Bool
+    let message: String
+    let plannedRouteCount: Int
+    let routePlanExpiresAt: Date?
 }
 
 private enum WireGuardKitConfigurationBuilder {
@@ -217,13 +450,13 @@ private enum WireGuardKitConfigurationBuilder {
         let parsedConfig = try ParsedWireGuardConfiguration.parse(restoredConfiguration)
 
         guard let interfacePrivateKey = PrivateKey(base64Key: parsedConfig.interface.privateKey) else {
-            throw PacketTunnelRuntimeError.invalidWireGuardConfig("Invalid interface private key.")
+            throw PacketTunnelRuntimeError.invalidWireGuardConfig("인터페이스 개인 키가 올바르지 않습니다.")
         }
 
         var interface = InterfaceConfiguration(privateKey: interfacePrivateKey)
         interface.addresses = try parsedConfig.interface.addresses.map { address in
             guard let range = IPAddressRange(from: address) else {
-                throw PacketTunnelRuntimeError.invalidWireGuardConfig("Invalid interface address: \(address)")
+                throw PacketTunnelRuntimeError.invalidWireGuardConfig("인터페이스 주소가 올바르지 않습니다: \(address)")
             }
             return range
         }
@@ -234,25 +467,25 @@ private enum WireGuardKitConfigurationBuilder {
         let selectedAllowedIPs = runtimeConfiguration.includedRoutes.map(\.cidr)
         let peers = try parsedConfig.peers.map { peerConfig in
             guard let publicKey = PublicKey(base64Key: peerConfig.publicKey) else {
-                throw PacketTunnelRuntimeError.invalidWireGuardConfig("Invalid peer public key.")
+                throw PacketTunnelRuntimeError.invalidWireGuardConfig("피어 공개 키가 올바르지 않습니다.")
             }
 
             var peer = PeerConfiguration(publicKey: publicKey)
             if let presharedKey = peerConfig.presharedKey, !presharedKey.isEmpty {
                 guard let key = PreSharedKey(base64Key: presharedKey) else {
-                    throw PacketTunnelRuntimeError.invalidWireGuardConfig("Invalid peer preshared key.")
+                    throw PacketTunnelRuntimeError.invalidWireGuardConfig("피어 사전 공유 키가 올바르지 않습니다.")
                 }
                 peer.preSharedKey = key
             }
             peer.allowedIPs = try selectedAllowedIPs.map { allowedIP in
                 guard let range = IPAddressRange(from: allowedIP) else {
-                    throw PacketTunnelRuntimeError.invalidWireGuardConfig("Invalid route plan address: \(allowedIP)")
+                    throw PacketTunnelRuntimeError.invalidWireGuardConfig("경로 계획 주소가 올바르지 않습니다: \(allowedIP)")
                 }
                 return range
             }
             if let endpoint = peerConfig.endpoint, !endpoint.isEmpty {
                 guard let parsedEndpoint = Endpoint(from: endpoint) else {
-                    throw PacketTunnelRuntimeError.invalidWireGuardConfig("Invalid peer endpoint: \(endpoint)")
+                    throw PacketTunnelRuntimeError.invalidWireGuardConfig("피어 엔드포인트가 올바르지 않습니다: \(endpoint)")
                 }
                 peer.endpoint = parsedEndpoint
             }
@@ -261,7 +494,7 @@ private enum WireGuardKitConfigurationBuilder {
         }
 
         guard !peers.isEmpty else {
-            throw PacketTunnelRuntimeError.invalidWireGuardConfig("WireGuard config must contain at least one peer.")
+            throw PacketTunnelRuntimeError.invalidWireGuardConfig("WireGuard 설정에 피어가 하나 이상 필요합니다.")
         }
 
         return TunnelConfiguration(
@@ -312,7 +545,7 @@ private struct ParsedWireGuardConfiguration {
             }
 
             guard let equals = line.firstIndex(of: "=") else {
-                throw PacketTunnelRuntimeError.invalidWireGuardConfig("Invalid config line: \(line)")
+                throw PacketTunnelRuntimeError.invalidWireGuardConfig("설정 줄 형식이 올바르지 않습니다: \(line)")
             }
             let key = line[..<equals].trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             let value = line[line.index(after: equals)...].trimmingCharacters(in: .whitespacesAndNewlines)
@@ -326,7 +559,7 @@ private struct ParsedWireGuardConfiguration {
         commitPeer(pendingPeer)
 
         guard let privateKey = interfaceValues["privatekey"] else {
-            throw PacketTunnelRuntimeError.invalidWireGuardConfig("Missing interface private key.")
+            throw PacketTunnelRuntimeError.invalidWireGuardConfig("인터페이스 개인 키가 없습니다.")
         }
 
         return ParsedWireGuardConfiguration(
@@ -425,28 +658,82 @@ private enum KeychainEntitlements {
     }
 }
 
+private struct SharedFailSafeSettingsStore {
+    private static let settingKey = "routePlanExpirationFailSafeEnabled"
+    private let defaults: UserDefaults
+
+    init() {
+        defaults = Self.appGroupIdentifier().flatMap(UserDefaults.init(suiteName:)) ?? .standard
+    }
+
+    var isEnabled: Bool {
+        guard defaults.object(forKey: Self.settingKey) != nil else {
+            return true
+        }
+        return defaults.bool(forKey: Self.settingKey)
+    }
+
+    func setEnabled(_ isEnabled: Bool) {
+        defaults.set(isEnabled, forKey: Self.settingKey)
+    }
+
+    private static func appGroupIdentifier() -> String? {
+        guard
+            let task = SecTaskCreateFromSelf(nil),
+            let value = SecTaskCopyValueForEntitlement(
+                task,
+                "com.apple.security.application-groups" as CFString,
+                nil
+            ),
+            let groups = value as? [String]
+        else {
+            return nil
+        }
+
+        return groups.first
+    }
+}
+
 private enum PacketTunnelRuntimeError: LocalizedError {
+    case duplicateRoutePlanAddress(String)
     case emptyRoutePlan
+    case invalidRoutePlanAddress(String)
     case invalidKeychainData
     case invalidWireGuardConfig(String)
     case keychainStatus(OSStatus)
     case missingPrivateKey
     case missingProfileId
+    case routeLimitExceeded(Int)
+    case routePlanExpired
+    case routeUpdateProfileMismatch
+    case unsupportedProviderMessage
 
     var errorDescription: String? {
         switch self {
+        case .duplicateRoutePlanAddress(let address):
+            return "경로 새로고침에 중복된 IPv4 목적지가 있습니다: \(address)"
         case .emptyRoutePlan:
-            return "Route plan is empty; refusing to start a full-tunnel WireGuard session."
+            return "경로 계획이 비어 있어 전체 트래픽 VPN 연결을 시작하지 않습니다."
+        case .invalidRoutePlanAddress(let address):
+            return "경로 새로고침에 올바르지 않은 IPv4 /32 목적지가 있습니다: \(address)"
         case .invalidKeychainData:
-            return "Stored private key data is not valid UTF-8."
+            return "저장된 개인 키 데이터를 읽지 못했습니다."
         case .invalidWireGuardConfig(let message):
             return message
         case .keychainStatus(let status):
-            return "Keychain read failed with status \(status)."
+            return "키체인에서 개인 키를 읽지 못했습니다. 상태 코드: \(status)"
         case .missingPrivateKey:
-            return "No private key was found for the selected profile."
+            return "선택한 프로필의 개인 키를 찾지 못했습니다."
         case .missingProfileId:
-            return "Provider configuration is missing a profile id."
+            return "Packet Tunnel 구성에 프로필 ID가 없습니다."
+        case .routeLimitExceeded(let count):
+            return "경로 \(count)개가 안전 제한을 초과했습니다."
+        case .routePlanExpired:
+            return "분할 경로 계획을 새로고치기 전에 만료되었습니다."
+        case .routeUpdateProfileMismatch:
+            return "새 경로의 프로필이 현재 VPN 연결과 일치하지 않습니다."
+        case .unsupportedProviderMessage:
+            return "지원하지 않는 Packet Tunnel 요청입니다."
         }
     }
 }
@@ -457,6 +744,9 @@ private struct TunnelDiagnostics: Codable {
     let profileId: String?
     let profileDisplayName: String?
     let plannedRouteCount: Int
+    let ipv6BypassDomainCount: Int
+    let routePlanExpiresAt: Date?
+    let failSafeEnabled: Bool
     let wireGuardKitLinked: Bool
     let message: String
     let updatedAt: Date
