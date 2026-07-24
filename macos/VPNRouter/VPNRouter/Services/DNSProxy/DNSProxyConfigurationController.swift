@@ -156,8 +156,19 @@ final class DNSProxyConfigurationController: ObservableObject {
             localizedDescription: localizedDescription,
             hasProviderConfiguration: providerProtocol?.providerConfiguration?.isEmpty == false,
             isEnabled: isEnabled,
-            expectedBundleIdentifier: expectedBundleIdentifier
+            expectedBundleIdentifier: expectedBundleIdentifier,
+            expectedLegacyDescription: hostBundleIdentifier(
+                fromDNSProxyBundleIdentifier: expectedBundleIdentifier
+            )
         )
+    }
+
+    private func hostBundleIdentifier(fromDNSProxyBundleIdentifier identifier: String) -> String? {
+        let suffix = ".DNSProxyExtension"
+        guard identifier.hasSuffix(suffix) else {
+            return nil
+        }
+        return String(identifier.dropLast(suffix.count))
     }
 
     private func failureMessage(prefix: String, error: Error) -> String {

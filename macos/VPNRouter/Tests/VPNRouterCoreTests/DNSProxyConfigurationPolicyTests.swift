@@ -3,6 +3,7 @@ import Testing
 
 struct DNSProxyConfigurationPolicyTests {
     private let expectedBundleIdentifier = "com.example.VPNRouter.DNSProxyExtension"
+    private let expectedLegacyDescription = "com.example.VPNRouter"
 
     @Test
     func missingConfigurationIsSafeToCreate() {
@@ -12,7 +13,8 @@ struct DNSProxyConfigurationPolicyTests {
             localizedDescription: nil,
             hasProviderConfiguration: false,
             isEnabled: false,
-            expectedBundleIdentifier: expectedBundleIdentifier
+            expectedBundleIdentifier: expectedBundleIdentifier,
+            expectedLegacyDescription: expectedLegacyDescription
         )
 
         #expect(ownership == .none)
@@ -26,7 +28,8 @@ struct DNSProxyConfigurationPolicyTests {
             localizedDescription: "VPN Router",
             hasProviderConfiguration: true,
             isEnabled: true,
-            expectedBundleIdentifier: expectedBundleIdentifier
+            expectedBundleIdentifier: expectedBundleIdentifier,
+            expectedLegacyDescription: expectedLegacyDescription
         )
 
         #expect(ownership == .vpnRouter)
@@ -40,7 +43,8 @@ struct DNSProxyConfigurationPolicyTests {
             localizedDescription: "Security DNS",
             hasProviderConfiguration: true,
             isEnabled: false,
-            expectedBundleIdentifier: expectedBundleIdentifier
+            expectedBundleIdentifier: expectedBundleIdentifier,
+            expectedLegacyDescription: expectedLegacyDescription
         )
 
         #expect(ownership == .other)
@@ -54,7 +58,8 @@ struct DNSProxyConfigurationPolicyTests {
             localizedDescription: nil,
             hasProviderConfiguration: false,
             isEnabled: false,
-            expectedBundleIdentifier: expectedBundleIdentifier
+            expectedBundleIdentifier: expectedBundleIdentifier,
+            expectedLegacyDescription: expectedLegacyDescription
         )
 
         #expect(ownership == .none)
@@ -68,7 +73,8 @@ struct DNSProxyConfigurationPolicyTests {
             localizedDescription: "Existing DNS",
             hasProviderConfiguration: false,
             isEnabled: false,
-            expectedBundleIdentifier: expectedBundleIdentifier
+            expectedBundleIdentifier: expectedBundleIdentifier,
+            expectedLegacyDescription: expectedLegacyDescription
         )
 
         #expect(ownership == .other)
@@ -82,7 +88,38 @@ struct DNSProxyConfigurationPolicyTests {
             localizedDescription: nil,
             hasProviderConfiguration: false,
             isEnabled: true,
-            expectedBundleIdentifier: expectedBundleIdentifier
+            expectedBundleIdentifier: expectedBundleIdentifier,
+            expectedLegacyDescription: expectedLegacyDescription
+        )
+
+        #expect(ownership == .other)
+    }
+
+    @Test
+    func inactiveHostNamedPlaceholderIsSafeToConfigure() {
+        let ownership = DNSProxyConfigurationPolicy.ownership(
+            hasConfiguration: true,
+            providerBundleIdentifier: nil,
+            localizedDescription: expectedLegacyDescription,
+            hasProviderConfiguration: false,
+            isEnabled: false,
+            expectedBundleIdentifier: expectedBundleIdentifier,
+            expectedLegacyDescription: expectedLegacyDescription
+        )
+
+        #expect(ownership == .none)
+    }
+
+    @Test
+    func differentlyNamedPlaceholderIsNeverClaimed() {
+        let ownership = DNSProxyConfigurationPolicy.ownership(
+            hasConfiguration: true,
+            providerBundleIdentifier: nil,
+            localizedDescription: "com.example.SecurityDNS",
+            hasProviderConfiguration: false,
+            isEnabled: false,
+            expectedBundleIdentifier: expectedBundleIdentifier,
+            expectedLegacyDescription: expectedLegacyDescription
         )
 
         #expect(ownership == .other)

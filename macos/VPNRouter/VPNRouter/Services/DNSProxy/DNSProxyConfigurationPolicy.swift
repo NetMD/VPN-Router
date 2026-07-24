@@ -13,7 +13,8 @@ enum DNSProxyConfigurationPolicy {
         localizedDescription: String?,
         hasProviderConfiguration: Bool,
         isEnabled: Bool,
-        expectedBundleIdentifier: String
+        expectedBundleIdentifier: String,
+        expectedLegacyDescription: String?
     ) -> DNSProxyConfigurationOwnership {
         guard hasConfiguration else {
             return .none
@@ -22,14 +23,15 @@ enum DNSProxyConfigurationPolicy {
             return .vpnRouter
         }
 
-        let hasDescription = localizedDescription?
+        let normalizedDescription = localizedDescription?
             .trimmingCharacters(in: .whitespacesAndNewlines)
-            .isEmpty == false
+        let hasDescription = normalizedDescription?.isEmpty == false
         if providerBundleIdentifier == nil,
-           hasDescription == false,
            !hasProviderConfiguration,
            !isEnabled {
-            return .none
+            if hasDescription == false || normalizedDescription == expectedLegacyDescription {
+                return .none
+            }
         }
 
         return .other
