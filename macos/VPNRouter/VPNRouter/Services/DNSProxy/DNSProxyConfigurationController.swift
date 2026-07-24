@@ -18,6 +18,8 @@ final class DNSProxyConfigurationController: ObservableObject {
             try await loadPreferences(for: manager)
             let ownership = ownership(
                 of: manager.providerProtocol,
+                localizedDescription: manager.localizedDescription,
+                isEnabled: manager.isEnabled,
                 expectedBundleIdentifier: expectedBundleIdentifier
             )
             isEnabled = ownership == .vpnRouter && manager.isEnabled
@@ -47,6 +49,8 @@ final class DNSProxyConfigurationController: ObservableObject {
             try await loadPreferences(for: manager)
             guard ownership(
                 of: manager.providerProtocol,
+                localizedDescription: manager.localizedDescription,
+                isEnabled: manager.isEnabled,
                 expectedBundleIdentifier: expectedBundleIdentifier
             ) != .other else {
                 throw DNSProxyConfigurationError.configurationNotOwned
@@ -66,6 +70,8 @@ final class DNSProxyConfigurationController: ObservableObject {
 
             guard ownership(
                 of: manager.providerProtocol,
+                localizedDescription: manager.localizedDescription,
+                isEnabled: manager.isEnabled,
                 expectedBundleIdentifier: expectedBundleIdentifier
             ) == .vpnRouter, manager.isEnabled else {
                 throw DNSProxyConfigurationError.enableVerificationFailed
@@ -89,6 +95,8 @@ final class DNSProxyConfigurationController: ObservableObject {
             try await loadPreferences(for: manager)
             switch ownership(
                 of: manager.providerProtocol,
+                localizedDescription: manager.localizedDescription,
+                isEnabled: manager.isEnabled,
                 expectedBundleIdentifier: expectedBundleIdentifier
             ) {
             case .none:
@@ -117,6 +125,8 @@ final class DNSProxyConfigurationController: ObservableObject {
                 try await loadPreferences(for: manager)
                 guard ownership(
                     of: manager.providerProtocol,
+                    localizedDescription: manager.localizedDescription,
+                    isEnabled: manager.isEnabled,
                     expectedBundleIdentifier: expectedBundleIdentifier
                 ) == .vpnRouter else {
                     throw DNSProxyConfigurationError.configurationNotOwned
@@ -132,11 +142,16 @@ final class DNSProxyConfigurationController: ObservableObject {
 
     private func ownership(
         of providerProtocol: NEDNSProxyProviderProtocol?,
+        localizedDescription: String?,
+        isEnabled: Bool,
         expectedBundleIdentifier: String
     ) -> DNSProxyConfigurationOwnership {
         DNSProxyConfigurationPolicy.ownership(
             hasConfiguration: providerProtocol != nil,
             providerBundleIdentifier: providerProtocol?.providerBundleIdentifier,
+            localizedDescription: localizedDescription,
+            hasProviderConfiguration: providerProtocol?.providerConfiguration?.isEmpty == false,
+            isEnabled: isEnabled,
             expectedBundleIdentifier: expectedBundleIdentifier
         )
     }
