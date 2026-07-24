@@ -8,11 +8,21 @@
 
 /* Begin PBXBuildFile section */
 		F7809BC1300E5C7A002FF5C2 /* WireGuardKit in Frameworks */ = {isa = PBXBuildFile; productRef = F7809BC0300E5C7A002FF5C2 /* WireGuardKit */; };
+		F7D30001310E3D7100525299 /* DNSProxyExtension.systemextension in Embed System Extensions */ = {isa = PBXBuildFile; fileRef = F7D30002310E3D7100525299 /* DNSProxyExtension.systemextension */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		F7D3000F310E3D7100525299 /* NetworkExtension.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F7C795F8300E3D7100525299 /* NetworkExtension.framework */; };
+		F7D30011310E3D7100525299 /* SystemExtensions.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F7D30010310E3D7100525299 /* SystemExtensions.framework */; };
 		F7C79601300E3D7100525299 /* PacketTunnel.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = F7C795F6300E3D7100525299 /* PacketTunnel.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		F7C7963F300E57D400525299 /* NetworkExtension.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F7C795F8300E3D7100525299 /* NetworkExtension.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		F7D30003310E3D7100525299 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = F7C795DC300E3C3A00525299 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = F7D30008310E3D7100525299;
+			remoteInfo = DNSProxyExtension;
+		};
 		F7C795FF300E3D7100525299 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = F7C795DC300E3C3A00525299 /* Project object */;
@@ -23,6 +33,17 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
+		F7D30004310E3D7100525299 /* Embed System Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "Contents/Library/SystemExtensions";
+			dstSubfolderSpec = 1;
+			files = (
+				F7D30001310E3D7100525299 /* DNSProxyExtension.systemextension in Embed System Extensions */,
+			);
+			name = "Embed System Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		F7C79606300E3D7100525299 /* Embed Foundation Extensions */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
@@ -37,12 +58,21 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		F7D30002310E3D7100525299 /* DNSProxyExtension.systemextension */ = {isa = PBXFileReference; explicitFileType = "wrapper.system-extension"; includeInIndex = 0; path = DNSProxyExtension.systemextension; sourceTree = BUILT_PRODUCTS_DIR; };
+		F7D30010310E3D7100525299 /* SystemExtensions.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SystemExtensions.framework; path = System/Library/Frameworks/SystemExtensions.framework; sourceTree = SDKROOT; };
 		F7C795E4300E3C3A00525299 /* VPNRouter.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = VPNRouter.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		F7C795F6300E3D7100525299 /* PacketTunnel.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = PacketTunnel.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		F7C795F8300E3D7100525299 /* NetworkExtension.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = NetworkExtension.framework; path = System/Library/Frameworks/NetworkExtension.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		F7D30005310E3D7100525299 /* Exceptions for "DNSProxyExtension" folder in "DNSProxyExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = F7D30008310E3D7100525299 /* DNSProxyExtension */;
+		};
 		F7C79602300E3D7100525299 /* Exceptions for "PacketTunnel" folder in "PacketTunnel" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
@@ -53,6 +83,14 @@
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		F7D30006310E3D7100525299 /* DNSProxyExtension */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				F7D30005310E3D7100525299 /* Exceptions for "DNSProxyExtension" folder in "DNSProxyExtension" target */,
+			);
+			path = DNSProxyExtension;
+			sourceTree = "<group>";
+		};
 		F7C795E6300E3C3A00525299 /* VPNRouter */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = VPNRouter;
@@ -73,6 +111,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				F7D30011310E3D7100525299 /* SystemExtensions.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -85,6 +124,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		F7D30007310E3D7100525299 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F7D3000F310E3D7100525299 /* NetworkExtension.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -93,6 +140,7 @@
 			children = (
 				F7C795E6300E3C3A00525299 /* VPNRouter */,
 				F7C795FA300E3D7100525299 /* PacketTunnel */,
+				F7D30006310E3D7100525299 /* DNSProxyExtension */,
 				F7C795F7300E3D7100525299 /* Frameworks */,
 				F7C795E5300E3C3A00525299 /* Products */,
 			);
@@ -103,6 +151,7 @@
 			children = (
 				F7C795E4300E3C3A00525299 /* VPNRouter.app */,
 				F7C795F6300E3D7100525299 /* PacketTunnel.appex */,
+				F7D30002310E3D7100525299 /* DNSProxyExtension.systemextension */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -111,6 +160,7 @@
 			isa = PBXGroup;
 			children = (
 				F7C795F8300E3D7100525299 /* NetworkExtension.framework */,
+				F7D30010310E3D7100525299 /* SystemExtensions.framework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -126,11 +176,13 @@
 				F7C795E1300E3C3A00525299 /* Frameworks */,
 				F7C795E2300E3C3A00525299 /* Resources */,
 				F7C79606300E3D7100525299 /* Embed Foundation Extensions */,
+				F7D30004310E3D7100525299 /* Embed System Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 				F7C79600300E3D7100525299 /* PBXTargetDependency */,
+				F7D3000B310E3D7100525299 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				F7C795E6300E3C3A00525299 /* VPNRouter */,
@@ -165,6 +217,28 @@
 			productReference = F7C795F6300E3D7100525299 /* PacketTunnel.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
+		F7D30008310E3D7100525299 /* DNSProxyExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F7D3000E310E3D7100525299 /* Build configuration list for PBXNativeTarget "DNSProxyExtension" */;
+			buildPhases = (
+				F7D30009310E3D7100525299 /* Sources */,
+				F7D30007310E3D7100525299 /* Frameworks */,
+				F7D3000A310E3D7100525299 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				F7D30006310E3D7100525299 /* DNSProxyExtension */,
+			);
+			name = DNSProxyExtension;
+			packageProductDependencies = (
+			);
+			productName = DNSProxyExtension;
+			productReference = F7D30002310E3D7100525299 /* DNSProxyExtension.systemextension */;
+			productType = "com.apple.product-type.system-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -179,6 +253,9 @@
 						CreatedOnToolsVersion = 26.6;
 					};
 					F7C795F5300E3D7100525299 = {
+						CreatedOnToolsVersion = 26.6;
+					};
+					F7D30008310E3D7100525299 = {
 						CreatedOnToolsVersion = 26.6;
 					};
 				};
@@ -202,6 +279,7 @@
 			targets = (
 				F7C795E3300E3C3A00525299 /* VPNRouter */,
 				F7C795F5300E3D7100525299 /* PacketTunnel */,
+				F7D30008310E3D7100525299 /* DNSProxyExtension */,
 			);
 		};
 /* End PBXProject section */
@@ -215,6 +293,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		F7C795F4300E3D7100525299 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F7D3000A310E3D7100525299 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -238,6 +323,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		F7D30009310E3D7100525299 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -245,6 +337,11 @@
 			isa = PBXTargetDependency;
 			target = F7C795F5300E3D7100525299 /* PacketTunnel */;
 			targetProxy = F7C795FF300E3D7100525299 /* PBXContainerItemProxy */;
+		};
+		F7D3000B310E3D7100525299 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = F7D30008310E3D7100525299 /* DNSProxyExtension */;
+			targetProxy = F7D30003310E3D7100525299 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -378,7 +475,6 @@
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 46DSJ7YYX2;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
@@ -411,7 +507,6 @@
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 46DSJ7YYX2;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
@@ -497,6 +592,56 @@
 			};
 			name = Release;
 		};
+		F7D3000C310E3D7100525299 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = DNSProxyExtension/DNSProxyExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = DNSProxyExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "VPN Router DNS Proxy";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.simple.VPNRouter.DNSProxyExtension;
+				PRODUCT_NAME = "$(PRODUCT_BUNDLE_IDENTIFIER)";
+				REGISTER_APP_GROUPS = YES;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		F7D3000D310E3D7100525299 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = DNSProxyExtension/DNSProxyExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = DNSProxyExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "VPN Router DNS Proxy";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.simple.VPNRouter.DNSProxyExtension;
+				PRODUCT_NAME = "$(PRODUCT_BUNDLE_IDENTIFIER)";
+				REGISTER_APP_GROUPS = YES;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -523,6 +668,15 @@
 			buildConfigurations = (
 				F7C79604300E3D7100525299 /* Debug */,
 				F7C79605300E3D7100525299 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		F7D3000E310E3D7100525299 /* Build configuration list for PBXNativeTarget "DNSProxyExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F7D3000C310E3D7100525299 /* Debug */,
+				F7D3000D310E3D7100525299 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

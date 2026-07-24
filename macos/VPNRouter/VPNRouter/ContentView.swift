@@ -3,6 +3,7 @@ import NetworkExtension
 import UniformTypeIdentifiers
 
 struct ContentView: View {
+    @StateObject private var dnsProxySystemExtensionController = DNSProxySystemExtensionController()
     @State private var selectedSection: SidebarSection = .home
     @State private var status: NEVPNStatus = .invalid
     @State private var lastMessage = "설치된 VPN 구성이 없습니다."
@@ -359,6 +360,24 @@ struct ContentView: View {
                 }
                 .disabled(isRunningDNSProxyProbe)
                 DiagnosticMessageView(message: dnsProxyProbeMessage)
+
+                Divider()
+
+                Text("System Extension 활성화")
+                    .font(.headline)
+                Text("확장만 설치·활성화합니다. DNS Proxy preferences를 저장하거나 DNS 트래픽 가로채기를 켜지 않습니다.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                Button {
+                    dnsProxySystemExtensionController.requestActivation()
+                } label: {
+                    Label(
+                        dnsProxySystemExtensionController.isRequestInFlight ? "활성화 요청 중" : "DNS Proxy System Extension 활성화",
+                        systemImage: "puzzlepiece.extension"
+                    )
+                }
+                .disabled(dnsProxySystemExtensionController.isRequestInFlight)
+                DiagnosticMessageView(message: dnsProxySystemExtensionController.message)
             }
             Spacer()
         }
@@ -1344,6 +1363,14 @@ enum TunnelIdentifiers {
         }
 
         return "\(appBundleIdentifier).PacketTunnel"
+    }
+
+    nonisolated static var dnsProxySystemExtensionBundleIdentifier: String {
+        guard let appBundleIdentifier = Bundle.main.bundleIdentifier else {
+            return "VPNRouter.DNSProxyExtension"
+        }
+
+        return "\(appBundleIdentifier).DNSProxyExtension"
     }
 }
 

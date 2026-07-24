@@ -38,6 +38,12 @@ The current signed proof embeds `PacketTunnel.appex`. Phase 3 must keep that nat
 Packet Tunnel implementation isolated and add a separate DNS Proxy system extension
 only if signing and provisioning succeed.
 
+The checkpoint-B development target follows Xcode's current Network Extension system
+extension template and requests `dns-proxy`. Before Developer ID distribution, use a
+separate distribution entitlement/provisioning setup with
+`dns-proxy-systemextension`; do not substitute the distribution entitlement into the
+development checkpoint without matching provisioning.
+
 Do not add DNS Proxy entitlement values speculatively to committed signing files.
 First confirm that the owner's Developer Team can provision:
 
@@ -62,16 +68,33 @@ configuration.
 Passing this checkpoint proves only preference access. It does not prove that a DNS
 Proxy system extension can be installed or that DNS traffic is visible.
 
+Result on 2026-07-24 KST: passed. The signed host app read DNS Proxy preferences,
+reported that a VPN Router configuration existed, and reported that it was not
+enabled. No preference was saved, removed, or enabled by the probe.
+
 ## Signed checkpoint B: system extension activation
 
 After checkpoint A passes:
 
-1. Add a separate Network Extension system-extension target containing a minimal
-   `NEDNSProxyProvider`.
-2. Require an explicit diagnostic action before requesting
+1. In Xcode, select the same owner-approved Team for the new
+   `DNSProxyExtension` target.
+2. Change its example bundle identifier to the signed host identifier plus
+   `.DNSProxyExtension`. It must match the identifier derived by
+   `TunnelIdentifiers.dnsProxySystemExtensionBundleIdentifier`.
+3. Confirm the host target has System Extension installation and DNS Proxy
+   capabilities, and the new target has DNS Proxy plus the shared App Group.
+4. Require an explicit diagnostic action before requesting
    `OSSystemExtensionRequest.activationRequest`.
-3. Record activation approval and provider start/stop without accepting DNS flows.
-4. Do not enable the DNS Proxy configuration until safe forwarding is implemented.
+5. Build and run the signed host app, then select **진단 → DNS Proxy System
+   Extension 활성화**.
+6. Approve the extension in System Settings if macOS requests approval.
+7. Record the user-facing activation result or its error domain/code without
+   recording private Team or provisioning data.
+8. Do not enable the DNS Proxy configuration until safe forwarding is implemented.
+
+The repository now includes the checkpoint-B target and explicit activation action.
+Its `handleNewFlow` returns `false`; activation alone does not save or enable an
+`NEDNSProxyManager` configuration.
 
 ## Signed checkpoint C: forwarding and coexistence
 

@@ -329,9 +329,14 @@ verification.
   fail-safe checkpoints in `docs/macos-phase3-dns-proxy-spike.md`.
 - [x] Verify the Phase 3 probe with an unsigned host/extension build and rerun all
   fifteen focused tests.
-- [ ] Run signed checkpoint A and record the DNS Proxy preference-access result.
+- [x] Run signed checkpoint A. The host could read DNS Proxy preferences, a VPN
+  Router configuration existed, and it was not enabled.
+- [x] Add a separate minimal DNS Proxy system-extension target and embed it at
+  `Contents/Library/SystemExtensions` using a bundle-matching filename.
+- [x] Add an explicit diagnostic activation request. It does not save or enable the
+  DNS Proxy configuration, and the checkpoint-B provider rejects unexpected flows.
 - [ ] Confirm provisioning for a separate `dns-proxy-systemextension` target.
-- [ ] Implement and activate a minimal system extension without accepting DNS flows.
+- [ ] Activate the minimal system extension in a signed build without accepting DNS flows.
 - [ ] Implement safe UDP and TCP forwarding before enabling DNS interception.
 - [ ] Verify Packet Tunnel and DNS Proxy simultaneous operation.
 - [ ] Test coexistence without altering third-party DNS or security products.
