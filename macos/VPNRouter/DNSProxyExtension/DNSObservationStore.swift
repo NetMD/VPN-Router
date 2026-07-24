@@ -1,7 +1,7 @@
 import Foundation
-import Security
 
 final class DNSObservationStore {
+    static let appGroupIdentifier = "group.com.simple.vpnrouter.shared"
     static let targetDomainsKey = "dnsProxyTargetDomainsV1"
     static let observationsKey = "dnsProxyRouteObservationsV1"
     static let runtimeDiagnosticsKey = "dnsProxyRuntimeDiagnosticsV1"
@@ -12,10 +12,10 @@ final class DNSObservationStore {
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
 
-    init() {
-        let defaults = Self.appGroupIdentifier()
-            .flatMap(UserDefaults.init(suiteName:))
-            ?? .standard
+    init?() {
+        guard let defaults = UserDefaults(suiteName: Self.appGroupIdentifier) else {
+            return nil
+        }
         self.defaults = defaults
         encoder.dateEncodingStrategy = .iso8601
         decoder.dateDecodingStrategy = .iso8601
@@ -94,6 +94,7 @@ final class DNSObservationStore {
             )
             if let encoded = try? encoder.encode(snapshot) {
                 defaults.set(encoded, forKey: Self.observationsKey)
+                defaults.synchronize()
             }
         }
     }
@@ -130,6 +131,7 @@ final class DNSObservationStore {
             )
             if let encoded = try? encoder.encode(diagnostics) {
                 defaults.set(encoded, forKey: Self.runtimeDiagnosticsKey)
+                defaults.synchronize()
             }
         }
     }
@@ -141,20 +143,6 @@ final class DNSObservationStore {
             .lowercased()
     }
 
-    private static func appGroupIdentifier() -> String? {
-        guard
-            let task = SecTaskCreateFromSelf(nil),
-            let value = SecTaskCopyValueForEntitlement(
-                task,
-                "com.apple.security.application-groups" as CFString,
-                nil
-            ),
-            let groups = value as? [String]
-        else {
-            return nil
-        }
-        return groups.first
-    }
 }
 
 enum DNSProxyRuntimeEvent: String {

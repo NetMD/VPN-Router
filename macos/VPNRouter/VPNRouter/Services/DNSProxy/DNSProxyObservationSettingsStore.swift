@@ -1,7 +1,7 @@
 import Foundation
-import Security
 
 struct DNSProxyObservationSettingsStore {
+    static let appGroupIdentifier = "group.com.simple.vpnrouter.shared"
     static let targetDomainsKey = "dnsProxyTargetDomainsV1"
     static let observationsKey = "dnsProxyRouteObservationsV1"
     static let runtimeDiagnosticsKey = "dnsProxyRuntimeDiagnosticsV1"
@@ -10,9 +10,13 @@ struct DNSProxyObservationSettingsStore {
     private let defaults: UserDefaults
 
     init(defaults: UserDefaults? = nil) {
-        self.defaults = defaults
-            ?? Self.appGroupIdentifier().flatMap(UserDefaults.init(suiteName:))
-            ?? .standard
+        if let defaults {
+            self.defaults = defaults
+        } else if let appGroupDefaults = UserDefaults(suiteName: Self.appGroupIdentifier) {
+            self.defaults = appGroupDefaults
+        } else {
+            preconditionFailure("VPN Router DNS Proxy App Group defaults are unavailable")
+        }
     }
 
     func publish(domains: [String]) {
@@ -35,6 +39,7 @@ struct DNSProxyObservationSettingsStore {
                 .prefix(Self.maximumTargetCount)
         )
         defaults.set(boundedDomains, forKey: Self.targetDomainsKey)
+        defaults.synchronize()
     }
 
     func prepareForDiagnosticRun(domains: [String]) {
@@ -44,6 +49,7 @@ struct DNSProxyObservationSettingsStore {
     }
 
     func summary(at date: Date = Date()) throws -> DNSProxyObservationSummary {
+        defaults.synchronize()
         guard let data = defaults.data(forKey: Self.observationsKey) else {
             return DNSProxyObservationSummary(
                 activeCount: 0,
@@ -69,6 +75,7 @@ struct DNSProxyObservationSettingsStore {
     }
 
     func runtimeSummary() throws -> DNSProxyRuntimeSummary {
+        defaults.synchronize()
         guard let data = defaults.data(forKey: Self.runtimeDiagnosticsKey) else {
             return DNSProxyRuntimeSummary(
                 eventCounts: [:],
@@ -92,21 +99,6 @@ struct DNSProxyObservationSettingsStore {
         )
     }
 
-    private static func appGroupIdentifier() -> String? {
-        guard
-            let task = SecTaskCreateFromSelf(nil),
-            let value = SecTaskCopyValueForEntitlement(
-                task,
-                "com.apple.security.application-groups" as CFString,
-                nil
-            ),
-            let groups = value as? [String]
-        else {
-            return nil
-        }
-
-        return groups.first
-    }
 }
 
 struct DNSProxyObservationSummary {
