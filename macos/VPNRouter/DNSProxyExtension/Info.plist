@@ -10,7 +10,7 @@
 			<string>$(PRODUCT_MODULE_NAME).DNSProxyProvider</string>
 		</dict>
 		<key>NEMachServiceName</key>
-		<string>$(TeamIdentifierPrefix)$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+		<string>group.com.simple.vpnrouter.shared.DNSProxyExtension</string>
 	</dict>
 	<key>NSSystemExtensionUsageDescription</key>
 	<string>선택한 사이트의 DNS 주소 변경을 관찰하는 호환성 실험에 사용합니다. DNS Proxy 구성은 별도로 명시적으로 활성화해야 합니다.</string>

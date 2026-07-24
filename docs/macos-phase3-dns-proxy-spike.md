@@ -96,6 +96,12 @@ The repository now includes the checkpoint-B target and explicit activation acti
 Its `handleNewFlow` returns `false`; activation alone does not save or enable an
 `NEDNSProxyManager` configuration.
 
+First activation finding on 2026-07-24 KST: NetworkExtension category validation
+rejected the system extension because `NEMachServiceName` was based on the provider
+bundle identifier rather than prefixed by an App Group in the signed extension
+entitlements. The invalid staged copy was automatically removed. The Info.plist now
+uses the shared App Group as the Mach service prefix.
+
 ## Signed checkpoint C: forwarding and coexistence
 
 The forwarding spike must:

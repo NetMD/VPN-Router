@@ -335,6 +335,11 @@ verification.
   `Contents/Library/SystemExtensions` using a bundle-matching filename.
 - [x] Add an explicit diagnostic activation request. It does not save or enable the
   DNS Proxy configuration, and the checkpoint-B provider rejects unexpected flows.
+- [x] Diagnose the first signed checkpoint-B activation failure. NetworkExtension
+  category validation rejected an `NEMachServiceName` that was not prefixed by the
+  extension's App Group; the system automatically removed the invalid staged copy.
+- [x] Align `NEMachServiceName` with the shared App Group while keeping DNS Proxy
+  configuration disabled.
 - [ ] Confirm provisioning for a separate `dns-proxy-systemextension` target.
 - [ ] Activate the minimal system extension in a signed build without accepting DNS flows.
 - [ ] Implement safe UDP and TCP forwarding before enabling DNS interception.
