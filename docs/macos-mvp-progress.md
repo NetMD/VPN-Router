@@ -373,10 +373,18 @@ verification.
   `NEMachServiceName` XPC service. The provider now retains only bounded in-memory
   target and aggregate observation data; the host sends targets and fetches a
   schema-versioned snapshot over privileged Mach-service XPC with retry and timeout.
-- [ ] Verify the new XPC diagnostic channel in a signed real-Mac build. Until that
-  check passes, the XPC implementation is only compile- and unit-test-verified.
-- [ ] Verify UDP and TCP forwarding on a signed real-Mac build before enabling the
-  DNS Proxy configuration outside an explicit diagnostic test.
+- [x] Verify the new XPC diagnostic channel in signed build 4 on a real Mac. The
+  host successfully sent the expanded target-domain set, and a snapshot reported
+  28 active and 4 expired target IPv4 observations without displaying retained
+  domain or address values.
+- [x] Repeat signed UDP forwarding with the XPC diagnostic channel. Runtime
+  diagnostics reported provider start 1, UDP flows accepted/opened/upstream-ready
+  64, responses received/delivered 63, and forwarding failures 0. A controlled
+  `youtube.com` A query returned four answers through the system resolver.
+- [x] Make the Diagnostics detail vertically scrollable and reflow its DNS Proxy
+  controls vertically when the available width cannot fit the horizontal row.
+- [ ] Verify TCP forwarding on a signed real-Mac build before enabling the DNS
+  Proxy configuration outside an explicit diagnostic test.
 - [ ] Verify Packet Tunnel and DNS Proxy simultaneous operation.
 - [ ] Test coexistence without altering third-party DNS or security products.
 
