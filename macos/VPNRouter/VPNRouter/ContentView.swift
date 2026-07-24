@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 
 struct ContentView: View {
     @StateObject private var dnsProxySystemExtensionController = DNSProxySystemExtensionController()
+    @StateObject private var dnsProxyConfigurationController = DNSProxyConfigurationController()
     @State private var selectedSection: SidebarSection = .home
     @State private var status: NEVPNStatus = .invalid
     @State private var lastMessage = "설치된 VPN 구성이 없습니다."
@@ -26,6 +27,9 @@ struct ContentView: View {
     @State private var isShowingFailSafeDisableConfirmation = false
     @State private var dnsProxyProbeMessage = "DNS Proxy 권한과 preferences 접근 여부를 아직 확인하지 않았습니다."
     @State private var isRunningDNSProxyProbe = false
+    @State private var isShowingDNSProxyEnableConfirmation = false
+    @State private var isShowingDNSProxyEmergencyDisableConfirmation = false
+    @State private var dnsProxyObservationMessage = "이번 진단 실행에서 확인한 대상 DNS 관찰이 없습니다."
 
     var body: some View {
         NavigationSplitView {
@@ -48,6 +52,9 @@ struct ContentView: View {
             loadProfiles()
             loadSiteDomainsForSelectedProfile()
             loadFailSafeSetting()
+            await dnsProxyConfigurationController.refresh(
+                expectedBundleIdentifier: TunnelIdentifiers.dnsProxySystemExtensionBundleIdentifier
+            )
         }
         .task(id: status) {
             await runConnectedRouteRefreshLoop()
@@ -99,6 +106,39 @@ struct ContentView: View {
             Button("취소", role: .cancel) {}
         } message: {
             Text("경로가 15분 이상 갱신되지 않아도 VPN 연결을 유지합니다. 선택한 사이트가 일반 네트워크로 우회할 수 있습니다.")
+        }
+        .confirmationDialog(
+            "DNS Proxy 진단을 활성화할까요?",
+            isPresented: $isShowingDNSProxyEnableConfirmation
+        ) {
+            Button("진단용 DNS Proxy 활성화") {
+                Task {
+                    DNSProxyObservationSettingsStore().prepareForDiagnosticRun(domains: siteDomains)
+                    dnsProxyObservationMessage = "진단 관찰값을 초기화했습니다. 대상 사이트에서 새 DNS 요청을 발생시키세요."
+                    await dnsProxyConfigurationController.enableForDiagnostics(
+                        expectedBundleIdentifier: TunnelIdentifiers.dnsProxySystemExtensionBundleIdentifier
+                    )
+                }
+            }
+            Button("취소", role: .cancel) {}
+        } message: {
+            Text("DNS 요청 전달을 시작합니다. 다른 DNS Proxy 또는 보안 DNS가 활성화되어 있으면 취소하고 해당 제품의 안내를 먼저 확인하세요. VPN Router는 제3자 제품을 자동으로 끄거나 변경하지 않습니다.")
+        }
+        .confirmationDialog(
+            "DNS Proxy를 즉시 끌까요?",
+            isPresented: $isShowingDNSProxyEmergencyDisableConfirmation
+        ) {
+            Button("즉시 끄기", role: .destructive) {
+                Task {
+                    await dnsProxyConfigurationController.disable(
+                        expectedBundleIdentifier: TunnelIdentifiers.dnsProxySystemExtensionBundleIdentifier,
+                        allowOwnedRemovalFallback: true
+                    )
+                }
+            }
+            Button("취소", role: .cancel) {}
+        } message: {
+            Text("먼저 VPN Router 구성을 비활성화합니다. 저장이 실패할 때만 VPN Router가 소유한 DNS Proxy 구성을 제거합니다. 다른 제품의 구성은 변경하지 않습니다.")
         }
     }
 
@@ -378,6 +418,58 @@ struct ContentView: View {
                 }
                 .disabled(dnsProxySystemExtensionController.isRequestInFlight)
                 DiagnosticMessageView(message: dnsProxySystemExtensionController.message)
+
+                Divider()
+
+                Text("DNS Proxy 전달 진단")
+                    .font(.headline)
+                Text("저장된 VPN 사이트 \(siteDomains.count)개를 대상으로만 A 레코드와 TTL을 관찰합니다. 실제 DNS 요청을 전달하므로 signed 빌드에서만 사용하세요.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                HStack(spacing: 12) {
+                    Button {
+                        isShowingDNSProxyEnableConfirmation = true
+                    } label: {
+                        Label(
+                            dnsProxyConfigurationController.isRequestInFlight
+                                ? "처리 중"
+                                : "진단용 DNS Proxy 활성화",
+                            systemImage: "network"
+                        )
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(
+                        dnsProxyConfigurationController.isRequestInFlight
+                            || dnsProxyConfigurationController.isEnabled
+                            || siteDomains.isEmpty
+                    )
+
+                    Button(role: .destructive) {
+                        isShowingDNSProxyEmergencyDisableConfirmation = true
+                    } label: {
+                        Label("DNS Proxy 즉시 끄기", systemImage: "exclamationmark.octagon")
+                    }
+                    .disabled(dnsProxyConfigurationController.isRequestInFlight)
+
+                    Button {
+                        Task {
+                            await dnsProxyConfigurationController.refresh(
+                                expectedBundleIdentifier: TunnelIdentifiers.dnsProxySystemExtensionBundleIdentifier
+                            )
+                        }
+                    } label: {
+                        Label("상태 새로고침", systemImage: "arrow.clockwise")
+                    }
+                    .disabled(dnsProxyConfigurationController.isRequestInFlight)
+
+                    Button {
+                        refreshDNSProxyObservationSummary()
+                    } label: {
+                        Label("관찰 결과 확인", systemImage: "list.number")
+                    }
+                }
+                DiagnosticMessageView(message: dnsProxyConfigurationController.message)
+                DiagnosticMessageView(message: dnsProxyObservationMessage)
             }
             Spacer()
         }
@@ -1029,6 +1121,18 @@ struct ContentView: View {
                 : " 현재 활성화된 VPN Router DNS Proxy 구성은 없습니다."
         } else {
             dnsProxyProbeMessage += " Xcode에서 DNS Proxy capability와 프로비저닝을 확인해야 합니다."
+        }
+    }
+
+    private func refreshDNSProxyObservationSummary() {
+        do {
+            let summary = try DNSProxyObservationSettingsStore().summary()
+            let latestMessage = summary.latestObservationAt.map {
+                " 최근 관찰: \($0.formatted(date: .abbreviated, time: .standard))."
+            } ?? ""
+            dnsProxyObservationMessage = "유효한 대상 IPv4 관찰 \(summary.activeCount)개, 만료된 관찰 \(summary.expiredCount)개.\(latestMessage)"
+        } catch {
+            dnsProxyObservationMessage = "DNS 관찰 요약을 읽지 못했습니다: \(error.localizedDescription)"
         }
     }
 

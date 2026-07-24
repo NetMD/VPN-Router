@@ -149,4 +149,12 @@ forward with the same metadata-preserving path.
 Passing unit tests and an unsigned build do not prove live forwarding. The next
 checkpoint is a signed, explicitly enabled diagnostic test covering ordinary UDP
 DNS, forced TCP DNS, provider stop/restart, and unchanged unrelated connectivity.
-The DNS Proxy configuration remains disabled until that test is prepared and run.
+The host now provides that explicit diagnostic enable action and a separate
+immediate-disable action. It verifies the provider bundle identifier before every
+mutation, refuses to alter an unknown configuration, and removes preferences only
+as an emergency fallback after confirming they belong to VPN Router. Enabling still
+requires a user confirmation warning that another DNS/security product must not be
+active. The UI reports only aggregate observation counts and timestamps.
+
+The DNS Proxy configuration remains disabled until the updated signed build is
+installed and the diagnostic test is deliberately started.

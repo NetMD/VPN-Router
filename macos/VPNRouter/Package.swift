@@ -10,7 +10,8 @@ let package = Package(
     products: [
         .library(name: "VPNRouterCore", targets: ["VPNRouterCore"]),
         .library(name: "VPNRouterSettings", targets: ["VPNRouterSettings"]),
-        .library(name: "VPNRouterDNSObservation", targets: ["VPNRouterDNSObservation"])
+        .library(name: "VPNRouterDNSObservation", targets: ["VPNRouterDNSObservation"]),
+        .library(name: "VPNRouterDNSProxyControl", targets: ["VPNRouterDNSProxyControl"])
     ],
     targets: [
         .target(
@@ -41,12 +42,24 @@ let package = Package(
             ],
             sources: ["DNSMessageParser.swift"]
         ),
+        .target(
+            name: "VPNRouterDNSProxyControl",
+            path: "VPNRouter/Services/DNSProxy",
+            exclude: [
+                "DNSProxyCapabilityProbe.swift",
+                "DNSProxyConfigurationController.swift",
+                "DNSProxyObservationSettingsStore.swift",
+                "DNSProxySystemExtensionController.swift"
+            ],
+            sources: ["DNSProxyConfigurationPolicy.swift"]
+        ),
         .testTarget(
             name: "VPNRouterCoreTests",
             dependencies: [
                 "VPNRouterCore",
                 "VPNRouterSettings",
-                "VPNRouterDNSObservation"
+                "VPNRouterDNSObservation",
+                "VPNRouterDNSProxyControl"
             ]
         )
     ]

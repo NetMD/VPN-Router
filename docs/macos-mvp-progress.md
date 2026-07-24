@@ -351,6 +351,11 @@ verification.
   CNAME TTL propagation, truncation, and compression-pointer loops.
 - [x] Publish only the normalized, expanded saved target-domain set to the shared
   App Group and retain only bounded target address/TTL observations.
+- [x] Add an explicit diagnostic enable action, an immediate-disable recovery
+  action, and ownership checks that refuse to modify another provider's DNS Proxy
+  configuration.
+- [x] Add aggregate observation diagnostics that report counts and timestamps
+  without displaying retained domains or addresses.
 - [ ] Verify UDP and TCP forwarding on a signed real-Mac build before enabling the
   DNS Proxy configuration outside an explicit diagnostic test.
 - [ ] Verify Packet Tunnel and DNS Proxy simultaneous operation.
