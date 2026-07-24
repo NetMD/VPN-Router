@@ -31,7 +31,11 @@ final class DNSProxyConfigurationController: ObservableObject {
                     ? "VPN Router DNS Proxy 진단 구성이 활성 상태입니다."
                     : "VPN Router DNS Proxy 진단 구성이 비활성 상태입니다."
             case .other:
-                message = "VPN Router가 소유하지 않은 DNS Proxy 구성이 감지되어 변경하지 않았습니다."
+                message = unknownConfigurationMessage(
+                    providerProtocol: manager.providerProtocol,
+                    localizedDescription: manager.localizedDescription,
+                    isEnabled: manager.isEnabled
+                )
             }
         } catch {
             isEnabled = false
@@ -159,6 +163,24 @@ final class DNSProxyConfigurationController: ObservableObject {
     private func failureMessage(prefix: String, error: Error) -> String {
         let nsError = error as NSError
         return "\(prefix): \(nsError.domain) \(nsError.code) — \(nsError.localizedDescription)"
+    }
+
+    private func unknownConfigurationMessage(
+        providerProtocol: NEDNSProxyProviderProtocol?,
+        localizedDescription: String?,
+        isEnabled: Bool
+    ) -> String {
+        let trimmedDescription = localizedDescription?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let displayName: String
+        if let trimmedDescription, !trimmedDescription.isEmpty {
+            displayName = trimmedDescription
+        } else {
+            displayName = "이름 없음"
+        }
+        let providerIdentifier = providerProtocol?.providerBundleIdentifier ?? "식별자 없음"
+        let state = isEnabled ? "활성" : "비활성"
+        return "VPN Router가 소유하지 않은 DNS Proxy 구성이 감지되어 변경하지 않았습니다. 상태: \(state), 이름: \(displayName), provider: \(providerIdentifier)"
     }
 
     private func loadPreferences(for manager: NEDNSProxyManager) async throws {
