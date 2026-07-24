@@ -37,6 +37,7 @@ final class TCPDNSFlowSession: DNSFlowSession {
             guard let self else { return }
             switch state {
             case .ready:
+                self.observationStore.record(.upstreamReady)
                 self.openFlow()
             case .failed(let error):
                 self.finish(error)
@@ -63,6 +64,7 @@ final class TCPDNSFlowSession: DNSFlowSession {
                     self.finish(error)
                     return
                 }
+                self.observationStore.record(.flowOpened)
                 self.copyInbound()
                 self.copyOutbound()
             }
@@ -76,14 +78,17 @@ final class TCPDNSFlowSession: DNSFlowSession {
             guard let self else { return }
             self.queue.async {
                 if let data, !data.isEmpty {
+                    self.observationStore.record(.responseReceived)
                     self.inspectTCPResponses(data)
                     self.flow.write(data) { [weak self] writeError in
                         self?.queue.async {
                             if let writeError {
                                 self?.finish(writeError)
                             } else if isComplete {
+                                self?.observationStore.record(.responseDelivered)
                                 self?.finish(error)
                             } else {
+                                self?.observationStore.record(.responseDelivered)
                                 self?.copyInbound()
                             }
                         }
@@ -145,6 +150,9 @@ final class TCPDNSFlowSession: DNSFlowSession {
     private func finish(_ error: Error?) {
         guard !didFinish else { return }
         didFinish = true
+        if let error {
+            observationStore.record(.forwardingFailure, error: error)
+        }
         connection.stateUpdateHandler = nil
         connection.cancel()
         flow.closeReadWithError(error)
@@ -181,6 +189,7 @@ final class UDPDNSFlowSession: DNSFlowSession {
                 if let error {
                     self.finish(error)
                 } else {
+                    self.observationStore.record(.flowOpened)
                     self.readDatagrams()
                 }
             }
@@ -233,6 +242,9 @@ final class UDPDNSFlowSession: DNSFlowSession {
     private func finish(_ error: Error?) {
         guard !didFinish else { return }
         didFinish = true
+        if let error {
+            observationStore.record(.forwardingFailure, error: error)
+        }
         let queries = activeQueries.values
         activeQueries.removeAll()
         queries.forEach { $0.stop() }
@@ -278,23 +290,24 @@ private final class UDPDNSQuery {
             guard let self else { return }
             switch state {
             case .ready:
+                self.observationStore.record(.upstreamReady)
                 self.send()
-            case .failed:
-                self.finish()
+            case .failed(let error):
+                self.finish(error: error)
             case .cancelled:
-                self.finish()
+                self.finish(error: nil)
             default:
                 break
             }
         }
         connection.start(queue: queue)
         queue.asyncAfter(deadline: .now() + 10) { [weak self] in
-            self?.finish()
+            self?.finish(error: DNSFlowSessionError.queryTimedOut)
         }
     }
 
     func stop() {
-        finish()
+        finish(error: nil)
     }
 
     private func send() {
@@ -302,20 +315,24 @@ private final class UDPDNSQuery {
             guard let self else { return }
             self.queue.async {
                 if error != nil {
-                    self.finish()
+                    self.finish(error: error)
                     return
                 }
                 self.connection.receiveMessage { [weak self] response, _, _, receiveError in
                     guard let self else { return }
                     self.queue.async {
                         guard receiveError == nil, let response, !response.isEmpty else {
-                            self.finish()
+                            self.finish(error: receiveError ?? DNSFlowSessionError.emptyResponse)
                             return
                         }
+                        self.observationStore.record(.responseReceived)
                         self.observationStore.inspectResponse(response)
-                        self.flow.writeDatagrams([(response, self.endpoint)]) { [weak self] _ in
+                        self.flow.writeDatagrams([(response, self.endpoint)]) { [weak self] writeError in
                             self?.queue.async {
-                                self?.finish()
+                                if writeError == nil {
+                                    self?.observationStore.record(.responseDelivered)
+                                }
+                                self?.finish(error: writeError)
                             }
                         }
                     }
@@ -324,9 +341,12 @@ private final class UDPDNSQuery {
         })
     }
 
-    private func finish() {
+    private func finish(error: Error?) {
         guard !didFinish else { return }
         didFinish = true
+        if let error {
+            observationStore.record(.forwardingFailure, error: error)
+        }
         connection.stateUpdateHandler = nil
         connection.cancel()
         completion()
@@ -335,8 +355,17 @@ private final class UDPDNSQuery {
 
 private enum DNSFlowSessionError: LocalizedError {
     case queryLimitExceeded
+    case queryTimedOut
+    case emptyResponse
 
     var errorDescription: String? {
-        "동시에 전달할 수 있는 DNS 질의 수를 초과했습니다."
+        switch self {
+        case .queryLimitExceeded:
+            "동시에 전달할 수 있는 DNS 질의 수를 초과했습니다."
+        case .queryTimedOut:
+            "DNS upstream 응답 시간이 초과되었습니다."
+        case .emptyResponse:
+            "DNS upstream이 빈 응답을 반환했습니다."
+        }
     }
 }

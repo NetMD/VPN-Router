@@ -356,6 +356,12 @@ verification.
   configuration.
 - [x] Add aggregate observation diagnostics that report counts and timestamps
   without displaying retained domains or addresses.
+- [x] Run the first explicit signed UDP forwarding attempt. The DNS Proxy
+  configuration activated, but the first UDP query received no response; the
+  configuration was immediately disabled and normal DNS recovered.
+- [x] Add privacy-preserving runtime counters for provider start/stop, accepted
+  flow type, flow open, upstream readiness, response delivery, and error
+  domain/code before retrying.
 - [ ] Verify UDP and TCP forwarding on a signed real-Mac build before enabling the
   DNS Proxy configuration outside an explicit diagnostic test.
 - [ ] Verify Packet Tunnel and DNS Proxy simultaneous operation.

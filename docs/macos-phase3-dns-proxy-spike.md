@@ -158,3 +158,17 @@ active. The UI reports only aggregate observation counts and timestamps.
 
 The DNS Proxy configuration remains disabled until the updated signed build is
 installed and the diagnostic test is deliberately started.
+
+### First signed UDP attempt
+
+The first explicit diagnostic activation reached the provider configuration
+success state, but a bounded UDP DNS query received no response. Testing stopped
+after that first failure. The owner used the immediate-disable action, the VPN
+Router configuration became inactive, and a follow-up system DNS query succeeded.
+No third-party extension or DNS preference was modified.
+
+Unified logging did not expose enough provider detail to distinguish provider
+startup, flow opening, and upstream forwarding. Before another activation, the
+extension now records only aggregate runtime event counts plus the last error
+domain/code in the VPN Router App Group. It does not record query names, endpoints,
+addresses, or payloads in these runtime diagnostics.

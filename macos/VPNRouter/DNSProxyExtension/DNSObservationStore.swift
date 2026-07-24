@@ -4,6 +4,7 @@ import Security
 final class DNSObservationStore {
     static let targetDomainsKey = "dnsProxyTargetDomainsV1"
     static let observationsKey = "dnsProxyRouteObservationsV1"
+    static let runtimeDiagnosticsKey = "dnsProxyRuntimeDiagnosticsV1"
     static let maximumObservationCount = 512
 
     private let defaults: UserDefaults
@@ -97,6 +98,42 @@ final class DNSObservationStore {
         }
     }
 
+    func record(_ event: DNSProxyRuntimeEvent, error: Error? = nil, at date: Date = Date()) {
+        queue.async { [defaults, decoder, encoder] in
+            let existing: DNSProxyRuntimeDiagnostics
+            if let data = defaults.data(forKey: Self.runtimeDiagnosticsKey),
+               let decoded = try? decoder.decode(DNSProxyRuntimeDiagnostics.self, from: data),
+               decoded.schemaVersion == 1 {
+                existing = decoded
+            } else {
+                existing = DNSProxyRuntimeDiagnostics(
+                    schemaVersion: 1,
+                    eventCounts: [:],
+                    lastEventAt: nil,
+                    lastFailureDomain: nil,
+                    lastFailureCode: nil
+                )
+            }
+
+            var counts = existing.eventCounts
+            let currentCount = counts[event.rawValue, default: 0]
+            if currentCount < Int.max {
+                counts[event.rawValue] = currentCount + 1
+            }
+            let nsError = error as NSError?
+            let diagnostics = DNSProxyRuntimeDiagnostics(
+                schemaVersion: 1,
+                eventCounts: counts,
+                lastEventAt: date,
+                lastFailureDomain: nsError?.domain ?? existing.lastFailureDomain,
+                lastFailureCode: nsError?.code ?? existing.lastFailureCode
+            )
+            if let encoded = try? encoder.encode(diagnostics) {
+                defaults.set(encoded, forKey: Self.runtimeDiagnosticsKey)
+            }
+        }
+    }
+
     private static func normalize(_ domain: String) -> String {
         domain
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -120,6 +157,18 @@ final class DNSObservationStore {
     }
 }
 
+enum DNSProxyRuntimeEvent: String {
+    case providerStarted
+    case providerStopped
+    case udpFlowAccepted
+    case tcpFlowAccepted
+    case flowOpened
+    case upstreamReady
+    case responseReceived
+    case responseDelivered
+    case forwardingFailure
+}
+
 private struct DNSRouteObservationSnapshot: Codable {
     let schemaVersion: Int
     let routes: [DNSRouteObservation]
@@ -130,4 +179,12 @@ private struct DNSRouteObservation: Codable {
     let address: String
     let observedAt: Date
     let expiresAt: Date
+}
+
+private struct DNSProxyRuntimeDiagnostics: Codable {
+    let schemaVersion: Int
+    let eventCounts: [String: Int]
+    let lastEventAt: Date?
+    let lastFailureDomain: String?
+    let lastFailureCode: Int?
 }

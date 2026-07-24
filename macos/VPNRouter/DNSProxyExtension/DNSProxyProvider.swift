@@ -20,6 +20,7 @@ final class DNSProxyProvider: NEDNSProxyProvider {
             return
         }
         logger.notice("DNS Proxy provider started")
+        observationStore.record(.providerStarted)
         completionHandler(nil)
     }
 
@@ -32,6 +33,7 @@ final class DNSProxyProvider: NEDNSProxyProvider {
         sessions.removeAll()
         sessionLock.unlock()
         activeSessions.forEach { $0.stop() }
+        observationStore.record(.providerStopped)
         logger.notice("DNS Proxy provider stopped")
         completionHandler()
     }
@@ -49,12 +51,14 @@ final class DNSProxyProvider: NEDNSProxyProvider {
 
         let session: DNSFlowSession
         if let tcpFlow = flow as? NEAppProxyTCPFlow {
+            observationStore.record(.tcpFlowAccepted)
             session = TCPDNSFlowSession(
                 flow: tcpFlow,
                 observationStore: observationStore,
                 completion: completion
             )
         } else if let udpFlow = flow as? NEAppProxyUDPFlow {
+            observationStore.record(.udpFlowAccepted)
             session = UDPDNSFlowSession(
                 flow: udpFlow,
                 observationStore: observationStore,

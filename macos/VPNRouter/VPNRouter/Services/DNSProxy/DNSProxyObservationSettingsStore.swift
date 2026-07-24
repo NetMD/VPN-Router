@@ -4,6 +4,7 @@ import Security
 struct DNSProxyObservationSettingsStore {
     static let targetDomainsKey = "dnsProxyTargetDomainsV1"
     static let observationsKey = "dnsProxyRouteObservationsV1"
+    static let runtimeDiagnosticsKey = "dnsProxyRuntimeDiagnosticsV1"
     static let maximumTargetCount = 256
 
     private let defaults: UserDefaults
@@ -38,6 +39,7 @@ struct DNSProxyObservationSettingsStore {
 
     func prepareForDiagnosticRun(domains: [String]) {
         defaults.removeObject(forKey: Self.observationsKey)
+        defaults.removeObject(forKey: Self.runtimeDiagnosticsKey)
         publish(domains: domains)
     }
 
@@ -66,6 +68,30 @@ struct DNSProxyObservationSettingsStore {
         )
     }
 
+    func runtimeSummary() throws -> DNSProxyRuntimeSummary {
+        guard let data = defaults.data(forKey: Self.runtimeDiagnosticsKey) else {
+            return DNSProxyRuntimeSummary(
+                eventCounts: [:],
+                lastEventAt: nil,
+                lastFailureDomain: nil,
+                lastFailureCode: nil
+            )
+        }
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let diagnostics = try decoder.decode(DNSProxyRuntimeDiagnosticsSnapshot.self, from: data)
+        guard diagnostics.schemaVersion == 1 else {
+            throw DNSProxyObservationSettingsError.unsupportedSchema(diagnostics.schemaVersion)
+        }
+        return DNSProxyRuntimeSummary(
+            eventCounts: diagnostics.eventCounts,
+            lastEventAt: diagnostics.lastEventAt,
+            lastFailureDomain: diagnostics.lastFailureDomain,
+            lastFailureCode: diagnostics.lastFailureCode
+        )
+    }
+
     private static func appGroupIdentifier() -> String? {
         guard
             let task = SecTaskCreateFromSelf(nil),
@@ -89,6 +115,13 @@ struct DNSProxyObservationSummary {
     let latestObservationAt: Date?
 }
 
+struct DNSProxyRuntimeSummary {
+    let eventCounts: [String: Int]
+    let lastEventAt: Date?
+    let lastFailureDomain: String?
+    let lastFailureCode: Int?
+}
+
 private struct DNSProxyRouteObservationSnapshot: Decodable {
     let schemaVersion: Int
     let routes: [DNSProxyRouteObservation]
@@ -97,6 +130,14 @@ private struct DNSProxyRouteObservationSnapshot: Decodable {
 private struct DNSProxyRouteObservation: Decodable {
     let observedAt: Date
     let expiresAt: Date
+}
+
+private struct DNSProxyRuntimeDiagnosticsSnapshot: Decodable {
+    let schemaVersion: Int
+    let eventCounts: [String: Int]
+    let lastEventAt: Date?
+    let lastFailureDomain: String?
+    let lastFailureCode: Int?
 }
 
 private enum DNSProxyObservationSettingsError: LocalizedError {

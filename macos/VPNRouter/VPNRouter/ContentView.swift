@@ -1126,11 +1126,26 @@ struct ContentView: View {
 
     private func refreshDNSProxyObservationSummary() {
         do {
-            let summary = try DNSProxyObservationSettingsStore().summary()
+            let store = DNSProxyObservationSettingsStore()
+            let summary = try store.summary()
+            let runtime = try store.runtimeSummary()
             let latestMessage = summary.latestObservationAt.map {
                 " 최근 관찰: \($0.formatted(date: .abbreviated, time: .standard))."
             } ?? ""
-            dnsProxyObservationMessage = "유효한 대상 IPv4 관찰 \(summary.activeCount)개, 만료된 관찰 \(summary.expiredCount)개.\(latestMessage)"
+            let counts = runtime.eventCounts
+            let failureMessage: String
+            if let domain = runtime.lastFailureDomain, let code = runtime.lastFailureCode {
+                failureMessage = " 마지막 오류: \(domain) \(code)."
+            } else {
+                failureMessage = ""
+            }
+            dnsProxyObservationMessage = """
+            유효한 대상 IPv4 관찰 \(summary.activeCount)개, 만료된 관찰 \(summary.expiredCount)개.\(latestMessage) \
+            런타임 — 시작 \(counts["providerStarted", default: 0]), UDP 수락 \(counts["udpFlowAccepted", default: 0]), \
+            TCP 수락 \(counts["tcpFlowAccepted", default: 0]), flow 열림 \(counts["flowOpened", default: 0]), \
+            upstream 준비 \(counts["upstreamReady", default: 0]), 응답 수신 \(counts["responseReceived", default: 0]), \
+            응답 전달 \(counts["responseDelivered", default: 0]), 전달 오류 \(counts["forwardingFailure", default: 0]).\(failureMessage)
+            """
         } catch {
             dnsProxyObservationMessage = "DNS 관찰 요약을 읽지 못했습니다: \(error.localizedDescription)"
         }
