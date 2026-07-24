@@ -383,109 +383,121 @@ struct ContentView: View {
     }
 
     private var diagnosticsView: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            header(title: "진단", subtitle: statusText)
-            tunnelControls
-            ipv6BypassWarning
-            Divider()
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Packet Tunnel 상태")
-                    .font(.headline)
-                DiagnosticMessageView(message: lastMessage)
-            }
-            Divider()
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Phase 3 DNS Proxy 준비 상태")
-                    .font(.headline)
-                Text("이 검사는 DNS 설정을 저장하거나 활성화하지 않고 현재 서명 빌드의 preferences 읽기 권한만 확인합니다.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                Button {
-                    Task {
-                        await runDNSProxyCapabilityProbe()
-                    }
-                } label: {
-                    Label(
-                        isRunningDNSProxyProbe ? "확인 중" : "DNS Proxy 권한 확인",
-                        systemImage: "network.badge.shield.half.filled"
-                    )
-                }
-                .disabled(isRunningDNSProxyProbe)
-                DiagnosticMessageView(message: dnsProxyProbeMessage)
-
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                header(title: "진단", subtitle: statusText)
+                tunnelControls
+                ipv6BypassWarning
                 Divider()
-
-                Text("System Extension 활성화")
-                    .font(.headline)
-                Text("확장만 설치·활성화합니다. DNS Proxy preferences를 저장하거나 DNS 트래픽 가로채기를 켜지 않습니다.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                Button {
-                    dnsProxySystemExtensionController.requestActivation()
-                } label: {
-                    Label(
-                        dnsProxySystemExtensionController.isRequestInFlight ? "활성화 요청 중" : "DNS Proxy System Extension 활성화",
-                        systemImage: "puzzlepiece.extension"
-                    )
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Packet Tunnel 상태")
+                        .font(.headline)
+                    DiagnosticMessageView(message: lastMessage)
                 }
-                .disabled(dnsProxySystemExtensionController.isRequestInFlight)
-                DiagnosticMessageView(message: dnsProxySystemExtensionController.message)
-
                 Divider()
-
-                Text("DNS Proxy 전달 진단")
-                    .font(.headline)
-                Text("저장된 VPN 사이트 \(siteDomains.count)개를 대상으로만 A 레코드와 TTL을 관찰합니다. 실제 DNS 요청을 전달하므로 signed 빌드에서만 사용하세요.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Phase 3 DNS Proxy 준비 상태")
+                        .font(.headline)
+                    Text("이 검사는 DNS 설정을 저장하거나 활성화하지 않고 현재 서명 빌드의 preferences 읽기 권한만 확인합니다.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
                     Button {
-                        isShowingDNSProxyEnableConfirmation = true
+                        Task {
+                            await runDNSProxyCapabilityProbe()
+                        }
                     } label: {
                         Label(
-                            dnsProxyConfigurationController.isRequestInFlight
-                                ? "처리 중"
-                                : "진단용 DNS Proxy 활성화",
-                            systemImage: "network"
+                            isRunningDNSProxyProbe ? "확인 중" : "DNS Proxy 권한 확인",
+                            systemImage: "network.badge.shield.half.filled"
                         )
                     }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(
-                        dnsProxyConfigurationController.isRequestInFlight
-                            || dnsProxyConfigurationController.isEnabled
-                            || siteDomains.isEmpty
-                    )
+                    .disabled(isRunningDNSProxyProbe)
+                    DiagnosticMessageView(message: dnsProxyProbeMessage)
 
-                    Button(role: .destructive) {
-                        isShowingDNSProxyEmergencyDisableConfirmation = true
-                    } label: {
-                        Label("DNS Proxy 즉시 끄기", systemImage: "exclamationmark.octagon")
-                    }
-                    .disabled(dnsProxyConfigurationController.isRequestInFlight)
+                    Divider()
 
+                    Text("System Extension 활성화")
+                        .font(.headline)
+                    Text("확장만 설치·활성화합니다. DNS Proxy preferences를 저장하거나 DNS 트래픽 가로채기를 켜지 않습니다.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
                     Button {
-                        Task {
-                            await dnsProxyConfigurationController.refresh(
-                                expectedBundleIdentifier: TunnelIdentifiers.dnsProxySystemExtensionBundleIdentifier
-                            )
-                        }
+                        dnsProxySystemExtensionController.requestActivation()
                     } label: {
-                        Label("상태 새로고침", systemImage: "arrow.clockwise")
+                        Label(
+                            dnsProxySystemExtensionController.isRequestInFlight ? "활성화 요청 중" : "DNS Proxy System Extension 활성화",
+                            systemImage: "puzzlepiece.extension"
+                        )
                     }
-                    .disabled(dnsProxyConfigurationController.isRequestInFlight)
+                    .disabled(dnsProxySystemExtensionController.isRequestInFlight)
+                    DiagnosticMessageView(message: dnsProxySystemExtensionController.message)
 
-                    Button {
-                        Task {
-                            await refreshDNSProxyObservationSummary()
+                    Divider()
+
+                    Text("DNS Proxy 전달 진단")
+                        .font(.headline)
+                    Text("저장된 VPN 사이트 \(siteDomains.count)개를 대상으로만 A 레코드와 TTL을 관찰합니다. 실제 DNS 요청을 전달하므로 signed 빌드에서만 사용하세요.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 12) {
+                            dnsProxyDiagnosticControls
                         }
-                    } label: {
-                        Label("관찰 결과 확인", systemImage: "list.number")
+                        VStack(alignment: .leading, spacing: 8) {
+                            dnsProxyDiagnosticControls
+                        }
                     }
+                    DiagnosticMessageView(message: dnsProxyConfigurationController.message)
+                    DiagnosticMessageView(message: dnsProxyObservationMessage)
                 }
-                DiagnosticMessageView(message: dnsProxyConfigurationController.message)
-                DiagnosticMessageView(message: dnsProxyObservationMessage)
             }
-            Spacer()
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+    }
+
+    @ViewBuilder
+    private var dnsProxyDiagnosticControls: some View {
+        Button {
+            isShowingDNSProxyEnableConfirmation = true
+        } label: {
+            Label(
+                dnsProxyConfigurationController.isRequestInFlight
+                    ? "처리 중"
+                    : "진단용 DNS Proxy 활성화",
+                systemImage: "network"
+            )
+        }
+        .buttonStyle(.borderedProminent)
+        .disabled(
+            dnsProxyConfigurationController.isRequestInFlight
+                || dnsProxyConfigurationController.isEnabled
+                || siteDomains.isEmpty
+        )
+
+        Button(role: .destructive) {
+            isShowingDNSProxyEmergencyDisableConfirmation = true
+        } label: {
+            Label("DNS Proxy 즉시 끄기", systemImage: "exclamationmark.octagon")
+        }
+        .disabled(dnsProxyConfigurationController.isRequestInFlight)
+
+        Button {
+            Task {
+                await dnsProxyConfigurationController.refresh(
+                    expectedBundleIdentifier: TunnelIdentifiers.dnsProxySystemExtensionBundleIdentifier
+                )
+            }
+        } label: {
+            Label("상태 새로고침", systemImage: "arrow.clockwise")
+        }
+        .disabled(dnsProxyConfigurationController.isRequestInFlight)
+
+        Button {
+            Task {
+                await refreshDNSProxyObservationSummary()
+            }
+        } label: {
+            Label("관찰 결과 확인", systemImage: "list.number")
         }
     }
 
