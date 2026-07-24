@@ -23,6 +23,8 @@ struct ContentView: View {
     @State private var failSafeEnabled = true
     @State private var settingsMessage = "만료 시 자동 연결 해제가 켜져 있습니다."
     @State private var isShowingFailSafeDisableConfirmation = false
+    @State private var dnsProxyProbeMessage = "DNS Proxy 권한과 preferences 접근 여부를 아직 확인하지 않았습니다."
+    @State private var isRunningDNSProxyProbe = false
 
     var body: some View {
         NavigationSplitView {
@@ -337,6 +339,26 @@ struct ContentView: View {
                 Text("Packet Tunnel 상태")
                     .font(.headline)
                 DiagnosticMessageView(message: lastMessage)
+            }
+            Divider()
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Phase 3 DNS Proxy 준비 상태")
+                    .font(.headline)
+                Text("이 검사는 DNS 설정을 저장하거나 활성화하지 않고 현재 서명 빌드의 preferences 읽기 권한만 확인합니다.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                Button {
+                    Task {
+                        await runDNSProxyCapabilityProbe()
+                    }
+                } label: {
+                    Label(
+                        isRunningDNSProxyProbe ? "확인 중" : "DNS Proxy 권한 확인",
+                        systemImage: "network.badge.shield.half.filled"
+                    )
+                }
+                .disabled(isRunningDNSProxyProbe)
+                DiagnosticMessageView(message: dnsProxyProbeMessage)
             }
             Spacer()
         }
@@ -971,6 +993,21 @@ struct ContentView: View {
             lastMessage = "Packet Tunnel 응답 정상. 적용 경로: \(diagnostics.plannedRouteCount)개. \(diagnostics.message)\(expiryMessage)\(ipv6Message)\(failSafeMessage)"
         } catch {
             lastMessage = "Packet Tunnel 상태를 확인하지 못했습니다: \(error.localizedDescription)"
+        }
+    }
+
+    private func runDNSProxyCapabilityProbe() async {
+        isRunningDNSProxyProbe = true
+        defer { isRunningDNSProxyProbe = false }
+
+        let result = await DNSProxyCapabilityProbe.run()
+        dnsProxyProbeMessage = result.message
+        if result.preferenceAccessAvailable {
+            dnsProxyProbeMessage += result.configurationEnabled
+                ? " 현재 구성은 활성 상태입니다."
+                : " 현재 활성화된 VPN Router DNS Proxy 구성은 없습니다."
+        } else {
+            dnsProxyProbeMessage += " Xcode에서 DNS Proxy capability와 프로비저닝을 확인해야 합니다."
         }
     }
 

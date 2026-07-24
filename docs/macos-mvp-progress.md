@@ -317,6 +317,25 @@ verification.
 - [x] Detect AAAA answers and clearly report IPv6 bypass risk.
 - [x] Record YouTube and Netflix Japan-exit dogfooding checks (partial failure: static DNS answer coverage).
 
+## Phase 3 progress
+
+- [x] Recheck current Apple deployment and entitlement requirements using primary
+  documentation.
+- [x] Confirm that a macOS DNS Proxy must be packaged as a separate system extension,
+  not added to the Packet Tunnel app-extension target.
+- [x] Add a read-only signed-build probe that loads DNS Proxy preferences without
+  saving, removing, or enabling a configuration.
+- [x] Document the provisioning, activation, forwarding, privacy, coexistence, and
+  fail-safe checkpoints in `docs/macos-phase3-dns-proxy-spike.md`.
+- [x] Verify the Phase 3 probe with an unsigned host/extension build and rerun all
+  fifteen focused tests.
+- [ ] Run signed checkpoint A and record the DNS Proxy preference-access result.
+- [ ] Confirm provisioning for a separate `dns-proxy-systemextension` target.
+- [ ] Implement and activate a minimal system extension without accepting DNS flows.
+- [ ] Implement safe UDP and TCP forwarding before enabling DNS interception.
+- [ ] Verify Packet Tunnel and DNS Proxy simultaneous operation.
+- [ ] Test coexistence without altering third-party DNS or security products.
+
 ## Expected work list
 
 ### Phase 1: WireGuard static split-routing proof
