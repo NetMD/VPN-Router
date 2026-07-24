@@ -1,63 +1,58 @@
 import Foundation
 
 final class DNSObservationStore {
-    static let appGroupIdentifier = "group.com.simple.vpnrouter.shared"
-    static let targetDomainsKey = "dnsProxyTargetDomainsV1"
-    static let observationsKey = "dnsProxyRouteObservationsV1"
-    static let runtimeDiagnosticsKey = "dnsProxyRuntimeDiagnosticsV1"
     static let maximumObservationCount = 512
+    static let maximumTargetCount = 256
 
-    private let defaults: UserDefaults
     private let queue = DispatchQueue(label: "VPNRouter.DNSObservationStore")
     private let encoder = JSONEncoder()
-    private let decoder = JSONDecoder()
+    private var targetDomains = Set<String>()
+    private var observationsByAddress: [String: DNSRouteObservation] = [:]
+    private var runtimeDiagnostics = DNSProxyRuntimeDiagnostics(
+        schemaVersion: 1,
+        eventCounts: [:],
+        lastEventAt: nil,
+        lastFailureDomain: nil,
+        lastFailureCode: nil
+    )
 
-    init?() {
-        guard let defaults = UserDefaults(suiteName: Self.appGroupIdentifier) else {
-            return nil
-        }
-        self.defaults = defaults
+    init() {
         encoder.dateEncodingStrategy = .iso8601
-        decoder.dateDecodingStrategy = .iso8601
+    }
+
+    func replaceTargetDomains(_ domains: [String], completion: @escaping (Bool) -> Void) {
+        queue.async {
+            let normalized = domains
+                .prefix(Self.maximumTargetCount)
+                .map(Self.normalize)
+                .filter { !$0.isEmpty }
+            self.targetDomains = Set(normalized)
+            self.observationsByAddress.removeAll()
+            self.runtimeDiagnostics = DNSProxyRuntimeDiagnostics(
+                schemaVersion: 1,
+                eventCounts: self.runtimeDiagnostics.eventCounts,
+                lastEventAt: self.runtimeDiagnostics.lastEventAt,
+                lastFailureDomain: self.runtimeDiagnostics.lastFailureDomain,
+                lastFailureCode: self.runtimeDiagnostics.lastFailureCode
+            )
+            completion(!self.targetDomains.isEmpty)
+        }
     }
 
     func inspectResponse(_ response: Data, observedAt: Date = Date()) {
-        queue.async { [defaults, decoder, encoder] in
-            let targets = Set(
-                defaults.stringArray(forKey: Self.targetDomainsKey)?
-                    .prefix(256)
-                    .map(Self.normalize) ?? []
-            )
-            guard !targets.isEmpty,
+        queue.async {
+            guard !self.targetDomains.isEmpty,
                   let observations = try? DNSMessageParser.addressObservations(
                     in: response,
-                    matching: targets
+                    matching: self.targetDomains
                   ),
                   !observations.isEmpty else {
                 return
             }
 
-            let existing: DNSRouteObservationSnapshot
-            if let data = defaults.data(forKey: Self.observationsKey),
-               let decoded = try? decoder.decode(DNSRouteObservationSnapshot.self, from: data),
-               decoded.schemaVersion == 1 {
-                existing = decoded
-            } else {
-                existing = DNSRouteObservationSnapshot(schemaVersion: 1, routes: [])
+            self.observationsByAddress = self.observationsByAddress.filter {
+                $0.value.expiresAt > observedAt
             }
-
-            var byAddress: [String: DNSRouteObservation] = [:]
-            for route in existing.routes where route.expiresAt > observedAt {
-                if let current = byAddress[route.address] {
-                    if route.expiresAt > current.expiresAt
-                        || (route.expiresAt == current.expiresAt && route.domain < current.domain) {
-                        byAddress[route.address] = route
-                    }
-                } else {
-                    byAddress[route.address] = route
-                }
-            }
-
             for observation in observations where observation.ttl > 0 {
                 let boundedTTL = min(TimeInterval(observation.ttl), 3_600)
                 let route = DNSRouteObservation(
@@ -66,17 +61,17 @@ final class DNSObservationStore {
                     observedAt: observedAt,
                     expiresAt: observedAt.addingTimeInterval(boundedTTL)
                 )
-                if let current = byAddress[route.address] {
+                if let current = self.observationsByAddress[route.address] {
                     if route.expiresAt > current.expiresAt
                         || (route.expiresAt == current.expiresAt && route.domain < current.domain) {
-                        byAddress[route.address] = route
+                        self.observationsByAddress[route.address] = route
                     }
                 } else {
-                    byAddress[route.address] = route
+                    self.observationsByAddress[route.address] = route
                 }
             }
 
-            let boundedRoutes = byAddress.values
+            let boundedRoutes = self.observationsByAddress.values
                 .sorted {
                     if $0.expiresAt != $1.expiresAt {
                         return $0.expiresAt > $1.expiresAt
@@ -87,52 +82,46 @@ final class DNSObservationStore {
                     return $0.domain < $1.domain
                 }
                 .prefix(Self.maximumObservationCount)
-
-            let snapshot = DNSRouteObservationSnapshot(
-                schemaVersion: 1,
-                routes: Array(boundedRoutes)
+            self.observationsByAddress = Dictionary(
+                uniqueKeysWithValues: boundedRoutes.map { ($0.address, $0) }
             )
-            if let encoded = try? encoder.encode(snapshot) {
-                defaults.set(encoded, forKey: Self.observationsKey)
-                defaults.synchronize()
-            }
         }
     }
 
     func record(_ event: DNSProxyRuntimeEvent, error: Error? = nil, at date: Date = Date()) {
-        queue.async { [defaults, decoder, encoder] in
-            let existing: DNSProxyRuntimeDiagnostics
-            if let data = defaults.data(forKey: Self.runtimeDiagnosticsKey),
-               let decoded = try? decoder.decode(DNSProxyRuntimeDiagnostics.self, from: data),
-               decoded.schemaVersion == 1 {
-                existing = decoded
-            } else {
-                existing = DNSProxyRuntimeDiagnostics(
-                    schemaVersion: 1,
-                    eventCounts: [:],
-                    lastEventAt: nil,
-                    lastFailureDomain: nil,
-                    lastFailureCode: nil
-                )
-            }
-
-            var counts = existing.eventCounts
+        queue.async {
+            var counts = self.runtimeDiagnostics.eventCounts
             let currentCount = counts[event.rawValue, default: 0]
             if currentCount < Int.max {
                 counts[event.rawValue] = currentCount + 1
             }
             let nsError = error as NSError?
-            let diagnostics = DNSProxyRuntimeDiagnostics(
+            self.runtimeDiagnostics = DNSProxyRuntimeDiagnostics(
                 schemaVersion: 1,
                 eventCounts: counts,
                 lastEventAt: date,
-                lastFailureDomain: nsError?.domain ?? existing.lastFailureDomain,
-                lastFailureCode: nsError?.code ?? existing.lastFailureCode
+                lastFailureDomain: nsError?.domain ?? self.runtimeDiagnostics.lastFailureDomain,
+                lastFailureCode: nsError?.code ?? self.runtimeDiagnostics.lastFailureCode
             )
-            if let encoded = try? encoder.encode(diagnostics) {
-                defaults.set(encoded, forKey: Self.runtimeDiagnosticsKey)
-                defaults.synchronize()
-            }
+        }
+    }
+
+    func snapshotData(completion: @escaping (Data) -> Void) {
+        queue.async {
+            let snapshot = DNSProxyXPCSnapshot(
+                schemaVersion: 1,
+                routes: self.observationsByAddress.values.sorted {
+                    if $0.expiresAt != $1.expiresAt {
+                        return $0.expiresAt > $1.expiresAt
+                    }
+                    return $0.address < $1.address
+                },
+                eventCounts: self.runtimeDiagnostics.eventCounts,
+                lastEventAt: self.runtimeDiagnostics.lastEventAt,
+                lastFailureDomain: self.runtimeDiagnostics.lastFailureDomain,
+                lastFailureCode: self.runtimeDiagnostics.lastFailureCode
+            )
+            completion((try? self.encoder.encode(snapshot)) ?? Data())
         }
     }
 
@@ -142,7 +131,6 @@ final class DNSObservationStore {
             .trimmingCharacters(in: CharacterSet(charactersIn: "."))
             .lowercased()
     }
-
 }
 
 enum DNSProxyRuntimeEvent: String {
@@ -157,9 +145,13 @@ enum DNSProxyRuntimeEvent: String {
     case forwardingFailure
 }
 
-private struct DNSRouteObservationSnapshot: Codable {
+private struct DNSProxyXPCSnapshot: Codable {
     let schemaVersion: Int
     let routes: [DNSRouteObservation]
+    let eventCounts: [String: Int]
+    let lastEventAt: Date?
+    let lastFailureDomain: String?
+    let lastFailureCode: Int?
 }
 
 private struct DNSRouteObservation: Codable {
@@ -169,7 +161,7 @@ private struct DNSRouteObservation: Codable {
     let expiresAt: Date
 }
 
-private struct DNSProxyRuntimeDiagnostics: Codable {
+private struct DNSProxyRuntimeDiagnostics {
     let schemaVersion: Int
     let eventCounts: [String: Int]
     let lastEventAt: Date?

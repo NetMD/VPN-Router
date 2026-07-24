@@ -37,6 +37,7 @@ let package = Package(
                 "DNSObservationStore.swift",
                 "DNSProxyExtension.entitlements",
                 "DNSProxyProvider.swift",
+                "DNSProxyXPCService.swift",
                 "Info.plist",
                 "main.swift"
             ],

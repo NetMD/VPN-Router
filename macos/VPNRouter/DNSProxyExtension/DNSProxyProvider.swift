@@ -10,6 +10,7 @@ final class DNSProxyProvider: NEDNSProxyProvider {
     private let observationStore = DNSObservationStore()
     private let sessionLock = NSLock()
     private var sessions: [UUID: DNSFlowSession] = [:]
+    private var xpcService: DNSProxyXPCService?
 
     override func startProxy(
         options: [String: Any]? = nil,
@@ -19,10 +20,9 @@ final class DNSProxyProvider: NEDNSProxyProvider {
             completionHandler(DNSProxyProviderError.unsupportedOperatingSystem)
             return
         }
-        guard let observationStore else {
-            completionHandler(DNSProxyProviderError.sharedDefaultsUnavailable)
-            return
-        }
+        let xpcService = DNSProxyXPCService(observationStore: observationStore)
+        xpcService.start()
+        self.xpcService = xpcService
         logger.notice("DNS Proxy provider started")
         observationStore.record(.providerStarted)
         completionHandler(nil)
@@ -37,7 +37,9 @@ final class DNSProxyProvider: NEDNSProxyProvider {
         sessions.removeAll()
         sessionLock.unlock()
         activeSessions.forEach { $0.stop() }
-        observationStore?.record(.providerStopped)
+        xpcService?.stop()
+        xpcService = nil
+        observationStore.record(.providerStopped)
         logger.notice("DNS Proxy provider stopped")
         completionHandler()
     }
@@ -45,10 +47,6 @@ final class DNSProxyProvider: NEDNSProxyProvider {
     override func handleNewFlow(_ flow: NEAppProxyFlow) -> Bool {
         guard #available(macOS 15.0, *) else {
             logger.error("Rejected a DNS flow on an unsupported macOS version")
-            return false
-        }
-        guard let observationStore else {
-            logger.error("Rejected a DNS flow because shared diagnostics storage is unavailable")
             return false
         }
         let id = UUID()
@@ -93,14 +91,8 @@ final class DNSProxyProvider: NEDNSProxyProvider {
 
 private enum DNSProxyProviderError: LocalizedError {
     case unsupportedOperatingSystem
-    case sharedDefaultsUnavailable
 
     var errorDescription: String? {
-        switch self {
-        case .unsupportedOperatingSystem:
-            "DNS Proxy 전달 기능은 macOS 15 이상에서 지원됩니다."
-        case .sharedDefaultsUnavailable:
-            "DNS Proxy 공유 App Group 저장소를 열 수 없습니다."
-        }
+        "DNS Proxy 전달 기능은 macOS 15 이상에서 지원됩니다."
     }
 }

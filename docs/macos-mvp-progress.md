@@ -362,6 +362,19 @@ verification.
 - [x] Add privacy-preserving runtime counters for provider start/stop, accepted
   flow type, flow open, upstream readiness, response delivery, and error
   domain/code before retrying.
+- [x] Verify one signed UDP query reaches its upstream resolver and returns a DNS
+  response while the diagnostic configuration is enabled, then disable the
+  configuration and confirm normal DNS recovery.
+- [x] Diagnose why the host app could not read provider runtime observations even
+  though both signed targets had the same App Group entitlement. The DNS Proxy
+  provider runs as `root`, while the host app runs as the logged-in user, so an App
+  Group `UserDefaults` file is not a suitable live IPC channel for this provider.
+- [x] Replace the diagnostic App Group file exchange with the provider's
+  `NEMachServiceName` XPC service. The provider now retains only bounded in-memory
+  target and aggregate observation data; the host sends targets and fetches a
+  schema-versioned snapshot over privileged Mach-service XPC with retry and timeout.
+- [ ] Verify the new XPC diagnostic channel in a signed real-Mac build. Until that
+  check passes, the XPC implementation is only compile- and unit-test-verified.
 - [ ] Verify UDP and TCP forwarding on a signed real-Mac build before enabling the
   DNS Proxy configuration outside an explicit diagnostic test.
 - [ ] Verify Packet Tunnel and DNS Proxy simultaneous operation.

@@ -113,11 +113,23 @@ struct ContentView: View {
         ) {
             Button("진단용 DNS Proxy 활성화") {
                 Task {
-                    DNSProxyObservationSettingsStore().prepareForDiagnosticRun(domains: siteDomains)
-                    dnsProxyObservationMessage = "진단 관찰값을 초기화했습니다. 대상 사이트에서 새 DNS 요청을 발생시키세요."
                     await dnsProxyConfigurationController.enableForDiagnostics(
                         expectedBundleIdentifier: TunnelIdentifiers.dnsProxySystemExtensionBundleIdentifier
                     )
+                    guard dnsProxyConfigurationController.isEnabled else {
+                        return
+                    }
+                    do {
+                        try await DNSProxyObservationSettingsStore()
+                            .configureForDiagnosticRun(domains: siteDomains)
+                        dnsProxyObservationMessage = "XPC로 대상 도메인을 설정했습니다. 대상 사이트에서 새 DNS 요청을 발생시키세요."
+                    } catch {
+                        dnsProxyObservationMessage = "DNS Proxy XPC 설정에 실패해 구성을 다시 끕니다: \(error.localizedDescription)"
+                        await dnsProxyConfigurationController.disable(
+                            expectedBundleIdentifier: TunnelIdentifiers.dnsProxySystemExtensionBundleIdentifier,
+                            allowOwnedRemovalFallback: false
+                        )
+                    }
                 }
             }
             Button("취소", role: .cancel) {}
@@ -463,7 +475,9 @@ struct ContentView: View {
                     .disabled(dnsProxyConfigurationController.isRequestInFlight)
 
                     Button {
-                        refreshDNSProxyObservationSummary()
+                        Task {
+                            await refreshDNSProxyObservationSummary()
+                        }
                     } label: {
                         Label("관찰 결과 확인", systemImage: "list.number")
                     }
@@ -765,7 +779,6 @@ struct ContentView: View {
                 .filter(\.enabled)
                 .map { DomainRuleExpander.normalize($0.domain) }
                 .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
-            DNSProxyObservationSettingsStore().publish(domains: siteDomains)
             routePlan = nil
             routePlanProfileId = nil
             siteMessage = siteDomains.isEmpty ? "VPN으로 보낼 사이트를 추가하세요." : "공통 VPN 사이트 \(siteDomains.count)개를 불러왔습니다."
@@ -919,7 +932,6 @@ struct ContentView: View {
                 profileId: DomainRuleStore.sharedSiteRulesProfileId,
                 domains: siteDomains
             )
-            DNSProxyObservationSettingsStore().publish(domains: siteDomains)
             let plan = try service.buildPlan(profileId: DomainRuleStore.sharedSiteRulesProfileId)
             routePlan = plan
             routePlanProfileId = selectedProfile.id
@@ -1124,17 +1136,15 @@ struct ContentView: View {
         }
     }
 
-    private func refreshDNSProxyObservationSummary() {
+    private func refreshDNSProxyObservationSummary() async {
         do {
-            let store = DNSProxyObservationSettingsStore()
-            let summary = try store.summary()
-            let runtime = try store.runtimeSummary()
+            let summary = try await DNSProxyObservationSettingsStore().summary()
             let latestMessage = summary.latestObservationAt.map {
                 " 최근 관찰: \($0.formatted(date: .abbreviated, time: .standard))."
             } ?? ""
-            let counts = runtime.eventCounts
+            let counts = summary.eventCounts
             let failureMessage: String
-            if let domain = runtime.lastFailureDomain, let code = runtime.lastFailureCode {
+            if let domain = summary.lastFailureDomain, let code = summary.lastFailureCode {
                 failureMessage = " 마지막 오류: \(domain) \(code)."
             } else {
                 failureMessage = ""
