@@ -87,9 +87,9 @@ Do not treat compilation or extraction as evidence for these checks.
 
 | Check | Expected result | Status |
 |---|---|---|
-| First portable launch | One UAC prompt, one backend, one dashboard | Pending |
-| Second portable launch | No second backend or dashboard; existing window activates | Pending |
-| Close while disconnected | UI closes and backend exits gracefully | Pending |
+| First portable launch | One UAC prompt, one backend, one dashboard | Passed locally, 2026-07-28 |
+| Second portable launch | No second backend or dashboard; existing window activates | Passed by stable backend/UI PIDs and launcher exit 0, 2026-07-28 |
+| Close while disconnected | UI closes and backend exits gracefully | Passed locally twice, 2026-07-28 |
 | Close/reopen while connected | VPN stays connected and UI resynchronizes from backend | Pending |
 | Stale backend | Useful compatibility error and no network mutation | Pending |
 | Different interactive user | Privileged pipe access denied | Pending |
@@ -97,14 +97,20 @@ Do not treat compilation or extraction as evidence for these checks.
 | DNS ownership loss | Full VPN Router cleanup without changing third-party products | Pending |
 | Backend termination | Next launch restores owned DNS, routes, and tunnel state | Pending |
 | Reboot while connected | Next launch restores owned network state | Pending |
-| Cache cleanup disconnected | Active and previous payload retained; older caches removed | Pending |
+| Cache cleanup disconnected | Active and previous payload retained; older caches removed | Partial: active/previous retention passed with two caches; no older cache existed, 2026-07-28 |
 | Cache cleanup connected | Request refused with no deletion | Pending |
-| Redacted troubleshooting file | Counts/status only; no config, key, domain, IP, or DNS payload | Pending |
+| Redacted troubleshooting file | Counts/status only; no config, key, domain, IP, or DNS payload | Passed: schema v1, 19 lines, prohibited patterns absent, 2026-07-28 |
 | Unsigned clean-machine launch | SHA-256 matches; Windows Security is clean; unknown-publisher and SmartScreen behavior recorded | Pending |
 
 Real WireGuard profiles and LocalAppData diagnostics must not be attached to the
 matrix. Record only sanitized counts, status, timestamps, error codes, and recovery
 outcomes.
+
+The attempted UAC-cancellation run was approved instead of cancelled and therefore
+counts only as another successful normal launch. It does not satisfy the UAC
+cancellation row. No `Connect` action was used during this matrix, and final state
+was zero app processes, zero backend processes, no active-connection marker, and
+two retained valid payload caches.
 
 ## Unsigned distribution and optional future signing
 

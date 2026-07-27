@@ -360,10 +360,33 @@ elevated backend or mutating DNS, routes, or WireGuard.
   matrix, unsigned clean-machine/SmartScreen validation, and exact release tag
   remain pending.
 
+## Local portable lifecycle matrix
+
+Completed without pressing `Connect` on 2026-07-28.
+
+- The artifact checksum matched the recorded unsigned candidate before launch.
+- The first portable launch produced one elevated backend and one dashboard with
+  no active-connection marker.
+- A second launch exited with code 0 while both backend and UI process counts
+  remained one and both PIDs remained unchanged.
+- Closing the disconnected UI caused both UI and backend to exit gracefully.
+- Disconnected cache cleanup retained the active and previous valid caches. No
+  older cache existed in this run; the automated test covers actual older-cache
+  removal.
+- A newly generated schema-v1 troubleshooting report contained 19 lines and no
+  private-key label, known media domain, or IPv4-address pattern.
+- The UAC cancellation case remains pending because the attempted cancellation
+  launch was approved and completed as a normal launch.
+- The final state was zero VPN Router processes, no active-connection marker, and
+  two valid portable cache directories.
+- Connected UI relaunch, DNS ownership loss, backend termination, reboot
+  recovery, connected cleanup refusal, different-user ACL, and unsigned
+  clean-machine behavior remain pending.
+
 ## Next task
 
-Run the owner-operated unsigned lifecycle matrix in
-`docs/windows-release-hardening.md`, then repeat it with the exact unsigned
+Continue the pending owner-operated unsigned lifecycle checks in
+`docs/windows-release-hardening.md`, then repeat the matrix with the exact unsigned
 public-preview candidate on a clean Windows 11 x64 machine. External player
 automation and account-dependent Netflix checks are not release blockers.
 
