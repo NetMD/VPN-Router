@@ -2,8 +2,8 @@
 
 Read the platform handoff before starting platform-specific work:
 
-- Windows: `docs/windows-next-session.md`, `docs/windows-mvp-handoff.md`, and
-  `docs/windows-mvp-progress.md`
+- Windows: `docs/windows-next-session.md`, `docs/windows-mvp-handoff.md`,
+  `docs/windows-mvp-progress.md`, and `docs/windows-release-hardening.md`
 - macOS: `docs/macos-mvp-handoff.md`
 - Release scope: `docs/v0.1.0-release-plan.md`
 

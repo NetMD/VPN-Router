@@ -8,6 +8,7 @@ using System.Text.Json;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Reflection;
 using VpnRouter.Core.Rules;
 using VpnRouter.Ipc.Contracts;
 using VpnRouter.Ipc.NamedPipes;
@@ -20,17 +21,96 @@ namespace VpnRouter;
 public sealed partial class MainWindow : Window
 {
     private readonly VpnRouterPipeClient _pipeClient = new();
+    private readonly string? _expectedPayloadIdentity;
     private bool _isConnected;
     private bool _isRefreshingProfiles;
+    private bool _backendCompatible;
 
-    public MainWindow()
+    public MainWindow(string? expectedPayloadIdentity = null)
     {
+        _expectedPayloadIdentity = expectedPayloadIdentity;
         InitializeComponent();
         AppWindow.Resize(new Windows.Graphics.SizeInt32(1120, 780));
+        Closed += MainWindow_Closed;
         RefreshWireGuardInstallStatus();
-        _ = RefreshConnectionStateAsync(false);
-        _ = RefreshProfilesAsync(null, false);
-        _ = RefreshDiagnosticsAsync(false);
+        _ = InitializeBackendAsync();
+    }
+
+    private async Task InitializeBackendAsync()
+    {
+        try
+        {
+            var backend = await _pipeClient.GetBackendInformationAsync(
+                TimeSpan.FromSeconds(3),
+                CancellationToken.None);
+            var compatibility = BackendCompatibility.Validate(
+                backend,
+                GetProductVersion(),
+                _expectedPayloadIdentity);
+            if (!compatibility.IsCompatible)
+            {
+                RejectBackend(compatibility.Message);
+                return;
+            }
+
+            _backendCompatible = true;
+            await RefreshConnectionStateAsync(false);
+            await RefreshProfilesAsync(null, false);
+            await RefreshDiagnosticsAsync(false);
+        }
+        catch (Exception ex)
+        {
+            RejectBackend($"백엔드 정보를 확인하지 못했습니다: {ex.Message}");
+        }
+    }
+
+    private void RejectBackend(string message)
+    {
+        _backendCompatible = false;
+        MainNavigation.IsEnabled = false;
+        ConnectButton.IsEnabled = false;
+        ValidateConnectionPlanButton.IsEnabled = false;
+        ConnectionStateText.Text = "호환되지 않는 백엔드";
+        ConnectionDetailsText.Text = message;
+        AppendRecentStatus(message);
+    }
+
+    private async void MainWindow_Closed(object sender, WindowEventArgs args)
+    {
+        if (!_backendCompatible)
+        {
+            return;
+        }
+
+        try
+        {
+            var response = await _pipeClient.SendAsync(
+                IpcCommandKind.GetConnectionState,
+                new { },
+                TimeSpan.FromSeconds(2),
+                CancellationToken.None);
+            var state = response.Payload?.Deserialize<ConnectionStateDto>(VpnRouterIpcJson.Options);
+            if (response.Success && state?.State == ConnectionStateKind.Disconnected)
+            {
+                _ = await _pipeClient.SendAsync(
+                    IpcCommandKind.RequestBackendShutdown,
+                    new { },
+                    TimeSpan.FromSeconds(2),
+                    CancellationToken.None);
+            }
+        }
+        catch
+        {
+            // Closing the UI must never tear down or guess at backend network state.
+        }
+    }
+
+    private static string GetProductVersion()
+    {
+        var informationalVersion = Assembly.GetExecutingAssembly()
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
+            .InformationalVersion;
+        return informationalVersion?.Split('+', 2)[0] ?? "0.1.0";
     }
 
     private void MainNavigation_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
@@ -80,6 +160,23 @@ public sealed partial class MainWindow : Window
         finally
         {
             ConnectButton.IsEnabled = true;
+        }
+    }
+
+    private async void CleanupPortableCacheButton_Click(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
+    {
+        try
+        {
+            var response = await _pipeClient.SendAsync(
+                IpcCommandKind.CleanupPortableCache,
+                new { },
+                TimeSpan.FromSeconds(5),
+                CancellationToken.None);
+            AppendRecentStatus(response.Message);
+        }
+        catch (Exception ex)
+        {
+            AppendRecentStatus($"실행 캐시를 정리하지 못했습니다: {ex.Message}");
         }
     }
 
@@ -565,6 +662,8 @@ public sealed partial class MainWindow : Window
         AddDiagnosticLine("서비스 상태: 연결됨");
         AddDiagnosticLine($"WireGuard: {(diagnostics.WireGuardInstalled ? "설치됨" : "설치 안 됨")} - {diagnostics.WireGuardMessage}");
         AddDiagnosticLine($"저장된 프로필: {diagnostics.ProfileCount}개");
+        AddDiagnosticLine($"관리 중인 라우트: {diagnostics.ManagedRouteCount}개");
+        AddDiagnosticLine($"DNS 관찰: {diagnostics.DnsObservationCount}개");
         AddDiagnosticLine($"네트워크 스냅샷: {(diagnostics.NetworkSnapshotExists ? "있음" : "없음")}");
         AddDiagnosticLine($"라우트 계획 파일: {(diagnostics.ManagedRoutesExists ? "있음" : "없음")}");
         AddDiagnosticLine($"DNS 관찰 로그: {(diagnostics.DnsObservationsExists ? "있음" : "없음")}");

@@ -3,6 +3,7 @@ using VpnRouter.Ipc.Contracts;
 using VpnRouter.Service.Configuration;
 using VpnRouter.Service.Storage;
 using VpnRouter.Vpn.WireGuard;
+using System.Text.Json;
 
 namespace VpnRouter.Service.Diagnostics;
 
@@ -16,15 +17,19 @@ public sealed class DiagnosticsService(
         var profiles = await profileStore.ListProfilesAsync(cancellationToken);
         var wireGuard = WireGuardInstallationDetector.Detect();
         var features = options.Value;
+        var managedRoutesPath = Path.Combine(dataRoot, "managed-routes.json");
+        var dnsObservationsPath = Path.Combine(dataRoot, "dns-observations.json");
 
         return new DiagnosticsDto(
             ServiceReachable: true,
             WireGuardInstalled: wireGuard.IsInstalled,
             WireGuardMessage: wireGuard.Message,
             ProfileCount: profiles.Count,
+            ManagedRouteCount: CountJsonArrayEntries(managedRoutesPath),
+            DnsObservationCount: CountLines(dnsObservationsPath),
             NetworkSnapshotExists: File.Exists(Path.Combine(dataRoot, "network-snapshot.json")),
-            ManagedRoutesExists: File.Exists(Path.Combine(dataRoot, "managed-routes.json")),
-            DnsObservationsExists: File.Exists(Path.Combine(dataRoot, "dns-observations.json")),
+            ManagedRoutesExists: File.Exists(managedRoutesPath),
+            DnsObservationsExists: File.Exists(dnsObservationsPath),
             EnableWireGuardActivation: features.EnableWireGuardActivation,
             EnableWindowsDnsMutation: features.EnableWindowsDnsMutation,
             EnableWindowsRouteMutation: features.EnableWindowsRouteMutation);
@@ -38,45 +43,56 @@ public sealed class DiagnosticsService(
         var diagnostics = await GetAsync(cancellationToken);
         var filePath = Path.Combine(dataRoot, $"troubleshooting-{DateTimeOffset.UtcNow:yyyyMMdd-HHmmss}.txt");
 
-        var lines = new List<string>
-        {
-            "VPN Router troubleshooting file",
-            $"CreatedAtUtc: {DateTimeOffset.UtcNow:O}",
-            "",
-            "Diagnostics:",
-            $"ServiceReachable: {diagnostics.ServiceReachable}",
-            $"WireGuardInstalled: {diagnostics.WireGuardInstalled}",
-            $"WireGuardMessage: {diagnostics.WireGuardMessage}",
-            $"ProfileCount: {diagnostics.ProfileCount}",
-            $"NetworkSnapshotExists: {diagnostics.NetworkSnapshotExists}",
-            $"ManagedRoutesExists: {diagnostics.ManagedRoutesExists}",
-            $"DnsObservationsExists: {diagnostics.DnsObservationsExists}",
-            $"EnableWireGuardActivation: {diagnostics.EnableWireGuardActivation}",
-            $"EnableWindowsDnsMutation: {diagnostics.EnableWindowsDnsMutation}",
-            $"EnableWindowsRouteMutation: {diagnostics.EnableWindowsRouteMutation}",
-            ""
-        };
-
-        AppendFilePreview(lines, Path.Combine(dataRoot, "network-snapshot.json"), "Network snapshot");
-        AppendFilePreview(lines, Path.Combine(dataRoot, "managed-routes.json"), "Managed route plan");
-        AppendFilePreview(lines, Path.Combine(dataRoot, "dns-observations.json"), "DNS observations");
+        var lines = BuildTroubleshootingLines(diagnostics, DateTimeOffset.UtcNow);
 
         await File.WriteAllLinesAsync(filePath, lines, cancellationToken);
         return filePath;
     }
 
-    private static void AppendFilePreview(List<string> lines, string path, string title)
+    public static IReadOnlyList<string> BuildTroubleshootingLines(
+        DiagnosticsDto diagnostics,
+        DateTimeOffset createdAtUtc) =>
+    [
+        "VPN Router troubleshooting file",
+        "SchemaVersion: 1",
+        $"CreatedAtUtc: {createdAtUtc:O}",
+        "",
+        "Diagnostics:",
+        $"ServiceReachable: {diagnostics.ServiceReachable}",
+        $"WireGuardInstalled: {diagnostics.WireGuardInstalled}",
+        $"WireGuardMessage: {diagnostics.WireGuardMessage}",
+        $"ProfileCount: {diagnostics.ProfileCount}",
+        $"ManagedRouteCount: {diagnostics.ManagedRouteCount}",
+        $"DnsObservationCount: {diagnostics.DnsObservationCount}",
+        $"NetworkSnapshotExists: {diagnostics.NetworkSnapshotExists}",
+        $"ManagedRoutesExists: {diagnostics.ManagedRoutesExists}",
+        $"DnsObservationsExists: {diagnostics.DnsObservationsExists}",
+        $"EnableWireGuardActivation: {diagnostics.EnableWireGuardActivation}",
+        $"EnableWindowsDnsMutation: {diagnostics.EnableWindowsDnsMutation}",
+        $"EnableWindowsRouteMutation: {diagnostics.EnableWindowsRouteMutation}",
+        ""
+    ];
+
+    private static int CountJsonArrayEntries(string path)
     {
-        lines.Add($"{title}:");
         if (!File.Exists(path))
         {
-            lines.Add("  <missing>");
-            lines.Add("");
-            return;
+            return 0;
         }
 
-        var text = File.ReadAllText(path);
-        lines.Add(text.Length <= 4000 ? text : text[..4000] + Environment.NewLine + "<truncated>");
-        lines.Add("");
+        try
+        {
+            using var document = JsonDocument.Parse(File.ReadAllText(path));
+            return document.RootElement.ValueKind == JsonValueKind.Array
+                ? document.RootElement.GetArrayLength()
+                : 0;
+        }
+        catch (JsonException)
+        {
+            return 0;
+        }
     }
+
+    private static int CountLines(string path) =>
+        File.Exists(path) ? File.ReadLines(path).Take(100_000).Count() : 0;
 }

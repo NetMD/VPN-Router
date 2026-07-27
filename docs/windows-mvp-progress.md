@@ -147,7 +147,7 @@ dotnet build windows\VpnRouter.slnx --no-restore -nr:false
 dotnet run --project windows\VpnRouter.Tests\VpnRouter.Tests.csproj --no-build
 ```
 
-The focused executable contains 22 checks as of 2026-07-28. Expected tests include:
+The focused executable contains 26 checks as of 2026-07-28. Expected tests include:
 
 ```text
 PASS Parse valid WireGuard config
@@ -163,6 +163,10 @@ PASS Batch concurrent dynamic route discoveries
 PASS Refresh repeated managed route expiration
 PASS Retain rotating managed route answers
 PASS Reject route plan above limit before mutation
+PASS Validate backend protocol and payload identity
+PASS Restrict service pipe to launching user
+PASS Retain active and previous portable cache
+PASS Create bounded troubleshooting summary
 PASS Expire only eligible managed routes
 PASS Force WireGuard runtime routing table off
 PASS Split WireGuard default allowed IPs
@@ -320,10 +324,47 @@ Completed on 2026-07-18 with one remaining player-level limitation.
 - Netflix opened its public title page and CDN requests used the VPN; catalog/playback verification remains account-dependent.
 - Graceful disconnect restored DNS, removed the VPN adapter, restarted AdGuard, and cleared recovery state.
 
+## Portable lifecycle, IPC, and release hardening
+
+Implemented and automatically verified on 2026-07-28 without starting the
+elevated backend or mutating DNS, routes, or WireGuard.
+
+- Launcher and desktop readiness now require a matching protocol version,
+  product version, and payload identity. A stale or differently built backend is
+  rejected before the UI is enabled.
+- The portable launcher passes the original Windows user SID to the elevated
+  backend. The named pipe ACL contains only that SID, Administrators, and
+  LocalSystem; the broad `InteractiveSid` rule was removed.
+- The desktop app is single-instance per interactive user session. A second
+  process signals the first window instead of creating a duplicate dashboard.
+- Closing the UI keeps a connected backend alive. When the backend reports
+  `Disconnected`, the UI requests graceful backend shutdown.
+- Reopening derives state from the existing backend rather than an optimistic UI
+  flag.
+- Portable cache cleanup is refused unless disconnected, retains the active and
+  immediately previous valid payload, and only targets
+  `%LOCALAPPDATA%\VpnRouter\app`. Profiles and DPAPI secrets are outside that
+  scope.
+- Troubleshooting output no longer previews network snapshots, route files, or
+  DNS observations. It contains schema-versioned bounded counts and flags only.
+- App, backend, launcher, and manifest versions are aligned to `0.1.0`; trimming
+  and ReadyToRun are disabled for the portable Release path.
+- The unused `systemAIModels` restricted capability was removed.
+- `scripts\windows\verify-release.ps1` verifies version, checksum, extraction,
+  and payload completeness. It can require a valid Authenticode signature.
+- Two consecutive Release builds produced the same 195,529,964-byte artifact and
+  SHA-256:
+  `54D37DE05EDA397EB5BB4059EF76D98CC8DE920006796E5DE49966BAD7D236BC`.
+- The candidate is currently unsigned and is not approved for public
+  distribution. No usable local code-signing certificate was detected. The
+  owner-operated lifecycle matrix, signing identity, signed clean-machine
+  validation, and exact release tag remain pending.
+
 ## Next task
 
-Follow `docs/windows-next-session.md`, beginning with the focused baseline/parity
-tests and then Phase 2 launcher lifecycle/IPC security. External player
+Run the owner-operated unsigned lifecycle matrix in
+`docs/windows-release-hardening.md`, then choose an Authenticode signing identity
+and repeat the matrix with the exact signed public candidate. External player
 automation and account-dependent Netflix checks are not release blockers.
 
 ## Notes for next session

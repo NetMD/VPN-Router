@@ -14,5 +14,8 @@ public enum IpcCommandKind
     CreateTroubleshootingFile = 10,
     RenameProfile = 11,
     DeleteProfile = 12,
-    ValidateConnectionPlan = 13
+    ValidateConnectionPlan = 13,
+    GetBackendInformation = 14,
+    RequestBackendShutdown = 15,
+    CleanupPortableCache = 16
 }

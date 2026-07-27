@@ -16,4 +16,8 @@
   <ItemGroup Condition="'$(PortablePayloadPath)' != '' and Exists('$(PortablePayloadPath)')">
     <EmbeddedResource Include="$(PortablePayloadPath)" LogicalName="VpnRouter.Payload.zip" />
   </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\VpnRouter.Ipc\VpnRouter.Ipc.csproj" />
+  </ItemGroup>
 </Project>

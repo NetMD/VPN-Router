@@ -7,6 +7,7 @@ namespace VpnRouter.Service.Ipc;
 
 public sealed class NamedPipeIpcServer(
     IpcCommandHandler commandHandler,
+    BackendRuntimeInformation backendRuntimeInformation,
     StartupRecoveryGate startupRecoveryGate,
     ILogger<NamedPipeIpcServer> logger) : BackgroundService
 {
@@ -25,7 +26,7 @@ public sealed class NamedPipeIpcServer(
                 PipeOptions.Asynchronous,
                 inBufferSize: 0,
                 outBufferSize: 0,
-                NamedPipeSecurityFactory.CreateServicePipeSecurity());
+                NamedPipeSecurityFactory.CreateServicePipeSecurity(backendRuntimeInformation.LaunchingUserSid));
 
             try
             {

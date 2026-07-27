@@ -1,18 +1,19 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO.Compression;
-using System.IO.Pipes;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+using System.Security.Principal;
 using System.Text;
+using VpnRouter.Ipc.Contracts;
+using VpnRouter.Ipc.NamedPipes;
 
 namespace VpnRouter.Launcher;
 
 internal static class Program
 {
     private const string PayloadResourceName = "VpnRouter.Payload.zip";
-    private const string PipeName = "VpnRouter.Service";
     private const string AppExecutable = "VpnRouter.App.exe";
     private const string BackendExecutable = "VpnRouter.Service.exe";
     private static readonly string ProductVersion = GetProductVersion();
@@ -25,13 +26,13 @@ internal static class Program
             using var extractionMutex = new Mutex(false, @"Local\VpnRouter.Portable.Extraction");
             if (!extractionMutex.WaitOne(TimeSpan.FromSeconds(30)))
             {
-                throw new TimeoutException("다른 VPN Router 실행이 파일을 준비하는 중입니다. 잠시 후 다시 실행해 주세요.");
+                throw new TimeoutException("다른 VPN Router 실행이 파일을 준비하고 있습니다. 잠시 후 다시 실행해 주세요.");
             }
 
-            string payloadRoot;
+            PayloadInstallation payload;
             try
             {
-                payloadRoot = EnsurePayloadExtracted();
+                payload = EnsurePayloadExtracted();
             }
             finally
             {
@@ -43,16 +44,27 @@ internal static class Program
                 return 0;
             }
 
-            if (!IsBackendReady(TimeSpan.FromMilliseconds(250)))
+            var probe = ProbeBackend(payload.Hash, TimeSpan.FromMilliseconds(250));
+            if (probe.Status == BackendProbeStatus.Incompatible)
             {
-                StartElevatedBackend(payloadRoot);
-                if (!IsBackendReady(TimeSpan.FromSeconds(20)))
+                throw new InvalidOperationException(probe.Message);
+            }
+
+            if (probe.Status == BackendProbeStatus.Unavailable)
+            {
+                StartElevatedBackend(payload);
+                probe = ProbeBackend(payload.Hash, TimeSpan.FromSeconds(20));
+                if (probe.Status != BackendProbeStatus.Compatible)
                 {
-                    throw new TimeoutException("관리자 백엔드가 20초 안에 준비되지 않았습니다.");
+                    throw new TimeoutException(
+                        probe.Status == BackendProbeStatus.Incompatible
+                            ? probe.Message
+                            : "관리자 백엔드가 20초 안에 준비되지 않았습니다.");
                 }
             }
 
-            StartDesktopApp(payloadRoot);
+            TryCleanupPortableCache();
+            StartDesktopApp(payload);
             return 0;
         }
         catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
@@ -67,7 +79,7 @@ internal static class Program
         }
     }
 
-    private static string EnsurePayloadExtracted()
+    private static PayloadInstallation EnsurePayloadExtracted()
     {
         var appData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         var versionsRoot = Path.Combine(appData, "VpnRouter", "app");
@@ -79,7 +91,7 @@ internal static class Program
             && string.Equals(File.ReadAllText(completionMarker).Trim(), payloadHash, StringComparison.OrdinalIgnoreCase)
             && PayloadLooksComplete(targetRoot))
         {
-            return targetRoot;
+            return new PayloadInstallation(targetRoot, payloadHash);
         }
 
         Directory.CreateDirectory(versionsRoot);
@@ -106,7 +118,7 @@ internal static class Program
             }
 
             Directory.Move(stagingRoot, targetRoot);
-            return targetRoot;
+            return new PayloadInstallation(targetRoot, payloadHash);
         }
         finally
         {
@@ -118,8 +130,8 @@ internal static class Program
     }
 
     private static bool PayloadLooksComplete(string root) =>
-        File.Exists(Path.Combine(root, "app", AppExecutable)) &&
-        File.Exists(Path.Combine(root, "backend", BackendExecutable));
+        File.Exists(Path.Combine(root, "app", AppExecutable))
+        && File.Exists(Path.Combine(root, "backend", BackendExecutable));
 
     private static string GetPayloadHash()
     {
@@ -137,9 +149,9 @@ internal static class Program
         return string.IsNullOrWhiteSpace(version) ? "0.1.0" : version;
     }
 
-    private static void StartElevatedBackend(string payloadRoot)
+    private static void StartElevatedBackend(PayloadInstallation payload)
     {
-        var backendDirectory = Path.Combine(payloadRoot, "backend");
+        var backendDirectory = Path.Combine(payload.Root, "backend");
         var backendPath = Path.Combine(backendDirectory, BackendExecutable);
         var startInfo = new ProcessStartInfo
         {
@@ -153,37 +165,82 @@ internal static class Program
         startInfo.ArgumentList.Add("--VpnRouter:Features:EnableWireGuardActivation=true");
         startInfo.ArgumentList.Add("--VpnRouter:Features:EnableWindowsDnsMutation=true");
         startInfo.ArgumentList.Add("--VpnRouter:Features:EnableWindowsRouteMutation=true");
+        startInfo.ArgumentList.Add($"--VpnRouter:Portable:LaunchingUserSid={GetCurrentUserSid()}");
+        startInfo.ArgumentList.Add($"--VpnRouter:Portable:ProductVersion={ProductVersion}");
+        startInfo.ArgumentList.Add($"--VpnRouter:Portable:PayloadIdentity={payload.Hash}");
 
-        _ = Process.Start(startInfo) ?? throw new InvalidOperationException("관리자 백엔드 프로세스를 시작하지 못했습니다.");
+        _ = Process.Start(startInfo)
+            ?? throw new InvalidOperationException("관리자 백엔드 프로세스를 시작하지 못했습니다.");
     }
 
-    private static void StartDesktopApp(string payloadRoot)
+    private static void StartDesktopApp(PayloadInstallation payload)
     {
-        var appDirectory = Path.Combine(payloadRoot, "app");
+        var appDirectory = Path.Combine(payload.Root, "app");
         var appPath = Path.Combine(appDirectory, AppExecutable);
-        _ = Process.Start(new ProcessStartInfo
+        var startInfo = new ProcessStartInfo
         {
             FileName = appPath,
             WorkingDirectory = appDirectory,
             UseShellExecute = true
-        }) ?? throw new InvalidOperationException("VPN Router 화면을 시작하지 못했습니다.");
+        };
+        startInfo.ArgumentList.Add($"--vpnrouter-payload-id={payload.Hash}");
+
+        _ = Process.Start(startInfo)
+            ?? throw new InvalidOperationException("VPN Router 화면을 시작하지 못했습니다.");
     }
 
-    private static bool IsBackendReady(TimeSpan timeout)
+    private static BackendProbe ProbeBackend(string expectedPayloadIdentity, TimeSpan timeout)
     {
         try
         {
-            using var pipe = new NamedPipeClientStream(".", PipeName, PipeDirection.InOut, PipeOptions.None);
-            pipe.Connect(Math.Max(1, (int)timeout.TotalMilliseconds));
-
-            using var writer = new StreamWriter(pipe, leaveOpen: true) { AutoFlush = true };
-            using var reader = new StreamReader(pipe, leaveOpen: true);
-            writer.WriteLine("{\"command\":\"GetConnectionState\",\"payload\":{}}");
-            return !string.IsNullOrWhiteSpace(reader.ReadLine());
+            var backend = new VpnRouterPipeClient()
+                .GetBackendInformationAsync(timeout, CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+            var compatibility = BackendCompatibility.Validate(
+                backend,
+                ProductVersion,
+                expectedPayloadIdentity);
+            return compatibility.IsCompatible
+                ? new BackendProbe(BackendProbeStatus.Compatible, compatibility.Message)
+                : new BackendProbe(BackendProbeStatus.Incompatible, compatibility.Message);
         }
-        catch (Exception ex) when (ex is TimeoutException or IOException)
+        catch (Exception ex) when (ex is TimeoutException or IOException or OperationCanceledException)
         {
-            return false;
+            return new BackendProbe(BackendProbeStatus.Unavailable, ex.Message);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return new BackendProbe(
+                BackendProbeStatus.Incompatible,
+                $"백엔드가 실행 중이지만 현재 Windows 사용자가 접근할 수 없습니다. {ex.Message}");
+        }
+        catch (Exception ex)
+        {
+            return new BackendProbe(BackendProbeStatus.Incompatible, ex.Message);
+        }
+    }
+
+    private static string GetCurrentUserSid() =>
+        WindowsIdentity.GetCurrent().User?.Value
+        ?? throw new InvalidOperationException("현재 Windows 사용자 SID를 확인하지 못했습니다.");
+
+    private static void TryCleanupPortableCache()
+    {
+        try
+        {
+            _ = new VpnRouterPipeClient()
+                .SendAsync(
+                    IpcCommandKind.CleanupPortableCache,
+                    new { },
+                    TimeSpan.FromSeconds(5),
+                    CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+        }
+        catch
+        {
+            // Cache cleanup is best-effort and must not prevent a safe launch.
         }
     }
 
@@ -192,4 +249,15 @@ internal static class Program
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "MessageBoxW")]
     private static extern int MessageBox(IntPtr windowHandle, string text, string caption, uint type);
+
+    private sealed record PayloadInstallation(string Root, string Hash);
+
+    private sealed record BackendProbe(BackendProbeStatus Status, string Message);
+
+    private enum BackendProbeStatus
+    {
+        Unavailable,
+        Compatible,
+        Incompatible
+    }
 }

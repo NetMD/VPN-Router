@@ -1,10 +1,30 @@
 using System.IO.Pipes;
 using System.Text.Json;
+using VpnRouter.Ipc.Contracts;
 
 namespace VpnRouter.Ipc.NamedPipes;
 
 public sealed class VpnRouterPipeClient(string serverName = ".")
 {
+    public async Task<BackendInformationDto> GetBackendInformationAsync(
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
+    {
+        var response = await SendAsync(
+            IpcCommandKind.GetBackendInformation,
+            new { },
+            timeout,
+            cancellationToken);
+
+        if (!response.Success || response.Payload is null)
+        {
+            throw new InvalidOperationException(response.Message);
+        }
+
+        return response.Payload.Value.Deserialize<BackendInformationDto>(VpnRouterIpcJson.Options)
+            ?? throw new InvalidOperationException("The service returned invalid backend information.");
+    }
+
     public async Task<IpcResponseEnvelope> SendAsync<TPayload>(
         IpcCommandKind command,
         TPayload payload,

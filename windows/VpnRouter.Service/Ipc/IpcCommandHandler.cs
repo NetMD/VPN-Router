@@ -13,6 +13,7 @@ using VpnRouter.Service.Networking;
 using VpnRouter.Vpn.WireGuard;
 using Microsoft.Extensions.Options;
 using VpnRouter.Service.Recovery;
+using VpnRouter.Service.Portable;
 
 namespace VpnRouter.Service.Ipc;
 
@@ -28,6 +29,9 @@ public sealed class IpcCommandHandler(
     IOptions<VpnRouterFeatureOptions> featureOptions,
     ISecretStore secretStore,
     StartupRecoveryGate startupRecoveryGate,
+    BackendRuntimeInformation backendRuntimeInformation,
+    PortableCacheManager portableCacheManager,
+    IHostApplicationLifetime hostApplicationLifetime,
     ILogger<IpcCommandHandler> logger)
 {
     private static readonly Guid PlaceholderProfileId = Guid.Parse("11111111-1111-1111-1111-111111111111");
@@ -51,6 +55,9 @@ public sealed class IpcCommandHandler(
                 IpcCommandKind.RenameProfile => await HandleRenameProfileAsync(request.Payload, cancellationToken),
                 IpcCommandKind.DeleteProfile => await HandleDeleteProfileAsync(request.Payload, cancellationToken),
                 IpcCommandKind.ValidateConnectionPlan => await HandleValidateConnectionPlanAsync(request.Payload, cancellationToken),
+                IpcCommandKind.GetBackendInformation => HandleGetBackendInformation(),
+                IpcCommandKind.RequestBackendShutdown => HandleRequestBackendShutdown(),
+                IpcCommandKind.CleanupPortableCache => await HandleCleanupPortableCacheAsync(cancellationToken),
                 _ => new IpcResponseEnvelope(false, $"Unsupported IPC command: {request.Command}.")
             };
         }
@@ -65,6 +72,41 @@ public sealed class IpcCommandHandler(
             connectionStateStore.SetFailed(ex.Message);
             return new IpcResponseEnvelope(false, ex.Message);
         }
+    }
+
+    private IpcResponseEnvelope HandleGetBackendInformation() =>
+        new(
+            true,
+            "Backend information returned.",
+            JsonSerializer.SerializeToElement(backendRuntimeInformation.ToDto(), VpnRouterIpcJson.Options));
+
+    private IpcResponseEnvelope HandleRequestBackendShutdown()
+    {
+        if (connectionStateStore.Snapshot().State != ConnectionStateKind.Disconnected)
+        {
+            return new IpcResponseEnvelope(false, "The backend remains active while VPN Router is connected.");
+        }
+
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(100);
+            hostApplicationLifetime.StopApplication();
+        });
+        return new IpcResponseEnvelope(true, "Backend shutdown accepted.");
+    }
+
+    private async Task<IpcResponseEnvelope> HandleCleanupPortableCacheAsync(CancellationToken cancellationToken)
+    {
+        if (connectionStateStore.Snapshot().State != ConnectionStateKind.Disconnected)
+        {
+            return new IpcResponseEnvelope(false, "Portable cache cleanup is available only while disconnected.");
+        }
+
+        var result = await portableCacheManager.CleanupAsync(cancellationToken);
+        return new IpcResponseEnvelope(
+            true,
+            $"Removed {result.RemovedCacheCount} old portable cache(s).",
+            JsonSerializer.SerializeToElement(result, VpnRouterIpcJson.Options));
     }
 
     private async Task<IpcResponseEnvelope> HandleConnectAsync(JsonElement payload, CancellationToken cancellationToken)

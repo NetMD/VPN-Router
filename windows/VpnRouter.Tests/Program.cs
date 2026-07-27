@@ -7,6 +7,13 @@ using Microsoft.Extensions.Options;
 using VpnRouter.Core.Rules;
 using VpnRouter.Core.Routing;
 using System.Net;
+using System.IO.Pipes;
+using System.Security.AccessControl;
+using System.Security.Principal;
+using VpnRouter.Ipc.Contracts;
+using VpnRouter.Service.Ipc;
+using VpnRouter.Service.Portable;
+using VpnRouter.Service.Diagnostics;
 
 var tests = new (string Name, Action Body)[]
 {
@@ -28,6 +35,10 @@ var tests = new (string Name, Action Body)[]
     ("Refresh repeated managed route expiration", RefreshesRepeatedManagedRouteExpiration),
     ("Retain rotating managed route answers", RetainsRotatingManagedRouteAnswers),
     ("Reject route plan above limit before mutation", RejectsRoutePlanAboveLimitBeforeMutation),
+    ("Validate backend protocol and payload identity", ValidatesBackendProtocolAndPayloadIdentity),
+    ("Restrict service pipe to launching user", RestrictsServicePipeToLaunchingUser),
+    ("Retain active and previous portable cache", RetainsActiveAndPreviousPortableCache),
+    ("Create bounded troubleshooting summary", CreatesBoundedTroubleshootingSummary),
     ("Expire only eligible managed routes", ExpiresOnlyEligibleManagedRoutes),
     ("Force WireGuard runtime routing table off", ForcesRuntimeRoutingTableOff),
     ("Split WireGuard default allowed IPs", SplitsRuntimeDefaultAllowedIps),
@@ -384,6 +395,117 @@ static void RejectsRoutePlanAboveLimitBeforeMutation()
 
     AssertEqual(originalEntries.Length, existing.Length);
     Assert(originalEntries.SequenceEqual(existing), "Rejected route planning must not mutate existing entries.");
+}
+
+static void ValidatesBackendProtocolAndPayloadIdentity()
+{
+    var compatible = new BackendInformationDto(
+        VpnRouterProtocol.CurrentVersion,
+        "0.1.0",
+        "payload-a");
+
+    Assert(
+        BackendCompatibility.Validate(compatible, "0.1.0", "payload-a").IsCompatible,
+        "matching backend information should be accepted");
+    Assert(
+        !BackendCompatibility.Validate(compatible with { ProtocolVersion = 99 }, "0.1.0", "payload-a").IsCompatible,
+        "a stale protocol should be rejected");
+    Assert(
+        !BackendCompatibility.Validate(compatible with { ProductVersion = "0.2.0" }, "0.1.0", "payload-a").IsCompatible,
+        "a stale product version should be rejected");
+    Assert(
+        !BackendCompatibility.Validate(compatible with { PayloadIdentity = "payload-b" }, "0.1.0", "payload-a").IsCompatible,
+        "a stale payload identity should be rejected");
+}
+
+static void RestrictsServicePipeToLaunchingUser()
+{
+    var launchingUser = new SecurityIdentifier("S-1-5-21-1000-1000-1000-1001");
+    var security = NamedPipeSecurityFactory.CreateServicePipeSecurity(launchingUser);
+    var rules = security
+        .GetAccessRules(includeExplicit: true, includeInherited: false, typeof(SecurityIdentifier))
+        .Cast<PipeAccessRule>()
+        .ToArray();
+    var interactiveSid = new SecurityIdentifier(WellKnownSidType.InteractiveSid, null);
+    var administratorsSid = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
+    var systemSid = new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null);
+
+    Assert(rules.Any(rule => launchingUser.Equals(rule.IdentityReference)), "launching user must have pipe access");
+    Assert(rules.Any(rule => administratorsSid.Equals(rule.IdentityReference)), "administrators must retain pipe access");
+    Assert(rules.Any(rule => systemSid.Equals(rule.IdentityReference)), "LocalSystem must retain pipe access");
+    Assert(!rules.Any(rule => interactiveSid.Equals(rule.IdentityReference)), "InteractiveSid must not have pipe access");
+    Assert(rules.All(rule => rule.AccessControlType == AccessControlType.Allow), "pipe ACL should contain only explicit allow rules");
+}
+
+static void RetainsActiveAndPreviousPortableCache()
+{
+    var cacheRoot = Path.Combine(Path.GetTempPath(), $"vpnrouter-cache-test-{Guid.NewGuid():N}");
+    var activeRoot = Path.Combine(cacheRoot, "0.1.0-active");
+    var previousRoot = Path.Combine(cacheRoot, "0.0.9-previous");
+    var oldRoot = Path.Combine(cacheRoot, "0.0.8-old");
+    var invalidRoot = Path.Combine(cacheRoot, ".invalid.staging");
+
+    try
+    {
+        CreatePortableCache(activeRoot, DateTime.UtcNow);
+        CreatePortableCache(previousRoot, DateTime.UtcNow.AddMinutes(-1));
+        CreatePortableCache(oldRoot, DateTime.UtcNow.AddMinutes(-2));
+        Directory.CreateDirectory(invalidRoot);
+
+        var result = PortableCacheManager.CleanupCacheRoot(cacheRoot, activeRoot);
+
+        AssertEqual(2, result.RemovedCacheCount);
+        AssertEqual(2, result.RetainedCacheCount);
+        Assert(Directory.Exists(activeRoot), "active payload must be retained");
+        Assert(Directory.Exists(previousRoot), "immediately previous valid payload must be retained");
+        Assert(!Directory.Exists(oldRoot), "older valid payload should be removed");
+        Assert(!Directory.Exists(invalidRoot), "invalid staging payload should be removed");
+    }
+    finally
+    {
+        if (Directory.Exists(cacheRoot))
+        {
+            Directory.Delete(cacheRoot, recursive: true);
+        }
+    }
+}
+
+static void CreatePortableCache(string root, DateTime lastWriteTimeUtc)
+{
+    Directory.CreateDirectory(Path.Combine(root, "app"));
+    Directory.CreateDirectory(Path.Combine(root, "backend"));
+    File.WriteAllText(Path.Combine(root, ".complete"), new string('A', 64));
+    File.WriteAllText(Path.Combine(root, "app", "VpnRouter.App.exe"), string.Empty);
+    File.WriteAllText(Path.Combine(root, "backend", "VpnRouter.Service.exe"), string.Empty);
+    Directory.SetLastWriteTimeUtc(root, lastWriteTimeUtc);
+}
+
+static void CreatesBoundedTroubleshootingSummary()
+{
+    var diagnostics = new DiagnosticsDto(
+        ServiceReachable: true,
+        WireGuardInstalled: true,
+        WireGuardMessage: "Installed",
+        ProfileCount: 2,
+        ManagedRouteCount: 42,
+        DnsObservationCount: 17,
+        NetworkSnapshotExists: true,
+        ManagedRoutesExists: true,
+        DnsObservationsExists: true,
+        EnableWireGuardActivation: true,
+        EnableWindowsDnsMutation: true,
+        EnableWindowsRouteMutation: true);
+    var lines = DiagnosticsService.BuildTroubleshootingLines(
+        diagnostics,
+        DateTimeOffset.Parse("2026-07-28T12:00:00Z"));
+    var text = string.Join(Environment.NewLine, lines);
+
+    Assert(text.Contains("SchemaVersion: 1"), "troubleshooting schema should be versioned");
+    Assert(text.Contains("ManagedRouteCount: 42"), "route output should be count-only");
+    Assert(text.Contains("DnsObservationCount: 17"), "DNS output should be count-only");
+    Assert(!text.Contains("Managed route plan:"), "managed route contents must not be exported");
+    Assert(!text.Contains("DNS observations:"), "DNS observation contents must not be exported");
+    Assert(lines.Count < 25, "troubleshooting output should remain bounded");
 }
 
 static void ExpiresOnlyEligibleManagedRoutes()

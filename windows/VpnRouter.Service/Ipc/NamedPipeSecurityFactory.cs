@@ -6,13 +6,17 @@ namespace VpnRouter.Service.Ipc;
 
 public static class NamedPipeSecurityFactory
 {
-    public static PipeSecurity CreateServicePipeSecurity()
+    public static PipeSecurity CreateServicePipeSecurity(SecurityIdentifier launchingUserSid)
     {
         var security = new PipeSecurity();
+        security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
 
         AddAllowRule(security, WellKnownSidType.LocalSystemSid, PipeAccessRights.FullControl);
         AddAllowRule(security, WellKnownSidType.BuiltinAdministratorsSid, PipeAccessRights.FullControl);
-        AddAllowRule(security, WellKnownSidType.InteractiveSid, PipeAccessRights.ReadWrite);
+        security.AddAccessRule(new PipeAccessRule(
+            launchingUserSid,
+            PipeAccessRights.ReadWrite,
+            AccessControlType.Allow));
 
         return security;
     }

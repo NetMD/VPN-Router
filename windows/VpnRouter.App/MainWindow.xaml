@@ -265,6 +265,23 @@
                                         <Button x:Name="InstallWireGuardButton" Grid.Column="1" Content="설치 안내" Click="InstallWireGuardButton_Click" VerticalAlignment="Center" />
                                     </Grid>
                                 </Border>
+                                <Border Style="{StaticResource CardStyle}" Padding="28">
+                                    <Grid ColumnSpacing="24">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Spacing="5">
+                                            <TextBlock Text="이전 실행 캐시 정리" Style="{StaticResource SectionTitleStyle}" />
+                                            <TextBlock Text="현재 및 직전 버전은 유지하며, 가져온 프로필과 보안 키는 삭제하지 않습니다." Style="{StaticResource CaptionStyle}" MaxWidth="580" />
+                                        </StackPanel>
+                                        <Button
+                                            Grid.Column="1"
+                                            Content="캐시 정리"
+                                            Click="CleanupPortableCacheButton_Click"
+                                            VerticalAlignment="Center" />
+                                    </Grid>
+                                </Border>
                             </StackPanel>
                         </ScrollViewer>
                     </Grid>

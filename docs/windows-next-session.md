@@ -6,6 +6,15 @@ This is the first document Windows Codex should read after `AGENTS.md`. It turns
 the current repository state, the completed macOS safety work, and the
 `v0.1.0` release plan into an executable Windows work order.
 
+> Resume update (2026-07-28): the baseline/parity group and the Phase 2
+> launcher lifecycle/IPC implementation are complete. Release packaging is
+> deterministic, extraction/checksum verification passes, and the current
+> candidate is unsigned because no local code-signing certificate is available.
+> Resume with the owner-operated matrix in
+> `docs/windows-release-hardening.md`, then sign and repeat it on the exact public
+> candidate. The detailed original work order remains below as implementation
+> history.
+
 ## Safety and platform boundary
 
 - Work from Windows 11 x64 for Windows code, builds, launcher behavior, UAC,

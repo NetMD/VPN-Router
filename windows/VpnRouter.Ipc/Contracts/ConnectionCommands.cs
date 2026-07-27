@@ -32,6 +32,8 @@ public sealed record DiagnosticsDto(
     bool WireGuardInstalled,
     string WireGuardMessage,
     int ProfileCount,
+    int ManagedRouteCount,
+    int DnsObservationCount,
     bool NetworkSnapshotExists,
     bool ManagedRoutesExists,
     bool DnsObservationsExists,
