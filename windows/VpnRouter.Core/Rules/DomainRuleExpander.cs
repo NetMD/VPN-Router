@@ -7,6 +7,7 @@ public static class DomainRuleExpander
         {
             ["youtube.com"] =
             [
+                "www.youtube.com",
                 "googlevideo.com",
                 "ytimg.com",
                 "youtubei.googleapis.com",
@@ -15,6 +16,7 @@ public static class DomainRuleExpander
             ],
             ["netflix.com"] =
             [
+                "www.netflix.com",
                 "nflxvideo.net",
                 "nflximg.net",
                 "nflximg.com",

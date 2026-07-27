@@ -247,6 +247,7 @@ public sealed class WindowsRouteManager(
 public static class ManagedRouteLifecycle
 {
     public const string PersistentDnsDomain = "__vpn_dns__";
+    public const int MaxActiveRoutesPerProfile = 512;
 
     public static ManagedRouteUpdate Update(
         IReadOnlyList<RouteEntry> existing,
@@ -293,6 +294,14 @@ public static class ManagedRouteLifecycle
                 "VpnRouter.RoutePrototype"))
             .ToArray();
         entries.AddRange(added);
+
+        var activeRouteCount = entries.Count(entry => entry.ProfileId == profileId);
+        if (activeRouteCount > MaxActiveRoutesPerProfile)
+        {
+            throw new InvalidOperationException(
+                $"Managed route limit of {MaxActiveRoutesPerProfile} IPv4 host routes would be exceeded.");
+        }
+
         return new ManagedRouteUpdate(entries, added, refreshedCount);
     }
 

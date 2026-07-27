@@ -147,7 +147,7 @@ dotnet build windows\VpnRouter.slnx --no-restore -nr:false
 dotnet run --project windows\VpnRouter.Tests\VpnRouter.Tests.csproj --no-build
 ```
 
-Expected tests include:
+The focused executable contains 22 checks as of 2026-07-28. Expected tests include:
 
 ```text
 PASS Parse valid WireGuard config
@@ -161,11 +161,31 @@ PASS Proxy returns empty response for target AAAA query
 PASS Record concurrent DNS observations
 PASS Batch concurrent dynamic route discoveries
 PASS Refresh repeated managed route expiration
+PASS Retain rotating managed route answers
+PASS Reject route plan above limit before mutation
 PASS Expire only eligible managed routes
 PASS Force WireGuard runtime routing table off
 PASS Split WireGuard default allowed IPs
 PASS Keep WireGuard endpoint when DNS pre-resolution fails
 ```
+
+## Windows parity baseline
+
+Completed on 2026-07-28 without enabling DNS, WireGuard, or route mutation.
+
+- Both `windows\VpnRouter.slnx` and `windows\VpnRouterVs.sln` build with zero
+  warnings and zero errors on Windows x64 with .NET SDK 10.0.302.
+- The focused executable passes all 22 checks.
+- Media expansion now includes explicit `www.youtube.com` and
+  `www.netflix.com` entry points while retaining the existing CDN families.
+- A focused rotating-answer check proves that an address omitted by a later DNS
+  response remains managed until its original expiration; the new address gets
+  its own 15-minute lifetime.
+- A profile's combined static, dynamic, and VPN DNS plan is limited to 512 IPv4
+  host routes. An over-limit plan fails before the route manager invokes Windows
+  mutation or writes the updated managed-route snapshot.
+- The existing restore script was inspected without running it and without
+  using `-ResetDnsToDhcp`.
 
 ## DNS mutation integration
 

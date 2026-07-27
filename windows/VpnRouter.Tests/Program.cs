@@ -26,6 +26,8 @@ var tests = new (string Name, Action Body)[]
     ("Expand media service domains", ExpandsMediaServiceDomains),
     ("Interpret browser secure DNS policy", InterpretsBrowserSecureDnsPolicy),
     ("Refresh repeated managed route expiration", RefreshesRepeatedManagedRouteExpiration),
+    ("Retain rotating managed route answers", RetainsRotatingManagedRouteAnswers),
+    ("Reject route plan above limit before mutation", RejectsRoutePlanAboveLimitBeforeMutation),
     ("Expire only eligible managed routes", ExpiresOnlyEligibleManagedRoutes),
     ("Force WireGuard runtime routing table off", ForcesRuntimeRoutingTableOff),
     ("Split WireGuard default allowed IPs", SplitsRuntimeDefaultAllowedIps),
@@ -275,6 +277,8 @@ static void ExpandsMediaServiceDomains()
 
     Assert(domains.Contains("googlevideo.com"), "YouTube video CDN should be included.");
     Assert(domains.Contains("nflxvideo.net"), "Netflix video CDN should be included.");
+    Assert(domains.Contains("www.youtube.com"), "YouTube www entry point should be explicit.");
+    Assert(domains.Contains("www.netflix.com"), "Netflix www entry point should be explicit.");
     AssertEqual(1, domains.Count(domain => string.Equals(domain, "ytimg.com", StringComparison.OrdinalIgnoreCase)));
     AssertEqual(domains.Length, domains.Distinct(StringComparer.OrdinalIgnoreCase).Count());
 }
@@ -317,6 +321,69 @@ static void RefreshesRepeatedManagedRouteExpiration()
     AssertEqual("www.youtube.com", update.Entries[0].Domain);
     AssertEqual(now.AddMinutes(15), update.Entries[0].ExpiresAt);
     AssertEqual(55, update.Entries[0].InterfaceIndex);
+}
+
+static void RetainsRotatingManagedRouteAnswers()
+{
+    var profileId = Guid.NewGuid();
+    var now = DateTimeOffset.Parse("2026-07-28T12:00:00Z");
+    var originalExpiration = now.AddMinutes(4);
+    var originalAddress = IPAddress.Parse("203.0.113.10");
+    var rotatedAddress = IPAddress.Parse("203.0.113.11");
+    var existing = new RouteEntry(
+        originalAddress,
+        "www.youtube.com",
+        profileId,
+        originalExpiration,
+        54,
+        "VpnRouter.RoutePrototype");
+
+    var update = ManagedRouteLifecycle.Update(
+        [existing],
+        new Dictionary<string, IReadOnlyList<IPAddress>>
+        {
+            ["www.youtube.com"] = [rotatedAddress]
+        },
+        profileId,
+        54,
+        now,
+        TimeSpan.FromMinutes(15));
+
+    AssertEqual(2, update.Entries.Count);
+    AssertEqual(1, update.Added.Count);
+    AssertEqual(0, update.RefreshedCount);
+    AssertEqual(originalExpiration, update.Entries.Single(entry => entry.Ip.Equals(originalAddress)).ExpiresAt);
+    AssertEqual(now.AddMinutes(15), update.Entries.Single(entry => entry.Ip.Equals(rotatedAddress)).ExpiresAt);
+}
+
+static void RejectsRoutePlanAboveLimitBeforeMutation()
+{
+    var profileId = Guid.NewGuid();
+    var now = DateTimeOffset.Parse("2026-07-28T12:00:00Z");
+    var existing = Enumerable.Range(0, ManagedRouteLifecycle.MaxActiveRoutesPerProfile)
+        .Select(index => new RouteEntry(
+            IPAddress.Parse($"10.0.{index / 256}.{index % 256}"),
+            "example.invalid",
+            profileId,
+            now.AddMinutes(5),
+            54,
+            "test"))
+        .ToArray();
+    var originalEntries = existing.ToArray();
+
+    AssertThrows<InvalidOperationException>(() => ManagedRouteLifecycle.Update(
+        existing,
+        new Dictionary<string, IReadOnlyList<IPAddress>>
+        {
+            ["rotated.example.invalid"] = [IPAddress.Parse("192.0.2.1")]
+        },
+        profileId,
+        54,
+        now,
+        TimeSpan.FromMinutes(15)));
+
+    AssertEqual(originalEntries.Length, existing.Length);
+    Assert(originalEntries.SequenceEqual(existing), "Rejected route planning must not mutate existing entries.");
 }
 
 static void ExpiresOnlyEligibleManagedRoutes()
