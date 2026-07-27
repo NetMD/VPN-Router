@@ -4,18 +4,18 @@ Last updated: 2026-07-28 KST
 
 ## Distribution decision
 
-The current Windows `0.1.0` artifact is an **unsigned private release candidate**,
-not a public download. The x64 portable architecture, deterministic payload,
+The current Windows `0.1.0` artifact is an **unsigned public-preview candidate**.
+The owner chose unsigned distribution because a commercial code-signing
+certificate is not cost-effective for this release. The x64 portable architecture, deterministic payload,
 version metadata, checksum generation, extraction smoke test, backend compatibility
 handshake, exact-user IPC ACL, and bounded troubleshooting output are implemented.
 
 Public distribution remains blocked until:
 
-1. an Authenticode code-signing identity and timestamp policy are selected;
-2. the signed owner-operated lifecycle/network matrix passes;
-3. the signed artifact passes Windows Security, SmartScreen, and clean-machine
-   verification;
-4. the exact signed artifact-producing commit is tagged.
+1. the owner-operated lifecycle/network matrix passes on the exact unsigned artifact;
+2. Windows Security, SmartScreen, and clean-machine behavior are recorded;
+3. the published SHA-256 checksum is independently verified;
+4. the exact artifact-producing commit is tagged.
 
 The supported `0.1.0` baseline is Windows 11 x64 with WireGuard for Windows
 installed separately. No Windows Service or installer registration is created.
@@ -51,13 +51,13 @@ Extraction-only smoke check: Passed
 Second clean publish SHA-256: identical
 ```
 
-The unsigned result is not a public release. It proves deterministic assembly and
-safe extraction only.
+The current result proves deterministic assembly and safe extraction. It becomes
+the public-preview artifact only after the pending owner-operated gates pass.
 
 No local code-signing certificate with a private key was available in the current
-user or local machine certificate stores during the 2026-07-28 verification. The
-artifact therefore remains `NotSigned`; obtaining or connecting the chosen signing
-identity is an external release prerequisite.
+user or local machine certificate stores during the 2026-07-28 verification.
+`0.1.0` will remain `NotSigned`; users must expect an unknown-publisher or
+SmartScreen warning and verify the checksum from the official release channel.
 
 ## Implemented lifecycle and security controls
 
@@ -81,7 +81,7 @@ identity is an external release prerequisite.
 - The unused `systemAIModels` restricted capability was removed from the future
   MSIX manifest.
 
-## Signed owner-operated matrix
+## Owner-operated unsigned matrix
 
 Do not treat compilation or extraction as evidence for these checks.
 
@@ -100,15 +100,21 @@ Do not treat compilation or extraction as evidence for these checks.
 | Cache cleanup disconnected | Active and previous payload retained; older caches removed | Pending |
 | Cache cleanup connected | Request refused with no deletion | Pending |
 | Redacted troubleshooting file | Counts/status only; no config, key, domain, IP, or DNS payload | Pending |
-| Signed clean-machine launch | Signature valid; Windows Security clean; expected SmartScreen behavior recorded | Pending |
+| Unsigned clean-machine launch | SHA-256 matches; Windows Security is clean; unknown-publisher and SmartScreen behavior recorded | Pending |
 
 Real WireGuard profiles and LocalAppData diagnostics must not be attached to the
 matrix. Record only sanitized counts, status, timestamps, error codes, and recovery
 outcomes.
 
-## Authenticode signing gate
+## Unsigned distribution and optional future signing
 
-The build accepts an optional certificate thumbprint:
+Authenticode is not a `0.1.0` release requirement. The public-preview page must
+clearly state that the artifact is unsigned, show its exact SHA-256 checksum, and
+explain the expected Windows warning without instructing users to disable
+SmartScreen or Windows Security.
+
+The build keeps optional signing support for a future sponsored or commercial
+release. To use it, provide a certificate thumbprint:
 
 ```powershell
 .\scripts\windows\build-portable.ps1 `
@@ -139,13 +145,13 @@ Before tagging `v0.1.0`:
 
 1. run both Windows solutions and the focused test executable;
 2. produce the candidate from a clean checkout;
-3. sign and timestamp the portable artifact;
-4. verify the signature and published checksum;
-5. run the signed owner matrix on the development machine;
-6. run on a clean supported Windows 11 x64 machine with WireGuard installed and
+3. confirm that the candidate is intentionally `NotSigned`;
+4. verify and publish the exact SHA-256 checksum;
+5. run the owner matrix on the development machine;
+6. run the same unsigned artifact on a clean supported Windows 11 x64 machine with WireGuard installed and
    missing;
 7. scan the exact artifact with Windows Security and the chosen release scanning
    service;
 8. inspect the extracted payload for raw configs, secrets, and local data;
 9. publish the README, checksum, known limitations, and recovery guidance;
-10. tag only the exact signed artifact-producing commit.
+10. tag only the exact artifact-producing commit.

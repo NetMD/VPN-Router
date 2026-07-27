@@ -9,10 +9,11 @@ the current repository state, the completed macOS safety work, and the
 > Resume update (2026-07-28): the baseline/parity group and the Phase 2
 > launcher lifecycle/IPC implementation are complete. Release packaging is
 > deterministic, extraction/checksum verification passes, and the current
-> candidate is unsigned because no local code-signing certificate is available.
+> candidate is intentionally unsigned because the owner declined the cost of a
+> commercial code-signing certificate.
 > Resume with the owner-operated matrix in
-> `docs/windows-release-hardening.md`, then sign and repeat it on the exact public
-> candidate. The detailed original work order remains below as implementation
+> `docs/windows-release-hardening.md`, then repeat it with the exact unsigned
+> public-preview candidate on a clean machine. The detailed original work order remains below as implementation
 > history.
 
 ## Safety and platform boundary

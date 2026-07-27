@@ -10,15 +10,16 @@ WireGuard connection. It does not provide a VPN account or VPN server.
 - One-file portable `VpnRouter-0.1.0-x64.exe`
 - User-supplied WireGuard configuration imported through the app
 
-The first public release remains blocked until the signed owner-operated matrix,
-clean-machine verification, and Authenticode signing decision are complete.
+The first public preview is intentionally unsigned. It remains blocked until the
+owner-operated matrix, clean-machine verification, Windows Security check, and
+SmartScreen behavior review are complete.
 
 ## Installation and first launch
 
 1. Install WireGuard for Windows from its official distribution.
 2. Place the VPN Router portable executable in a user-controlled folder.
-3. Verify the published SHA-256 checksum and Authenticode signature when a signed
-   build is provided.
+3. Verify the published SHA-256 checksum. Version `0.1.0` is unsigned and Windows
+   may show an unknown-publisher or SmartScreen warning.
 4. Run the executable and approve its single UAC prompt.
 5. Import a WireGuard configuration through the app, add site rules, and connect.
 
@@ -91,20 +92,20 @@ unrestricted logs. Review every file before sharing it.
 
 ## Release verification
 
-Build and verify an unsigned private candidate:
+Build and verify the unsigned public-preview candidate:
 
 ```powershell
 .\scripts\windows\verify-release.ps1 -Version 0.1.0
 ```
 
-Require a valid Authenticode signature for a public candidate:
+If a future release is signed, require a valid Authenticode signature with:
 
 ```powershell
 .\scripts\windows\verify-release.ps1 -Version 0.1.0 -SkipBuild -RequireSignature
 ```
 
-To sign during the portable build, provide the thumbprint of a locally installed
-code-signing certificate that has a private key:
+Optional future signing remains supported. Provide the thumbprint of a locally
+installed code-signing certificate that has a private key:
 
 ```powershell
 .\scripts\windows\build-portable.ps1 `

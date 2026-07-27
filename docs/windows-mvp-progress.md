@@ -355,16 +355,16 @@ elevated backend or mutating DNS, routes, or WireGuard.
 - Two consecutive Release builds produced the same 195,529,964-byte artifact and
   SHA-256:
   `54D37DE05EDA397EB5BB4059EF76D98CC8DE920006796E5DE49966BAD7D236BC`.
-- The candidate is currently unsigned and is not approved for public
-  distribution. No usable local code-signing certificate was detected. The
-  owner-operated lifecycle matrix, signing identity, signed clean-machine
-  validation, and exact release tag remain pending.
+- The owner chose an unsigned `0.1.0` public preview because a commercial
+  code-signing certificate is not cost-effective. The owner-operated lifecycle
+  matrix, unsigned clean-machine/SmartScreen validation, and exact release tag
+  remain pending.
 
 ## Next task
 
 Run the owner-operated unsigned lifecycle matrix in
-`docs/windows-release-hardening.md`, then choose an Authenticode signing identity
-and repeat the matrix with the exact signed public candidate. External player
+`docs/windows-release-hardening.md`, then repeat it with the exact unsigned
+public-preview candidate on a clean Windows 11 x64 machine. External player
 automation and account-dependent Netflix checks are not release blockers.
 
 ## Notes for next session
