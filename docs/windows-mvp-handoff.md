@@ -4,6 +4,10 @@ Date: 2026-07-15
 
 This document captures the current product and architecture decisions so the work can continue from a Windows PC with Codex.
 
+> Resume note (2026-07-28): read `docs/windows-next-session.md` first. Its
+> Phase 2 lifecycle/security order supersedes the original greenfield “Recommended
+> Next Steps” below, which are retained as architecture history.
+
 ## Product Goal
 
 Build a standalone client app that lets a general user route only selected websites through an existing VPN connection.

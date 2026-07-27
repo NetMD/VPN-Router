@@ -1,6 +1,6 @@
 # VPN Router macOS MVP progress
 
-Last updated: 2026-07-25 KST
+Last updated: 2026-07-28 KST
 
 ## Current phase
 
@@ -9,9 +9,16 @@ Phase 4 complete for signed private dogfooding: consumer UI and release hardenin
 The signed DNS Proxy spike proved native UDP/TCP forwarding, XPC observations,
 simultaneous Packet Tunnel operation, TTL-bounded dynamic IPv4 route updates, and
 clean teardown on this development Mac. The macOS MVP nevertheless keeps static
-pre-resolution as its default supported architecture because encrypted DNS,
-actually connected second-VPN coexistence, continuous ownership monitoring,
-Developer ID distribution provisioning, and IPv6 routing remain unverified.
+pre-resolution as its default supported architecture because general encrypted
+DNS compatibility, Developer ID distribution provisioning, and IPv6 routing
+outside the explicit DNS Proxy path remain unverified.
+
+Captive-portal discovery, sign-in, and recovery are explicitly outside the
+`v0.1.0` release scope by owner decision on 2026-07-28. VPN Router must not be
+used to perform portal authentication; the user completes the portal with VPN
+Router disconnected, then connects VPN Router only after ordinary internet access
+works. No captive-network detection, bypass, or automatic network mutation will
+be added for this release.
 
 The Phase 4 technical baseline and remediation audit are recorded in
 `docs/macos-phase4-quality-audit.md`. The initial score was 12/20 with no P0
@@ -25,6 +32,244 @@ matrix are complete. Public Developer ID distribution remains intentionally
 blocked; `0.1.0` is approved only as a signed private Apple Silicon dogfood build.
 The connected-status VoiceOver announcement was owner-skipped and remains
 explicitly unverified.
+
+Post-Phase-4 Windows-parity work has started. Static media expansion now resolves
+the concrete `www.youtube.com` and `www.netflix.com` hosts in addition to the
+existing roots and CDN families. The host also keeps distinct IPv4 answers from
+the most recent fifteen minutes across five-minute static refreshes, removes them
+at their original expiry, resets the history when the expanded domain set changes,
+and retains the existing 512-route limit. This narrows the rotating-answer gap but
+does not replace browser DNS observation for arbitrary CDN subdomains. The focused
+test suite now passes 38 checks and an unsigned arm64 Debug host/extension build
+succeeds.
+
+The signed acceptance run passed on 2026-07-28 KST. The fresh connection applied
+46 routes to `utun13`; all eight current `www.youtube.com` answers and both current
+`www.netflix.com` answers used that interface while the default route and a control
+address remained on `en6`. During the five-minute observation window the route
+count increased to 49 without disconnecting. Real HTTPS requests to both `www`
+hosts returned HTTP 200, YouTube reported `GL=JP`, and Netflix reported country
+`JP` with Japan locale markers. Normal disconnect completed in about one second,
+removed every `utun13` IPv4 route, kept the default and control routes on `en6`,
+and left ordinary HTTPS working.
+
+This closes the private-dogfood streaming acceptance item for the concrete web
+entry points. Arbitrary rotating media/CDN subdomains still require the proven
+DNS Proxy observation path before macOS can claim Windows-level dynamic coverage.
+
+The next DNS Proxy safety pass is implemented and awaits signed verification.
+Diagnostic activation now requires an already-connected VPN Router Packet Tunnel.
+While both providers are active, the Host checks the owned DNS Proxy preference
+and XPC provider health every five seconds. Loss of ownership or enablement fails
+safe immediately; three consecutive single-attempt XPC health windows fail safe
+after roughly fifteen to twenty-one seconds. The fail-safe stops only VPN Router's Packet Tunnel and disables
+the DNS Proxy only when its bundle identifier still proves VPN Router ownership.
+Normal disconnect disables the owned DNS Proxy before stopping the tunnel, and a
+Host relaunch disables an owned orphan DNS Proxy when no Packet Tunnel is
+connected. Other providers are never changed. Three focused policy tests cover
+runtime-state classification and the transient-failure threshold; the full suite
+now passes 41 checks and the unsigned arm64 Debug app/extension build succeeds.
+
+The first signed safety-pass attempt on 2026-07-28 did not pass dynamic-route
+acceptance. Packet Tunnel and DNS Proxy were simultaneously active with 41-42
+`utun13` routes, normal default/control routing, and existing AdGuard and Tailscale
+extensions left unchanged. New selected CDN answers remained on the primary
+interface after multiple twenty-second windows, so the run was stopped rather
+than claiming dynamic coverage. Normal stop removed all `utun13` routes and left
+DNS and HTTPS healthy. Investigation also found that using the retrying diagnostic
+snapshot for each five-second health poll could extend the intended failure
+window; the monitor now uses a single-attempt two-second XPC health check. A new
+signed build and the in-app aggregate observation summary are required to
+distinguish provider observation from Host route-application failure.
+
+The rebuilt signed run then passed dynamic-route operation. The app reported 13
+DNS-observed routes merged into 41 static routes for 54 total, and continued
+refreshing to 63 system `utun13` routes while the tunnel stayed connected and the
+default/control routes remained on the primary interface. Fresh YTImg and GGpht
+addresses moved from the primary interface to `utun13`. Directly pausing the
+root-owned DNS Proxy process was correctly rejected by macOS without changing its
+state, so that attempt is not fail-safe evidence. A Debug-only, ownership-checked
+test action now disables only VPN Router's own DNS Proxy preference without
+updating the Host controller state; the five-second monitor must detect that real
+preference-state loss and disconnect the Packet Tunnel in the next signed run.
+
+The signed preference-loss test passed on 2026-07-28. After the Debug-only action
+disabled the owned DNS Proxy preference without updating Host state, the monitor
+detected the loss and the VPN was already `Disconnected` at the first external
+check. All VPN Router `utun` routes were gone, the default and control routes
+remained on `en6`, and normal DNS plus HTTPS succeeded. The system-extension
+process remaining resident is macOS lifecycle behavior and did not retain an
+enabled configuration or VPN routes. This completes the private-dogfood DNS Proxy
+ownership/lifecycle fail-safe gate.
+
+Windows-parity IPv6 protection is now implemented for the DNS Proxy path and
+awaits signed verification. UDP and TCP DNS responses for saved or media-expanded
+target domains are inspected after upstream resolution; matching AAAA responses
+are replaced with an empty successful response that preserves the transaction and
+question, while A responses and unrelated DNS payloads remain unchanged. TCP
+length framing and split response delivery are preserved. Only an aggregate
+`aaaaResponseFiltered` counter is retained. Two focused parser tests cover target
+filtering and non-target/A pass-through; the full suite now passes 43 checks and
+the unsigned app, Packet Tunnel, and DNS Proxy build succeeds.
+
+The signed build-12 IPv6 protection check passed on 2026-07-28 after installing
+the containing app in `/Applications` and activating the embedded build-12 system
+extension. UDP AAAA queries for `www.youtube.com`, `www.netflix.com`, and
+`i.ytimg.com` returned empty answers; forced TCP AAAA queries for both `www` hosts
+also returned empty answers. An unrelated `example.com` AAAA query still returned
+two IPv6 answers. Target A answers remained available and all tested YouTube and
+Netflix IPv4 addresses used `utun13`, while the default route remained on `en6`.
+Normal stop completed in about one second, removed every `utun13` route, and left
+unrelated AAAA, DNS, and HTTPS healthy. The filter currently protects only the
+explicitly enabled DNS Proxy path; static pre-resolution mode still reports IPv6
+bypass risk rather than claiming protection.
+
+The next encrypted-DNS conflict preflight is implemented. Before the diagnostic
+DNS Proxy can be enabled, the Host now reads only the effective macOS
+`DnsOverHttpsMode` preference for installed Chrome and Edge. `automatic`,
+`secure`, and unknown configured values block activation; explicit `off` passes;
+and an absent policy requires manual browser verification. The check runs again
+inside the confirmation action to reduce stale-state risk. It never writes a
+browser preference. Because the app does not use an unsupported private API to
+infer iCloud Private Relay state, the UI also requires the owner to verify the
+current network's “Limit IP Address Tracking” setting manually and does not
+change it. Four focused policy tests cover normalization and allow/warn/block
+decisions; all 47 core checks and the unsigned arm64 Debug host/extensions build
+pass.
+
+Signed build-13 verification passed on 2026-07-28. The owner activated the
+embedded build-13 system extension, manually checked Chrome Secure DNS and the
+current network's Private Relay setting after the Host reported that Chrome had
+no explicit `DnsOverHttpsMode` policy, and then enabled the diagnostic DNS Proxy.
+The Packet Tunnel and DNS Proxy remained active across the ownership-monitor and
+15-second refresh windows. The primary default stayed on `en6`, the dynamic
+`utun13` route count remained between 64 and 65, all ten current YouTube/Netflix
+IPv4 answers used the tunnel, target UDP and TCP AAAA answers remained empty, and
+an unrelated control retained two AAAA answers. Control DNS and YouTube/Netflix
+HTTPS also passed. This verifies the signed warning/confirmation path, but does
+not turn an absent browser policy or Private Relay's non-public state into an
+automatically verified condition.
+
+The first actually connected second-VPN coexistence run failed safely on
+2026-07-28. With VPN Router's Packet Tunnel and DNS Proxy active, the owner
+connected Tailscale without an exit node. macOS kept separate route tables
+(`utun13` with 62 VPN Router routes and `utun16` with seven Tailscale routes), the
+default and control route stayed on `en6`, and all ten tested target IPv4 answers
+still used VPN Router. However, target AAAA answers became visible again (15 over
+UDP and 11 over forced TCP), proving that the second VPN's DNS path bypassed the
+DNS Proxy even though its preference, process, and XPC health remained active.
+YouTube HTTPS also failed during the unsafe state. Testing stopped immediately:
+only VPN Router was disconnected, all 62 `utun13` routes were removed, Tailscale
+remained connected, and control DNS/HTTPS stayed healthy. This is a coexistence
+failure, not a pass. The next remediation must monitor real DNS-flow coverage
+rather than treating provider liveness as proof that system queries still pass
+through it.
+
+Build 14's first remediation did not pass the transition retest. Starting
+Tailscale before the DNS Proxy produced a stable, healthy coexistence state:
+separate 52-route and seven-route tunnel interfaces, ten of ten target IPv4
+answers on VPN Router, empty target UDP/TCP AAAA answers, control traffic on
+`en6`, and HTTP 200 from both media sites. Disconnecting and reconnecting
+Tailscale after the DNS Proxy was active again exposed 11 target AAAA answers
+for at least 30 seconds, but the DNS-flow canary continued to reach the proxy
+through a different resolver path and did not fail safe. VPN Router was manually
+stopped again, its routes were removed, Tailscale stayed connected, and control
+HTTPS remained healthy. The canary implementation has been removed rather than
+retained as a misleading health signal.
+
+Build 15 attempted a replacement remediation. Two seconds after DNS Proxy
+activation settled, the Host captured
+the active SystemConfiguration DNS dictionaries into an in-memory SHA-256
+fingerprint. It never persists or displays resolver addresses. Any later DNS
+configuration change fails safe at the next five-second ownership window,
+with the intent of covering second-VPN and encrypted-DNS transitions
+conservatively. Later signed results below disproved this signal and the
+implementation was removed.
+
+Build 15 detected a DNS configuration change, preserved Tailscale, removed every
+VPN Router route, and left control HTTPS healthy, but it armed only two seconds
+after DNS Proxy activation and therefore treated the proxy's own late-settling
+configuration as an external transition. The owner also reported that the Packet
+Tunnel connection itself took unusually long, which remains a separate latency
+observation for the next run. A read-only external hash check while VPN Router
+was disconnected then observed exactly one DNS fingerprint change when Tailscale
+disconnected and one when it reconnected, confirming that the selected system
+signal captures the required transition without exposing resolver contents.
+
+Build 16 now waits for three identical one-second DNS fingerprint samples before
+arming the five-second transition gate, with a bounded twelve-sample startup
+window. Failure to obtain a stable baseline also disconnects safely. This should
+avoid the build-15 startup false positive while preserving detection of the two
+confirmed Tailscale transitions. Signed timing and transition verification is
+pending.
+
+The build-16 signed startup retest still failed conservatively: the Packet Tunnel
+itself connected faster than the external half-second sampler could observe, but
+the DNS Proxy's system configuration changed again nine seconds after its process
+started. The three-sample baseline had already armed, so VPN Router disconnected,
+removed its routes, preserved Tailscale, kept the default on `en6`, and left
+control HTTPS healthy. Build 17 therefore requires ten identical one-second
+samples within a bounded thirty-sample window. The UI explicitly labels this
+arming period and reports when ownership, XPC, and DNS-transition monitoring are
+ready. A baseline that never stabilizes still fails safe.
+
+Build 17 also failed conservatively immediately after reporting ready. Follow-up
+checks ruled out nondeterministic serialization: fifty identical-state reads
+produced one hash, and the Tailscale-only idle configuration changed zero times
+over twenty seconds. The remaining evidence points to a late DNS Proxy system
+settle just beyond the ten-second quiet window. Build 18 therefore requires
+twenty consecutive identical one-second samples within a bounded sixty-sample
+window. Any intervening change resets the count; that reset behavior now has a
+focused unit test, raising the suite to 49 checks. The longer arming delay is
+visible in the UI and still fails safe if no stable baseline is available.
+
+Build 18 proved that extending the DNS quiet window is not a valid fix: it also
+reported ready and then immediately treated a DNS Proxy-owned system update as
+an external transition. VPN Router again removed its routes while Tailscale and
+control HTTPS remained healthy. The DNS-dictionary fingerprint and its
+stabilization helper have now been removed rather than weakened further.
+
+Build 19 instead snapshots only the set of active, up `utun` interfaces that
+currently have an IPv4 address, using `getifaddrs`. It stores no addresses,
+routes, DNS values, provider names, or third-party configuration. The set is
+checked every second, while existing ownership and XPC health checks remain on
+their five-second cadence. DNS Proxy activation and route-count refreshes do not
+create a tunnel interface; a second VPN disconnect/reconnect does. Any set change
+or unreadable interface state fails safe immediately. The focused policy suite
+returns to 48 passing checks after removing the disproven DNS stabilization test,
+and the unsigned arm64 Debug host/extensions build completes without warnings.
+Signed stable-state and Tailscale-transition validation is pending.
+
+The first signed build-19 activation did not reach the interface-monitor test.
+The DNS Proxy preference and provider process started, but initial XPC target
+configuration failed before the provider was ready. The existing activation
+error path disabled the proxy and restored static routes while leaving the
+Packet Tunnel connected; external verification found 11 target AAAA answers, so
+testing manually stopped VPN Router while preserving Tailscale and healthy
+control HTTPS. Build 20 gives initial XPC setup up to twelve attempts with a
+half-second retry delay and the existing bounded two-second per-attempt timeout.
+If startup still fails, it now stops VPN Router and disables its owned DNS Proxy
+instead of returning to a connected static plan with known IPv6 bypass risk.
+
+Signed build-20 validation passed on 2026-07-28. Initial XPC setup reached the
+ready state with Tailscale already connected. During the stable coexistence
+window, both VPN managers stayed connected, two IPv4 `utun` interfaces remained
+active with seven Tailscale routes and 48 VPN Router routes, the default stayed
+on `en6`, all ten target IPv4 answers used VPN Router, target UDP/TCP AAAA answers
+were empty, the unrelated control retained two AAAA answers, and control,
+YouTube, and Netflix HTTPS all returned 200. Seven additional five-second samples
+kept both tunnel interfaces stable.
+
+The owner then disconnected Tailscale for three seconds and reconnected it.
+External one-second sampling observed the active IPv4 tunnel set change from two
+to one; build 20 disconnected VPN Router about one second later. VPN Router's
+previous route table fell to zero, Tailscale reconnected as the sole IPv4 tunnel,
+the primary default remained on `en6`, and control DNS plus HTTPS passed. This
+closes the actually connected second-VPN transition fail-safe check for the
+tested Tailscale/no-exit-node configuration. It does not claim transparent
+simultaneous recovery: any active tunnel-interface change intentionally requires
+the owner to reconnect VPN Router and re-enable the diagnostic DNS Proxy after
+the network is stable.
 
 The macOS Xcode project has been generated at `macos/VPNRouter/VPNRouter.xcodeproj`
 with a SwiftUI host app and an embedded stub Packet Tunnel extension. The host app
@@ -335,7 +580,9 @@ verification.
 - [x] Verify live route replacement on a signed real-Mac build.
 - [x] Verify expiry cancellation on a signed real-Mac build.
 - [x] Detect AAAA answers and clearly report IPv6 bypass risk.
-- [x] Record YouTube and Netflix Japan-exit dogfooding checks (partial failure: static DNS answer coverage).
+- [x] Verify YouTube and Netflix `www` traffic through a Japanese exit in a signed
+  build while retaining the normal control route. Arbitrary rotating media/CDN
+  subdomains remain a DNS Proxy follow-up.
 
 ## Phase 3 progress
 
@@ -465,9 +712,12 @@ verification.
 - [x] Verify baseline coexistence without altering third-party products. Two
   non-VPN Router system extensions remained activated while DNS Proxy UDP/TCP,
   Packet Tunnel simultaneous operation, dynamic route updates, and cleanup passed.
-- [x] Record encrypted DNS, Private Relay, captive portal, and actually connected
-  second-VPN tests as unverified release blockers rather than changing those
-  products automatically.
+- [x] Keep encrypted DNS and Private Relay as manually verified limitations without
+  changing those products automatically.
+- [x] Verify actually connected second-VPN coexistence and transition fail-safe
+  with Tailscale/no exit node in signed build 20.
+- [x] Exclude captive-portal discovery, sign-in, and recovery from `v0.1.0`; require
+  portal authentication before VPN Router is connected.
 - [x] Choose the Phase 3 product direction: keep bounded static pre-resolution as
   the supported macOS MVP path and retain DNS Proxy as an explicit development
   diagnostic until the remaining distribution, ownership, coexistence, lifecycle,

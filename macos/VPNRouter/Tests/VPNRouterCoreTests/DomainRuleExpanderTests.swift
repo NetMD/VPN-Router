@@ -15,6 +15,7 @@ final class DomainRuleExpanderTests: XCTestCase {
 
             XCTAssertTrue(domains.isSuperset(of: [
                 "youtube.com" == DomainRuleExpander.normalize(domain) ? "youtube.com" : "www.youtube.com",
+                "www.youtube.com",
                 "googlevideo.com",
                 "ytimg.com",
                 "youtubei.googleapis.com",
@@ -22,6 +23,17 @@ final class DomainRuleExpanderTests: XCTestCase {
                 "youtube-nocookie.com"
             ]))
         }
+    }
+
+    func testMediaRootsIncludeConcreteWebHostsForStaticResolution() {
+        let expanded = DomainRuleExpander.expand([
+            makeRule(domain: "youtube.com"),
+            makeRule(domain: "netflix.com")
+        ])
+        let domains = Set(expanded.map { DomainRuleExpander.normalize($0.domain) })
+
+        XCTAssertTrue(domains.contains("www.youtube.com"))
+        XCTAssertTrue(domains.contains("www.netflix.com"))
     }
 
     func testNetflixExpansionDoesNotDuplicateExistingRelatedRule() {

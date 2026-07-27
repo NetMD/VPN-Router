@@ -7,6 +7,7 @@ final class DNSProxyConfigurationController: ObservableObject {
     @Published private(set) var message = "DNS Proxy 진단 구성 상태를 아직 확인하지 않았습니다."
     @Published private(set) var isRequestInFlight = false
     @Published private(set) var isEnabled = false
+    @Published private(set) var runtimeState = DNSProxyRuntimeState.unknown
 
     func refresh(expectedBundleIdentifier: String) async {
         guard !isRequestInFlight else { return }
@@ -23,6 +24,10 @@ final class DNSProxyConfigurationController: ObservableObject {
                 expectedBundleIdentifier: expectedBundleIdentifier
             )
             isEnabled = ownership == .vpnRouter && manager.isEnabled
+            runtimeState = DNSProxyConfigurationPolicy.runtimeState(
+                ownership: ownership,
+                isEnabled: manager.isEnabled
+            )
             switch ownership {
             case .none:
                 message = "VPN Router DNS Proxy 진단 구성이 없습니다."
@@ -39,6 +44,7 @@ final class DNSProxyConfigurationController: ObservableObject {
             }
         } catch {
             isEnabled = false
+            runtimeState = .unreadable
             message = failureMessage(prefix: "DNS Proxy 상태를 읽지 못했습니다", error: error)
         }
     }
@@ -82,9 +88,11 @@ final class DNSProxyConfigurationController: ObservableObject {
             }
 
             isEnabled = true
+            runtimeState = .ownedEnabled
             message = "DNS Proxy 진단 구성이 활성화되었습니다. 문제가 생기면 즉시 끄기를 누르세요."
         } catch {
             isEnabled = false
+            runtimeState = .unreadable
             message = failureMessage(prefix: "DNS Proxy 진단 구성을 활성화하지 못했습니다", error: error)
         }
     }
@@ -105,9 +113,11 @@ final class DNSProxyConfigurationController: ObservableObject {
             ) {
             case .none:
                 isEnabled = false
+                runtimeState = .absent
                 message = "끄기 작업이 필요하지 않습니다. VPN Router DNS Proxy 구성이 없습니다."
                 return
             case .other:
+                runtimeState = .other
                 throw DNSProxyConfigurationError.configurationNotOwned
             case .vpnRouter:
                 break
@@ -121,6 +131,7 @@ final class DNSProxyConfigurationController: ObservableObject {
                     throw DNSProxyConfigurationError.disableVerificationFailed
                 }
                 isEnabled = false
+                runtimeState = .ownedDisabled
                 message = "VPN Router DNS Proxy 진단 구성을 비활성화했습니다."
             } catch {
                 guard allowOwnedRemovalFallback else {
@@ -137,12 +148,55 @@ final class DNSProxyConfigurationController: ObservableObject {
                 }
                 try await removePreferences(for: manager)
                 isEnabled = false
+                runtimeState = .absent
                 message = "비활성화 저장에 실패하여 VPN Router 소유 DNS Proxy 진단 구성을 제거했습니다."
             }
         } catch {
+            if runtimeState != .other {
+                runtimeState = .unreadable
+            }
             message = failureMessage(prefix: "DNS Proxy 진단 구성을 끄지 못했습니다", error: error)
         }
     }
+
+#if DEBUG
+    func simulateExternalDisableForFailSafeTest(
+        expectedBundleIdentifier: String
+    ) async -> Bool {
+        guard !isRequestInFlight else { return false }
+        isRequestInFlight = true
+        defer { isRequestInFlight = false }
+
+        do {
+            let manager = NEDNSProxyManager.shared()
+            try await loadPreferences(for: manager)
+            guard ownership(
+                of: manager.providerProtocol,
+                localizedDescription: manager.localizedDescription,
+                isEnabled: manager.isEnabled,
+                expectedBundleIdentifier: expectedBundleIdentifier
+            ) == .vpnRouter, manager.isEnabled else {
+                throw DNSProxyConfigurationError.configurationNotOwned
+            }
+
+            manager.isEnabled = false
+            try await savePreferences(for: manager)
+            try await loadPreferences(for: manager)
+            guard !manager.isEnabled else {
+                throw DNSProxyConfigurationError.disableVerificationFailed
+            }
+
+            message = "테스트를 위해 VPN Router DNS Proxy 구성을 외부에서 비활성화한 상태를 만들었습니다."
+            return true
+        } catch {
+            message = failureMessage(
+                prefix: "DNS Proxy 소유권 상실 테스트를 준비하지 못했습니다",
+                error: error
+            )
+            return false
+        }
+    }
+#endif
 
     private func ownership(
         of providerProtocol: NEDNSProxyProviderProtocol?,

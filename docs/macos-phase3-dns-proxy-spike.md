@@ -224,8 +224,11 @@ It does not yet prove all release conditions:
   unverified.
 - The forwarding implementation currently raises the effective minimum to macOS 15,
   while the app's earlier candidate minimum was macOS 14.
-- Browser DNS-over-HTTPS, encrypted DNS profiles, Private Relay behavior, captive
-  portals, and an actually connected second VPN were not tested.
+- At the time of this spike, browser DNS-over-HTTPS, encrypted DNS profiles,
+  Private Relay behavior, captive portals, and an actually connected second VPN
+  were not tested. Post-Phase-4 signed results and the later decision to exclude
+  captive-portal handling from `v0.1.0` are recorded in
+  `docs/macos-mvp-progress.md`.
 - Losing DNS ownership during an active session is not yet monitored continuously.
 - Dynamic refresh currently depends on the host app's diagnostic loop; the
   Packet Tunnel fail-safe disconnects when refresh stops, but this is not yet a

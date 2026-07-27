@@ -15,7 +15,10 @@ struct DNSProxyObservationSettingsStore {
         guard !targetDomains.isEmpty else {
             throw DNSProxyXPCError.emptyTargetDomains
         }
-        let accepted: Bool = try await performRequest { proxy, reply in
+        let accepted: Bool = try await performRequest(
+            maximumAttemptCount: 12,
+            retryDelayNanoseconds: 500_000_000
+        ) { proxy, reply in
             proxy.replaceTargetDomains(targetDomains, withReply: reply)
         }
         guard accepted else {
@@ -50,6 +53,19 @@ struct DNSProxyObservationSettingsStore {
         )
     }
 
+    func healthCheck() async throws {
+        let data: Data = try await performSingleRequest { proxy, reply in
+            proxy.fetchSnapshot(withReply: reply)
+        }
+        guard !data.isEmpty else {
+            throw DNSProxyXPCError.emptySnapshot
+        }
+        let snapshot = try JSONDecoder().decode(DNSProxyHealthSnapshot.self, from: data)
+        guard snapshot.schemaVersion == 1 else {
+            throw DNSProxyXPCError.unsupportedSchema(snapshot.schemaVersion)
+        }
+    }
+
     private func expandedTargetDomains(_ domains: [String]) -> [String] {
         let profileId = DomainRuleStore.sharedSiteRulesProfileId
         let rules = domains.map {
@@ -68,16 +84,21 @@ struct DNSProxyObservationSettingsStore {
     }
 
     private func performRequest<Value>(
+        maximumAttemptCount: Int = 3,
+        retryDelayNanoseconds: UInt64 = 250_000_000,
         _ request: @escaping (DNSProxyXPCProtocol, @escaping (Value) -> Void) -> Void
     ) async throws -> Value {
+        precondition(maximumAttemptCount > 0)
         var lastError: Error = DNSProxyXPCError.connectionUnavailable
-        for attempt in 0..<3 {
+        for attempt in 0..<maximumAttemptCount {
             do {
                 return try await performSingleRequest(request)
             } catch {
                 lastError = error
-                if attempt < 2 {
-                    try await Task.sleep(nanoseconds: 250_000_000)
+                if attempt < maximumAttemptCount - 1 {
+                    try await Task.sleep(
+                        nanoseconds: retryDelayNanoseconds
+                    )
                 }
             }
         }
@@ -150,6 +171,10 @@ private struct DNSProxyXPCSnapshot: Decodable {
     let lastEventAt: Date?
     let lastFailureDomain: String?
     let lastFailureCode: Int?
+}
+
+private struct DNSProxyHealthSnapshot: Decodable {
+    let schemaVersion: Int
 }
 
 struct DNSProxyRouteObservation: Decodable {

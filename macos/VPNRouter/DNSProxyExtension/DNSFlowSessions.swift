@@ -79,8 +79,16 @@ final class TCPDNSFlowSession: DNSFlowSession {
             self.queue.async {
                 if let data, !data.isEmpty {
                     self.observationStore.record(.responseReceived)
-                    self.inspectTCPResponses(data)
-                    self.flow.write(data) { [weak self] writeError in
+                    let processedData = self.processTCPResponses(data)
+                    guard !processedData.isEmpty else {
+                        if isComplete {
+                            self.finish(error ?? DNSFlowSessionError.emptyResponse)
+                        } else {
+                            self.copyInbound()
+                        }
+                        return
+                    }
+                    self.flow.write(processedData) { [weak self] writeError in
                         self?.queue.async {
                             if let writeError {
                                 self?.finish(writeError)
@@ -125,13 +133,14 @@ final class TCPDNSFlowSession: DNSFlowSession {
         }
     }
 
-    private func inspectTCPResponses(_ data: Data) {
+    private func processTCPResponses(_ data: Data) -> Data {
         responseBuffer.append(data)
         if responseBuffer.count > 131_074 {
             responseBuffer.removeAll(keepingCapacity: true)
-            return
+            return data
         }
 
+        var output = Data()
         while responseBuffer.count >= 2 {
             let messageLength = Int(responseBuffer[0]) << 8 | Int(responseBuffer[1])
             guard messageLength > 0 else {
@@ -139,12 +148,16 @@ final class TCPDNSFlowSession: DNSFlowSession {
                 continue
             }
             guard responseBuffer.count >= messageLength + 2 else {
-                return
+                break
             }
             let message = Data(responseBuffer[2..<(messageLength + 2)])
             responseBuffer.removeFirst(messageLength + 2)
-            observationStore.inspectResponse(message)
+            let processedMessage = observationStore.processResponse(message)
+            output.append(UInt8((processedMessage.count >> 8) & 0xff))
+            output.append(UInt8(processedMessage.count & 0xff))
+            output.append(processedMessage)
         }
+        return output
     }
 
     private func finish(_ error: Error?) {
@@ -326,8 +339,8 @@ private final class UDPDNSQuery {
                             return
                         }
                         self.observationStore.record(.responseReceived)
-                        self.observationStore.inspectResponse(response)
-                        self.flow.writeDatagrams([(response, self.endpoint)]) { [weak self] writeError in
+                        let processedResponse = self.observationStore.processResponse(response)
+                        self.flow.writeDatagrams([(processedResponse, self.endpoint)]) { [weak self] writeError in
                             self?.queue.async {
                                 if writeError == nil {
                                     self?.observationStore.record(.responseDelivered)

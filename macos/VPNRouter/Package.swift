@@ -52,7 +52,9 @@ let package = Package(
                 "DNSProxyCapabilityProbe.swift",
                 "DNSProxyConfigurationController.swift",
                 "DNSProxyObservationSettingsStore.swift",
-                "DNSProxySystemExtensionController.swift"
+                "DNSProxySystemExtensionController.swift",
+                "EncryptedDNSPreflightService.swift",
+                "TunnelInterfaceFingerprint.swift"
             ],
             sources: ["DNSProxyConfigurationPolicy.swift"]
         ),

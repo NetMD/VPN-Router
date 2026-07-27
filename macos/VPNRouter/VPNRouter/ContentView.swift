@@ -33,6 +33,7 @@ struct ContentView: View {
     @State private var isShowingDNSProxyEnableConfirmation = false
     @State private var isShowingDNSProxyEmergencyDisableConfirmation = false
     @State private var dnsProxyObservationMessage = "이번 진단 실행에서 확인한 대상 DNS 관찰이 없습니다."
+    @State private var encryptedDNSPreflightMessage = "DNS Proxy 활성화 전에 브라우저 보안 DNS와 Private Relay 확인이 필요합니다."
     @State private var diagnosticExportMessage = "진단 파일에는 상태와 개수만 포함되며, 개인 키·설정 원문·도메인·IP 주소는 포함되지 않습니다."
     @State private var troubleshootingReportDocument: TroubleshootingReportDocument?
     @State private var troubleshootingReportFilename = "VPNRouter-Diagnostics"
@@ -83,9 +84,7 @@ struct ContentView: View {
             await loadProfiles()
             await loadSiteDomainsForSelectedProfile()
             loadFailSafeSetting()
-            await dnsProxyConfigurationController.refresh(
-                expectedBundleIdentifier: TunnelIdentifiers.dnsProxySystemExtensionBundleIdentifier
-            )
+            await reconcileDNSProxyAfterLaunch()
         }
         .task(id: status) {
             await runConnectedRouteRefreshLoop()
@@ -98,13 +97,27 @@ struct ContentView: View {
         ) {
             await runDNSProxyDynamicRouteRefreshLoop()
         }
+        .task(
+            id: DNSProxyOwnershipMonitorKey(
+                tunnelStatus: status,
+                dnsProxyEnabled: dnsProxyConfigurationController.isEnabled
+            )
+        ) {
+            await runDNSProxyOwnershipMonitor()
+        }
         .onChange(of: selectedProfileId) { _, _ in
             Task {
                 await loadSiteDomainsForSelectedProfile()
             }
         }
-        .onChange(of: status) { _, _ in
+        .onChange(of: status) { _, newStatus in
             announceForVoiceOver("VPN 상태: \(statusText)")
+            if newStatus == .disconnected,
+               dnsProxyConfigurationController.isEnabled {
+                Task {
+                    await disableOrphanedDNSProxy()
+                }
+            }
         }
         .onChange(of: lifecycleMonitor.wakeCount) { _, _ in
             Task {
@@ -186,6 +199,17 @@ struct ContentView: View {
         ) {
             Button("진단용 DNS Proxy 활성화") {
                 Task {
+                    guard status == .connected else {
+                        dnsProxyObservationMessage = "DNS Proxy를 활성화하려면 먼저 Packet Tunnel에 연결하세요."
+                        return
+                    }
+                    let preflight = EncryptedDNSPreflightService().evaluate()
+                    encryptedDNSPreflightMessage = EncryptedDNSPreflightService()
+                        .message(for: preflight)
+                    guard preflight.allowsDNSProxyActivation else {
+                        dnsProxyObservationMessage = "암호화 DNS 충돌 사전점검에서 활성화를 중단했습니다."
+                        return
+                    }
                     await dnsProxyConfigurationController.enableForDiagnostics(
                         expectedBundleIdentifier: TunnelIdentifiers.dnsProxySystemExtensionBundleIdentifier
                     )
@@ -197,16 +221,15 @@ struct ContentView: View {
                             .configureForDiagnosticRun(domains: siteDomains)
                         dnsProxyObservationMessage = "XPC로 대상 도메인을 설정했습니다. 대상 사이트에서 새 DNS 요청을 발생시키세요."
                     } catch {
-                        dnsProxyObservationMessage = "DNS Proxy XPC 설정에 실패해 구성을 다시 끕니다: \(error.localizedDescription)"
-                        await disableDNSProxyForDiagnostics(
-                            allowOwnedRemovalFallback: false
+                        await failSafeForDNSProxyLoss(
+                            reason: "DNS Proxy 초기 XPC 설정을 준비하지 못했습니다: \(error.localizedDescription)"
                         )
                     }
                 }
             }
             Button("취소", role: .cancel) {}
         } message: {
-            Text("DNS 요청 전달을 시작합니다. 다른 DNS Proxy 또는 보안 DNS가 활성화되어 있으면 취소하고 해당 제품의 안내를 먼저 확인하세요. VPN Router는 제3자 제품을 자동으로 끄거나 변경하지 않습니다.")
+            Text("DNS 요청 전달을 시작합니다. Private Relay의 ‘IP 주소 추적 제한’과 정책이 없는 브라우저의 보안 DNS는 직접 확인하세요. VPN Router는 제3자 제품을 자동으로 끄거나 변경하지 않습니다.")
         }
         .confirmationDialog(
             "DNS Proxy를 즉시 끌까요?",
@@ -665,6 +688,7 @@ struct ContentView: View {
                         }
                     }
                     DiagnosticMessageView(message: dnsProxyConfigurationController.message)
+                    DiagnosticMessageView(message: encryptedDNSPreflightMessage)
                     DiagnosticMessageView(message: dnsProxyObservationMessage)
                     }
                 }
@@ -676,7 +700,14 @@ struct ContentView: View {
     @ViewBuilder
     private var dnsProxyDiagnosticControls: some View {
         Button {
-            isShowingDNSProxyEnableConfirmation = true
+            let service = EncryptedDNSPreflightService()
+            let preflight = service.evaluate()
+            encryptedDNSPreflightMessage = service.message(for: preflight)
+            if preflight.allowsDNSProxyActivation {
+                isShowingDNSProxyEnableConfirmation = true
+            } else {
+                dnsProxyObservationMessage = "암호화 DNS 충돌 사전점검에서 활성화를 중단했습니다."
+            }
         } label: {
             Label(
                 dnsProxyConfigurationController.isRequestInFlight
@@ -690,6 +721,7 @@ struct ContentView: View {
             dnsProxyConfigurationController.isRequestInFlight
                 || dnsProxyConfigurationController.isEnabled
                 || siteDomains.isEmpty
+                || status != .connected
         )
 
         Button(role: .destructive) {
@@ -730,6 +762,28 @@ struct ContentView: View {
                 || !dnsProxyConfigurationController.isEnabled
                 || dnsProxyConfigurationController.isRequestInFlight
         )
+
+#if DEBUG
+        Button(role: .destructive) {
+            Task {
+                let didDisable = await dnsProxyConfigurationController
+                    .simulateExternalDisableForFailSafeTest(
+                        expectedBundleIdentifier: TunnelIdentifiers.dnsProxySystemExtensionBundleIdentifier
+                    )
+                if didDisable {
+                    dnsProxyObservationMessage = "DNS Proxy 활성 상태 상실을 만들었습니다. 5초 감시가 Packet Tunnel을 fail-safe로 해제해야 합니다."
+                }
+            }
+        } label: {
+            Label("활성 상태 상실 테스트", systemImage: "bolt.shield")
+        }
+        .disabled(
+            status != .connected
+                || !dnsProxyConfigurationController.isEnabled
+                || dnsProxyConfigurationController.isRequestInFlight
+        )
+        .help("VPN Router가 소유한 DNS Proxy만 비활성화해 fail-safe 감지를 시험합니다.")
+#endif
     }
 
     @ViewBuilder
@@ -893,7 +947,11 @@ struct ContentView: View {
         .disabled(status != .connected || activeOperation != nil)
 
         Button {
-            stopTunnel()
+            Task {
+                await performOperation(.disconnecting) {
+                    await stopTunnel()
+                }
+            }
         } label: {
             Label("연결 해제", systemImage: "stop.circle")
         }
@@ -963,7 +1021,8 @@ struct ContentView: View {
     }
 
     private var canStop: Bool {
-        status == .connecting || status == .connected || status == .reasserting
+        activeOperation == nil
+            && (status == .connecting || status == .connected || status == .reasserting)
     }
 
     private var selectedProfile: ProfileMetadata? {
@@ -1361,7 +1420,18 @@ struct ContentView: View {
         }
     }
 
-    private func stopTunnel() {
+    private func stopTunnel() async {
+        if dnsProxyConfigurationController.runtimeState == .ownedEnabled {
+            await dnsProxyConfigurationController.disable(
+                expectedBundleIdentifier: TunnelIdentifiers.dnsProxySystemExtensionBundleIdentifier,
+                allowOwnedRemovalFallback: false
+            )
+            if dnsProxyConfigurationController.runtimeState == .ownedEnabled {
+                dnsProxyObservationMessage = "DNS Proxy 비활성화를 확인하지 못했지만 Packet Tunnel 연결 해제를 계속합니다."
+            } else {
+                dnsProxyObservationMessage = "VPN Router DNS Proxy를 먼저 비활성화했습니다."
+            }
+        }
         manager?.connection.stopVPNTunnel()
         status = manager?.connection.status ?? .invalid
         lastMessage = "VPN 연결 해제를 요청했습니다."
@@ -1500,7 +1570,8 @@ struct ContentView: View {
             런타임 — 시작 \(counts["providerStarted", default: 0]), UDP 수락 \(counts["udpFlowAccepted", default: 0]), \
             TCP 수락 \(counts["tcpFlowAccepted", default: 0]), flow 열림 \(counts["flowOpened", default: 0]), \
             upstream 준비 \(counts["upstreamReady", default: 0]), 응답 수신 \(counts["responseReceived", default: 0]), \
-            응답 전달 \(counts["responseDelivered", default: 0]), 전달 오류 \(counts["forwardingFailure", default: 0]).\(failureMessage)
+            응답 전달 \(counts["responseDelivered", default: 0]), 대상 AAAA 차단 \(counts["aaaaResponseFiltered", default: 0]), \
+            전달 오류 \(counts["forwardingFailure", default: 0]).\(failureMessage)
             """
         } catch {
             dnsProxyObservationMessage = "DNS 관찰 요약을 읽지 못했습니다: \(error.localizedDescription)"
@@ -1622,6 +1693,124 @@ struct ContentView: View {
                 return
             }
         }
+    }
+
+    private func reconcileDNSProxyAfterLaunch() async {
+        await dnsProxyConfigurationController.refresh(
+            expectedBundleIdentifier: TunnelIdentifiers.dnsProxySystemExtensionBundleIdentifier
+        )
+        guard dnsProxyConfigurationController.runtimeState == .ownedEnabled else {
+            return
+        }
+        guard status == .connected else {
+            await dnsProxyConfigurationController.disable(
+                expectedBundleIdentifier: TunnelIdentifiers.dnsProxySystemExtensionBundleIdentifier,
+                allowOwnedRemovalFallback: false
+            )
+            dnsProxyObservationMessage = "실행 중인 Packet Tunnel이 없어 남아 있던 VPN Router DNS Proxy 구성을 비활성화했습니다."
+            return
+        }
+
+        do {
+            try await DNSProxyObservationSettingsStore()
+                .configureForDiagnosticRun(domains: siteDomains)
+            dnsProxyObservationMessage = "기존 DNS Proxy 세션에 대상 사이트를 다시 설정하고 안전 감시를 시작했습니다."
+        } catch {
+            await failSafeForDNSProxyLoss(
+                reason: "재실행 후 DNS Proxy XPC 연결을 복구하지 못했습니다: \(error.localizedDescription)"
+            )
+        }
+    }
+
+    private func disableOrphanedDNSProxy() async {
+        guard dnsProxyConfigurationController.runtimeState == .ownedEnabled else {
+            return
+        }
+        await dnsProxyConfigurationController.disable(
+            expectedBundleIdentifier: TunnelIdentifiers.dnsProxySystemExtensionBundleIdentifier,
+            allowOwnedRemovalFallback: false
+        )
+        dnsProxyObservationMessage = dnsProxyConfigurationController.runtimeState == .ownedEnabled
+            ? "Packet Tunnel은 해제됐지만 VPN Router DNS Proxy 비활성화를 확인하지 못했습니다."
+            : "Packet Tunnel 종료 후 VPN Router DNS Proxy를 비활성화했습니다."
+    }
+
+    private func runDNSProxyOwnershipMonitor() async {
+        guard status == .connected, dnsProxyConfigurationController.isEnabled else {
+            return
+        }
+
+        guard let initialTunnelInterfaces = TunnelInterfaceFingerprint.current() else {
+            await failSafeForDNSProxyLoss(
+                reason: "활성 터널 인터페이스 상태를 읽지 못했습니다."
+            )
+            return
+        }
+        dnsProxyObservationMessage = "DNS Proxy 소유권, XPC 상태와 활성 터널 인터페이스 변경 감시가 준비되었습니다."
+        var consecutiveHealthFailures = 0
+        var monitorIteration = 0
+        while !Task.isCancelled
+                && status == .connected
+                && dnsProxyConfigurationController.isEnabled {
+            do {
+                try await Task.sleep(nanoseconds: 1_000_000_000)
+            } catch {
+                return
+            }
+
+            let currentTunnelInterfaces = TunnelInterfaceFingerprint.current()
+            let tunnelInterfaceSetChanged = currentTunnelInterfaces == nil
+                || currentTunnelInterfaces != initialTunnelInterfaces
+
+            monitorIteration += 1
+            if monitorIteration.isMultiple(of: 5) {
+                await dnsProxyConfigurationController.refresh(
+                    expectedBundleIdentifier: TunnelIdentifiers.dnsProxySystemExtensionBundleIdentifier
+                )
+                if dnsProxyConfigurationController.runtimeState == .ownedEnabled {
+                    do {
+                        try await DNSProxyObservationSettingsStore().healthCheck()
+                        consecutiveHealthFailures = 0
+                    } catch {
+                        consecutiveHealthFailures += 1
+                    }
+                }
+            }
+
+            switch DNSProxyConfigurationPolicy.monitorDecision(
+                runtimeState: dnsProxyConfigurationController.runtimeState,
+                consecutiveHealthFailures: consecutiveHealthFailures,
+                tunnelInterfaceSetChanged: tunnelInterfaceSetChanged
+            ) {
+            case .healthy:
+                continue
+            case .waitForHealthRetry:
+                dnsProxyObservationMessage = "DNS Proxy 상태 확인이 일시적으로 실패했습니다. 안전을 위해 다시 확인합니다."
+            case .failSafe:
+                await failSafeForDNSProxyLoss(
+                    reason: tunnelInterfaceSetChanged
+                        ? "DNS Proxy 활성화 후 활성 터널 인터페이스가 변경되어 다른 VPN의 연결 전환을 감지했습니다."
+                        : dnsProxyConfigurationController.runtimeState == .ownedEnabled
+                            ? "DNS Proxy provider 응답을 연속으로 확인하지 못했습니다."
+                            : "DNS Proxy 구성의 활성 상태 또는 소유권을 잃었습니다."
+                )
+                return
+            }
+        }
+    }
+
+    private func failSafeForDNSProxyLoss(reason: String) async {
+        manager?.connection.stopVPNTunnel()
+        status = manager?.connection.status ?? .invalid
+        lastMessage = "\(reason) 선택 사이트가 일반 경로로 우회하지 않도록 VPN Router 연결을 해제했습니다."
+
+        if dnsProxyConfigurationController.runtimeState == .ownedEnabled {
+            await dnsProxyConfigurationController.disable(
+                expectedBundleIdentifier: TunnelIdentifiers.dnsProxySystemExtensionBundleIdentifier,
+                allowOwnedRemovalFallback: false
+            )
+        }
+        dnsProxyObservationMessage = lastMessage
     }
 
     private func dynamicRouteUpdateMessage(
@@ -1980,6 +2169,7 @@ private enum AppOperation: String {
     case installingProfile
     case installingTestConfiguration
     case connecting
+    case disconnecting
     case refreshingRoutes
     case checkingTunnel
     case removingConfiguration
@@ -1998,6 +2188,8 @@ private enum AppOperation: String {
             return "테스트 구성을 설치하는 중"
         case .connecting:
             return "VPN 연결을 준비하는 중"
+        case .disconnecting:
+            return "VPN 연결과 DNS Proxy를 안전하게 해제하는 중"
         case .refreshingRoutes:
             return "VPN 경로를 새로고치는 중"
         case .checkingTunnel:
@@ -2262,6 +2454,11 @@ private struct DNSProxyDynamicRouteUpdateResult {
 }
 
 private struct DNSProxyDynamicRefreshKey: Equatable {
+    let tunnelStatus: NEVPNStatus
+    let dnsProxyEnabled: Bool
+}
+
+private struct DNSProxyOwnershipMonitorKey: Equatable {
     let tunnelStatus: NEVPNStatus
     let dnsProxyEnabled: Bool
 }

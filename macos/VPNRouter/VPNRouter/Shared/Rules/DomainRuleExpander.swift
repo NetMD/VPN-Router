@@ -3,6 +3,7 @@ import Foundation
 enum DomainRuleExpander {
     private nonisolated static let relatedDomains: [String: [String]] = [
         "youtube.com": [
+            "www.youtube.com",
             "googlevideo.com",
             "ytimg.com",
             "youtubei.googleapis.com",
@@ -10,6 +11,7 @@ enum DomainRuleExpander {
             "youtube-nocookie.com"
         ],
         "netflix.com": [
+            "www.netflix.com",
             "nflxvideo.net",
             "nflximg.net",
             "nflximg.com",

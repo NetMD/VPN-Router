@@ -124,4 +124,148 @@ struct DNSProxyConfigurationPolicyTests {
 
         #expect(ownership == .other)
     }
+
+    @Test
+    func runtimeStateSeparatesOwnedEnabledFromOtherConfigurations() {
+        #expect(
+            DNSProxyConfigurationPolicy.runtimeState(
+                ownership: .vpnRouter,
+                isEnabled: true
+            ) == .ownedEnabled
+        )
+        #expect(
+            DNSProxyConfigurationPolicy.runtimeState(
+                ownership: .vpnRouter,
+                isEnabled: false
+            ) == .ownedDisabled
+        )
+        #expect(
+            DNSProxyConfigurationPolicy.runtimeState(
+                ownership: .other,
+                isEnabled: true
+            ) == .other
+        )
+    }
+
+    @Test
+    func monitorFailsSafeImmediatelyWhenOwnershipOrEnablementIsLost() {
+        for state in [
+            DNSProxyRuntimeState.absent,
+            .ownedDisabled,
+            .other,
+            .unreadable
+        ] {
+            #expect(
+                DNSProxyConfigurationPolicy.monitorDecision(
+                    runtimeState: state,
+                    consecutiveHealthFailures: 0
+                ) == .failSafe
+            )
+        }
+    }
+
+    @Test
+    func monitorAllowsTwoTransientHealthFailuresButNotThree() {
+        #expect(
+            DNSProxyConfigurationPolicy.monitorDecision(
+                runtimeState: .ownedEnabled,
+                consecutiveHealthFailures: 0
+            ) == .healthy
+        )
+        #expect(
+            DNSProxyConfigurationPolicy.monitorDecision(
+                runtimeState: .ownedEnabled,
+                consecutiveHealthFailures: 2
+            ) == .waitForHealthRetry
+        )
+        #expect(
+            DNSProxyConfigurationPolicy.monitorDecision(
+                runtimeState: .ownedEnabled,
+                consecutiveHealthFailures: 3
+            ) == .failSafe
+        )
+    }
+
+    @Test
+    func monitorFailsSafeImmediatelyWhenTunnelInterfaceSetChanges() {
+        #expect(
+            DNSProxyConfigurationPolicy.monitorDecision(
+                runtimeState: .ownedEnabled,
+                consecutiveHealthFailures: 0,
+                tunnelInterfaceSetChanged: true
+            ) == .failSafe
+        )
+    }
+
+    @Test
+    func encryptedDNSPreflightAllowsExplicitlyDisabledBrowserDoH() {
+        let result = EncryptedDNSPreflightPolicy.evaluate(
+            browserStates: [
+                BrowserSecureDNSState(
+                    displayName: "Chrome",
+                    isInstalled: true,
+                    mode: .off
+                ),
+                BrowserSecureDNSState(
+                    displayName: "Edge",
+                    isInstalled: false,
+                    mode: .unset
+                )
+            ]
+        )
+
+        #expect(result.disposition == .compatible)
+        #expect(result.allowsDNSProxyActivation)
+    }
+
+    @Test
+    func encryptedDNSPreflightRequiresManualCheckWhenPolicyIsUnset() {
+        let result = EncryptedDNSPreflightPolicy.evaluate(
+            browserStates: [
+                BrowserSecureDNSState(
+                    displayName: "Chrome",
+                    isInstalled: true,
+                    mode: .unset
+                )
+            ]
+        )
+
+        #expect(result.disposition == .needsManualVerification)
+        #expect(result.allowsDNSProxyActivation)
+    }
+
+    @Test
+    func encryptedDNSPreflightBlocksEnabledOrUnknownBrowserDoH() {
+        for mode in [
+            BrowserSecureDNSMode.automatic,
+            .secure,
+            .unsupported("future-mode")
+        ] {
+            let result = EncryptedDNSPreflightPolicy.evaluate(
+                browserStates: [
+                    BrowserSecureDNSState(
+                        displayName: "Chrome",
+                        isInstalled: true,
+                        mode: mode
+                    )
+                ]
+            )
+
+            #expect(result.disposition == .blocked)
+            #expect(!result.allowsDNSProxyActivation)
+        }
+    }
+
+    @Test
+    func browserSecureDNSModeNormalizesPolicyValues() {
+        #expect(BrowserSecureDNSMode(rawValue: " OFF ") == .off)
+        #expect(BrowserSecureDNSMode(rawValue: "Automatic") == .automatic)
+        #expect(BrowserSecureDNSMode(rawValue: "secure") == .secure)
+        #expect(BrowserSecureDNSMode(rawValue: nil) == .unset)
+        #expect(
+            BrowserSecureDNSMode(rawValue: "future-mode")
+                == .unsupported("future-mode")
+        )
+    }
+
 }

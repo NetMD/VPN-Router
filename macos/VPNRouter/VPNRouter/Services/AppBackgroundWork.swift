@@ -1,6 +1,8 @@
 import Foundation
 
 enum AppBackgroundWork {
+    private static let staticRoutePlanHistory = StaticRoutePlanHistoryStore()
+
     static func loadProfiles() async throws -> [ProfileMetadata] {
         try await run {
             try ProfileStore().loadProfiles()
@@ -53,7 +55,7 @@ enum AppBackgroundWork {
     }
 
     static func replaceRulesAndBuildPlan(domains: [String]) async throws -> DomainRoutePlan {
-        try await run {
+        let freshPlan = try await run {
             let store = try DomainRuleStore()
             let service = DomainRoutePlanService(ruleStore: store)
             _ = try service.replaceRules(
@@ -62,10 +64,11 @@ enum AppBackgroundWork {
             )
             return try service.buildPlan(profileId: DomainRuleStore.sharedSiteRulesProfileId)
         }
+        return try await staticRoutePlanHistory.merge(freshPlan)
     }
 
     static func buildSharedRoutePlan() async throws -> DomainRoutePlan {
-        try await run {
+        let freshPlan = try await run {
             let store = try DomainRuleStore()
             try migrateLegacyProfileSiteRulesIfNeeded(store: store)
             let rules = try store.loadRules(profileId: DomainRuleStore.sharedSiteRulesProfileId)
@@ -75,6 +78,7 @@ enum AppBackgroundWork {
             return try DomainRoutePlanService(ruleStore: store)
                 .buildPlan(profileId: DomainRuleStore.sharedSiteRulesProfileId)
         }
+        return try await staticRoutePlanHistory.merge(freshPlan)
     }
 
     private static func migrateLegacyProfileSiteRulesIfNeeded(
@@ -108,5 +112,13 @@ enum AppBackgroundWork {
         try await Task.detached(priority: .userInitiated) {
             try work()
         }.value
+    }
+}
+
+private actor StaticRoutePlanHistoryStore {
+    private var history = StaticRoutePlanHistory()
+
+    func merge(_ freshPlan: DomainRoutePlan) throws -> DomainRoutePlan {
+        try history.merge(freshPlan: freshPlan)
     }
 }

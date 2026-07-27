@@ -199,7 +199,8 @@ Questions to answer with a signed development build:
 2. Can both providers run together reliably on the minimum supported macOS version?
 3. Does the DNS Proxy receive UDP and TCP DNS flows while the Packet Tunnel is active?
 4. Can it forward non-target traffic without breaking system resolver behavior,
-   captive portals, Private Relay expectations, or another local security product?
+   Private Relay expectations, or another local security product? Captive-portal
+   discovery, sign-in, and recovery are excluded from the `v0.1.0` scope.
 5. Can route updates be sent to the Packet Tunnel and applied without interrupting
    existing connections?
 6. What happens when AdGuard, Unicorn Pro, antivirus DNS protection, encrypted DNS,
@@ -284,7 +285,9 @@ Required behavior:
 - extension crash and Mac restart do not leave manual DNS or route mutations behind;
 - provider messages and persisted diagnostics have schema versions;
 - connection failure reports the exact stage without logging secrets;
-- sleep, wake, network change, captive portal, and endpoint reachability are explicit tests.
+- sleep, wake, network change, and endpoint reachability are explicit tests;
+- captive-portal discovery, sign-in, and recovery are outside `v0.1.0`; authenticate
+  with VPN Router disconnected before connecting it.
 
 Do not add a launch daemon, privileged helper, shell route mutation, or System
 Configuration write unless a documented Network Extension limitation requires it and

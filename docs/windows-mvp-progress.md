@@ -1,6 +1,28 @@
 # Windows MVP progress
 
-Last updated: 2026-07-18 KST
+Last updated: 2026-07-28 KST
+
+## Windows Codex resume point
+
+Start with `docs/windows-next-session.md`. The network proof, dynamic DNS route
+lifecycle, AAAA filtering, DNS ownership fail-safe, crash recovery, dashboard,
+and portable extraction foundation already exist. Do not restart from the
+original greenfield checklist.
+
+The immediate order is:
+
+1. Reconcile the current 20-test Windows baseline and the small shared-semantic
+   gaps (`www` media entry points, rotating-answer proof, 512-route cap).
+2. Finish portable lifecycle and IPC security: version handshake, exact-user pipe
+   ACL, single-instance/reconnect behavior, close semantics, cache retention, and
+   disconnected-only cleanup.
+3. Run the owner-operated Phase 1/2 launcher matrix.
+4. Continue the remaining Phase 3 and Phase 4 release gates.
+
+Captive-portal handling is outside `v0.1.0`. Never change another DNS/security/VPN
+product automatically. The signed macOS build-20 results provide product
+semantics and tests only; Windows must keep its native service, DNS, adapter,
+route, UI, and portable-launcher implementation.
 
 ## Current product decision
 
@@ -280,10 +302,9 @@ Completed on 2026-07-18 with one remaining player-level limitation.
 
 ## Next task
 
-Resolve the remaining external playback verification gaps:
-
-1. Investigate why automated Chrome reports a YouTube player error even though playability is `OK` and Googlevideo HTTP probes succeed.
-2. Run a signed-in Netflix playback/catalog check with a user-provided test account session; credentials must not be stored by VpnRouter.
+Follow `docs/windows-next-session.md`, beginning with the focused baseline/parity
+tests and then Phase 2 launcher lifecycle/IPC security. External player
+automation and account-dependent Netflix checks are not release blockers.
 
 ## Notes for next session
 

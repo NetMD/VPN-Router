@@ -6,6 +6,99 @@ enum DNSProxyConfigurationOwnership: Equatable {
     case other
 }
 
+enum DNSProxyRuntimeState: Equatable {
+    case unknown
+    case absent
+    case ownedDisabled
+    case ownedEnabled
+    case other
+    case unreadable
+}
+
+enum DNSProxyMonitorDecision: Equatable {
+    case healthy
+    case waitForHealthRetry
+    case failSafe
+}
+
+enum BrowserSecureDNSMode: Equatable {
+    case off
+    case automatic
+    case secure
+    case unset
+    case unsupported(String)
+
+    init(rawValue: String?) {
+        guard let normalizedValue = rawValue?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased(), !normalizedValue.isEmpty else {
+            self = .unset
+            return
+        }
+
+        switch normalizedValue {
+        case "off":
+            self = .off
+        case "automatic":
+            self = .automatic
+        case "secure":
+            self = .secure
+        default:
+            self = .unsupported(normalizedValue)
+        }
+    }
+}
+
+struct BrowserSecureDNSState: Equatable {
+    let displayName: String
+    let isInstalled: Bool
+    let mode: BrowserSecureDNSMode
+}
+
+enum EncryptedDNSPreflightDisposition: Equatable {
+    case compatible
+    case needsManualVerification
+    case blocked
+}
+
+struct EncryptedDNSPreflightResult: Equatable {
+    let disposition: EncryptedDNSPreflightDisposition
+    let browserStates: [BrowserSecureDNSState]
+
+    var allowsDNSProxyActivation: Bool {
+        disposition != .blocked
+    }
+}
+
+enum EncryptedDNSPreflightPolicy {
+    static func evaluate(
+        browserStates: [BrowserSecureDNSState]
+    ) -> EncryptedDNSPreflightResult {
+        let installedStates = browserStates.filter(\.isInstalled)
+
+        if installedStates.contains(where: { state in
+            switch state.mode {
+            case .automatic, .secure, .unsupported:
+                return true
+            case .off, .unset:
+                return false
+            }
+        }) {
+            return EncryptedDNSPreflightResult(
+                disposition: .blocked,
+                browserStates: browserStates
+            )
+        }
+
+        return EncryptedDNSPreflightResult(
+            disposition: installedStates.contains(where: { $0.mode == .unset })
+                ? .needsManualVerification
+                : .compatible,
+            browserStates: browserStates
+        )
+    }
+}
+
 enum DNSProxyConfigurationPolicy {
     static func ownership(
         hasConfiguration: Bool,
@@ -35,5 +128,37 @@ enum DNSProxyConfigurationPolicy {
         }
 
         return .other
+    }
+
+    static func runtimeState(
+        ownership: DNSProxyConfigurationOwnership,
+        isEnabled: Bool
+    ) -> DNSProxyRuntimeState {
+        switch ownership {
+        case .none:
+            return .absent
+        case .vpnRouter:
+            return isEnabled ? .ownedEnabled : .ownedDisabled
+        case .other:
+            return .other
+        }
+    }
+
+    static func monitorDecision(
+        runtimeState: DNSProxyRuntimeState,
+        consecutiveHealthFailures: Int,
+        healthFailureLimit: Int = 3,
+        tunnelInterfaceSetChanged: Bool = false
+    ) -> DNSProxyMonitorDecision {
+        precondition(healthFailureLimit > 0)
+
+        guard runtimeState == .ownedEnabled, !tunnelInterfaceSetChanged else {
+            return .failSafe
+        }
+        return consecutiveHealthFailures >= healthFailureLimit
+            ? .failSafe
+            : consecutiveHealthFailures > 0
+                ? .waitForHealthRetry
+                : .healthy
     }
 }

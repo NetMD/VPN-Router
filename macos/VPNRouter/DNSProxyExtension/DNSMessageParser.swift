@@ -7,6 +7,47 @@ struct DNSAddressObservation: Equatable {
 }
 
 enum DNSMessageParser {
+    static func emptyAAAAResponse(
+        for data: Data,
+        matching targetDomains: Set<String>
+    ) throws -> Data? {
+        guard data.count >= 12 else {
+            throw DNSMessageParserError.truncated
+        }
+
+        let flags = try readUInt16(data, at: 2)
+        guard flags & 0x8000 != 0 else {
+            return nil
+        }
+        let questionCount = try readUInt16(data, at: 4)
+        guard questionCount == 1 else {
+            return nil
+        }
+
+        var offset = 12
+        let questionName = try readName(data, offset: &offset)
+        let questionType = try readUInt16(data, at: offset)
+        let questionClass = try readUInt16(data, at: offset + 2)
+        guard questionType == 28,
+              questionClass == 1,
+              matches(questionName, targets: targetDomains) else {
+            return nil
+        }
+
+        var response = Data()
+        appendUInt16(try readUInt16(data, at: 0), to: &response)
+        let responseFlags = (flags | 0x8080) & 0xfdf0
+        appendUInt16(responseFlags, to: &response)
+        appendUInt16(1, to: &response)
+        appendUInt16(0, to: &response)
+        appendUInt16(0, to: &response)
+        appendUInt16(0, to: &response)
+        appendName(questionName, to: &response)
+        appendUInt16(28, to: &response)
+        appendUInt16(1, to: &response)
+        return response
+    }
+
     static func addressObservations(
         in data: Data,
         matching targetDomains: Set<String>
@@ -187,6 +228,19 @@ enum DNSMessageParser {
             throw DNSMessageParserError.truncated
         }
         offset += count
+    }
+
+    private static func appendName(_ name: String, to data: inout Data) {
+        for label in name.split(separator: ".") {
+            data.append(UInt8(label.utf8.count))
+            data.append(contentsOf: label.utf8)
+        }
+        data.append(0)
+    }
+
+    private static func appendUInt16(_ value: UInt16, to data: inout Data) {
+        data.append(UInt8(value >> 8))
+        data.append(UInt8(value & 0xff))
     }
 }
 

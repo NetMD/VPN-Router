@@ -97,6 +97,52 @@ struct DNSMessageParserTests {
             )
         }
     }
+
+    @Test
+    func replacesMatchingAAAAResponseWithEmptyNoErrorResponse() throws {
+        let response = dnsResponse(
+            question: "www.youtube.com",
+            questionType: 28,
+            answers: []
+        )
+
+        let candidate = try DNSMessageParser.emptyAAAAResponse(
+            for: response,
+            matching: ["youtube.com"]
+        )
+        let filtered = try #require(candidate)
+
+        #expect(filtered[0] == 0x12)
+        #expect(filtered[1] == 0x34)
+        #expect(filtered[2] & 0x80 == 0x80)
+        #expect(filtered[3] & 0x0f == 0)
+        #expect(filtered[4] == 0)
+        #expect(filtered[5] == 1)
+        #expect(filtered[6] == 0)
+        #expect(filtered[7] == 0)
+    }
+
+    @Test
+    func doesNotFilterAAAAForUnrelatedDomainOrMatchingAResponse() throws {
+        let unrelatedAAAA = dnsResponse(
+            question: "www.example.com",
+            questionType: 28,
+            answers: []
+        )
+        let matchingA = dnsResponse(
+            question: "www.youtube.com",
+            answers: []
+        )
+
+        #expect(try DNSMessageParser.emptyAAAAResponse(
+            for: unrelatedAAAA,
+            matching: ["youtube.com"]
+        ) == nil)
+        #expect(try DNSMessageParser.emptyAAAAResponse(
+            for: matchingA,
+            matching: ["youtube.com"]
+        ) == nil)
+    }
 }
 
 private enum TestOwner {
@@ -109,10 +155,14 @@ private enum TestAnswer {
     case cname(owner: TestOwner, canonicalName: String, ttl: UInt32)
 }
 
-private func dnsResponse(question: String, answers: [TestAnswer]) -> Data {
+private func dnsResponse(
+    question: String,
+    questionType: UInt16 = 1,
+    answers: [TestAnswer]
+) -> Data {
     var data = dnsHeader(questionCount: 1, answerCount: UInt16(answers.count))
     appendName(question, to: &data)
-    appendUInt16(1, to: &data)
+    appendUInt16(questionType, to: &data)
     appendUInt16(1, to: &data)
 
     for answer in answers {
