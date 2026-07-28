@@ -35,6 +35,19 @@ Fixed MVP decisions:
 - if another product makes the required DNS path unavailable, refuse or fail safe and explain what the user must change;
 - app-specific routing, OpenVPN, L2TP, mobile, provider login automation, and account-dependent Netflix automation remain out of scope.
 
+### Owner-approved parity direction
+
+As of 2026-07-28, `docs/platform-parity-contract.md` is authoritative for shared
+user-visible behavior. The proven DNS Proxy path is the target supported macOS
+consumer architecture rather than a permanently diagnostic-only feature. Static
+pre-resolution may remain an internal bootstrap or explicitly labeled limited
+mode, but it must not be presented as equivalent to Windows dynamic routing.
+
+The Windows dashboard is also the product UI reference. Preserve native SwiftUI,
+Keychain, Network Extension, XPC, accessibility, windowing, and appearance
+behavior, but align macOS information hierarchy, visual density, product
+language, navigation, and primary actions with Windows.
+
 ## What Windows already proved
 
 The Windows MVP has verified the following product model on real traffic:
@@ -259,7 +272,7 @@ Rules:
 ## UI continuity
 
 Implement the macOS UI natively in SwiftUI. Match the current Windows product
-language, not its XAML implementation:
+language and dashboard hierarchy, not its XAML implementation:
 
 - light, spacious status-first dashboard;
 - coral accent, original VPN Router identity, no copied Unicorn assets;
@@ -268,6 +281,11 @@ language, not its XAML implementation:
 - profile management, site rules, recovery/diagnostics, and protection behavior remain separate;
 - expose technical details only in Diagnostics;
 - support keyboard navigation, VoiceOver labels, reduced motion, and macOS window resizing.
+
+The owner prefers the Windows UI direction. Use its status-first hierarchy,
+compact navigation, restrained light surfaces, coral accent, and lower technical
+density as the cross-platform visual reference. Retain the macOS
+Automatic/Light/Dark choice and native accessibility behavior.
 
 Do not build pixel-perfect UI before Packet Tunnel activation works. A plain SwiftUI
 shell is enough through Phase 1; visual parity comes after the networking proof.

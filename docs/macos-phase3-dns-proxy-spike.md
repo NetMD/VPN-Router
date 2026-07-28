@@ -1,5 +1,11 @@
 # macOS Phase 3 DNS Proxy spike
 
+> Historical decision note (2026-07-28): the original conclusion below kept
+> static pre-resolution as the default. After the cross-platform parity review,
+> the owner selected the proven DNS Proxy path as the target supported macOS
+> consumer architecture. Follow `docs/platform-parity-contract.md` and
+> `docs/macos-mvp-progress.md` for the next implementation and signed-test order.
+
 Last updated: 2026-07-24 KST
 
 ## Decision gate

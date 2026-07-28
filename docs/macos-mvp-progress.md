@@ -13,6 +13,39 @@ pre-resolution as its default supported architecture because general encrypted
 DNS compatibility, Developer ID distribution provisioning, and IPv6 routing
 outside the explicit DNS Proxy path remain unverified.
 
+Owner direction changed on 2026-07-28 after the Windows/macOS parity review.
+`docs/platform-parity-contract.md` now defines the target: promote the proven DNS
+Proxy path to the supported macOS consumer connection flow, keep the UI in
+`Connecting` until dynamic DNS ownership and target AAAA filtering are proven,
+and fail cleanly instead of silently reporting a static-only connection as
+equivalent to Windows. This is a committed product direction, not a claim that a
+new signed consumer build has already passed.
+
+The owner also prefers the Windows UI. The next macOS UI pass should retain
+SwiftUI, resizable layouts, keyboard/VoiceOver support, contrast, and appearance
+choices while adopting the Windows dashboard hierarchy, compact navigation,
+plain-language status, restrained light surfaces, coral accent, and lower
+diagnostic density.
+
+### Next parity implementation order
+
+1. Move DNS Proxy activation and health from Debug diagnostics into the consumer
+   connection coordinator without exposing raw DNS data.
+2. Keep connection state pending until owned preference, provider XPC readiness,
+   target publication, dynamic observation, and target AAAA filtering pass.
+3. On any failed prerequisite, disable only the owned DNS Proxy, stop the Packet
+   Tunnel, remove VPN Router routes, and report the failed stage.
+4. Preserve the proven five-minute refresh, fifteen-minute rotating-answer
+   retention, 512-route bound, and second-VPN tunnel-interface fail-safe.
+5. Align Home, Profiles, Sites, Troubleshooting, and Settings with the Windows
+   information hierarchy while retaining native macOS interaction.
+6. Run a new signed real-Mac parity matrix covering UDP/TCP A and AAAA, rotating
+   CDN routes, default/control routing, ownership loss, Tailscale transition,
+   Host relaunch, provider termination, sleep/wake, network change, disconnect,
+   and restart recovery.
+7. Do not claim public parity until Developer ID distribution provisioning and a
+   clean optimized Release archive also pass.
+
 Captive-portal discovery, sign-in, and recovery are explicitly outside the
 `v0.1.0` release scope by owner decision on 2026-07-28. VPN Router must not be
 used to perform portal authentication; the user completes the portal with VPN
@@ -718,10 +751,11 @@ verification.
   with Tailscale/no exit node in signed build 20.
 - [x] Exclude captive-portal discovery, sign-in, and recovery from `v0.1.0`; require
   portal authentication before VPN Router is connected.
-- [x] Choose the Phase 3 product direction: keep bounded static pre-resolution as
-  the supported macOS MVP path and retain DNS Proxy as an explicit development
-  diagnostic until the remaining distribution, ownership, coexistence, lifecycle,
-  minimum-version, and IPv6 blockers are resolved.
+- [x] Record the original Phase 3 decision to keep bounded static pre-resolution
+  as the supported path while DNS Proxy remained a development diagnostic. The
+  2026-07-28 owner parity direction at the top of this document supersedes that
+  product target after subsequent signed DNS Proxy evidence; distribution
+  provisioning and the clean Release archive remain gates.
 - [x] Add a five-second host-to-Packet-Tunnel provider-message timeout so dynamic
   refresh or static restoration cannot wait indefinitely. Signed build 11 returned
   normal provider diagnostics through the guarded path with 27 applied routes,
