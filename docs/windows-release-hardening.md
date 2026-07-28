@@ -90,7 +90,7 @@ Do not treat compilation or extraction as evidence for these checks.
 | First portable launch | One UAC prompt, one backend, one dashboard | Passed locally, 2026-07-28 |
 | Second portable launch | No second backend or dashboard; existing window activates | Passed by stable backend/UI PIDs and launcher exit 0, 2026-07-28 |
 | Close while disconnected | UI closes and backend exits gracefully | Passed locally twice, 2026-07-28 |
-| Close/reopen while connected | VPN stays connected and UI resynchronizes from backend | Pending |
+| Close/reopen while connected | VPN stays connected and UI resynchronizes from backend | Passed: backend PID stayed stable, tunnel/DNS state remained active, and the reopened UI reported `Connected`, 2026-07-28 |
 | Stale backend | Useful compatibility error and no network mutation | Pending |
 | Different interactive user | Privileged pipe access denied | Pending |
 | UAC cancellation | No backend, DNS, route, or WireGuard mutation | Pending |
@@ -98,7 +98,7 @@ Do not treat compilation or extraction as evidence for these checks.
 | Backend termination | Next launch restores owned DNS, routes, and tunnel state | Pending |
 | Reboot while connected | Next launch restores owned network state | Pending |
 | Cache cleanup disconnected | Active and previous payload retained; older caches removed | Partial: active/previous retention passed with two caches; no older cache existed, 2026-07-28 |
-| Cache cleanup connected | Request refused with no deletion | Pending |
+| Cache cleanup connected | Request refused with no deletion | Passed: privileged request returned `success=false` while connected, 2026-07-28 |
 | Redacted troubleshooting file | Counts/status only; no config, key, domain, IP, or DNS payload | Passed: schema v1, 19 lines, prohibited patterns absent, 2026-07-28 |
 | Unsigned clean-machine launch | SHA-256 matches; Windows Security is clean; unknown-publisher and SmartScreen behavior recorded | Pending |
 
@@ -108,9 +108,17 @@ outcomes.
 
 The attempted UAC-cancellation run was approved instead of cancelled and therefore
 counts only as another successful normal launch. It does not satisfy the UAC
-cancellation row. No `Connect` action was used during this matrix, and final state
-was zero app processes, zero backend processes, no active-connection marker, and
-two retained valid payload caches.
+cancellation row.
+
+A subsequent real-profile run connected successfully. Closing the dashboard left
+one backend, the tunnel adapter, loopback DNS ownership, and the active marker in
+place. Reopening the same portable executable reused the backend and resynchronized
+to `Connected`. Connected cache cleanup was refused. A normal privileged
+`Disconnect` request then removed the tunnel adapter, loopback DNS ownership, active
+marker, and all managed-route records. The original single default route remained,
+AdGuard remained `Running` with `Automatic` start type, and both VPN Router
+processes exited. No raw profile, key, domain, endpoint, or route value was read or
+recorded.
 
 ## Unsigned distribution and optional future signing
 
