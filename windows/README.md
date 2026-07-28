@@ -9,10 +9,13 @@ WireGuard connection. It does not provide a VPN account or VPN server.
 - WireGuard for Windows installed separately
 - One-file portable `VpnRouter-0.1.0-x64.exe`
 - User-supplied WireGuard configuration imported through the app
+- Current-user-only portable runtime, storage, and privileged IPC access
 
-The first public preview is intentionally unsigned. It remains blocked until the
-owner-operated matrix, clean-machine verification, Windows Security check, and
-SmartScreen behavior review are complete.
+The first public preview is intentionally unsigned. The owner waived
+clean-machine, missing-WireGuard, and fresh SmartScreen-reputation testing for
+`v0.1.0`; those cases are not claimed as verified. The artifact remains blocked
+until the remaining local matrix, security scan, checksum, and release-tag gates
+are complete.
 
 ## Installation and first launch
 
@@ -36,6 +39,11 @@ stored separately under:
 ```text
 %LOCALAPPDATA%\VpnRouter
 ```
+
+The portable release is supported only for the Windows user who launches it.
+Another interactive user is not granted access to its privileged IPC endpoint.
+A future installer will present separate `Current user` and `All users` scope
+choices instead of silently selecting a machine-wide installation.
 
 The in-app cache cleanup action removes only old runtime payloads. It retains the
 active and immediately previous valid payload and refuses to run while connected.

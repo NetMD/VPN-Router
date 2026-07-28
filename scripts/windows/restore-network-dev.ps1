@@ -48,7 +48,7 @@ else {
             }
 
             $servers = @($entry.ServerAddresses | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
-            if ($servers.Count -eq 0) {
+            if ($entry.IsAutomatic -eq $true -or $servers.Count -eq 0) {
                 Set-DnsClientServerAddress -InterfaceIndex $entry.InterfaceIndex -ResetServerAddresses
             }
             else {

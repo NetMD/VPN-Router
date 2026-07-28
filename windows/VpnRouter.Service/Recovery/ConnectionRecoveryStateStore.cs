@@ -4,10 +4,20 @@ namespace VpnRouter.Service.Recovery;
 
 public sealed class ConnectionRecoveryStateStore
 {
-    private readonly string _markerPath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "VpnRouter",
-        "active-connection.json");
+    private readonly string _markerPath;
+
+    public ConnectionRecoveryStateStore()
+        : this(Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "VpnRouter",
+            "active-connection.json"))
+    {
+    }
+
+    internal ConnectionRecoveryStateStore(string markerPath)
+    {
+        _markerPath = Path.GetFullPath(markerPath);
+    }
 
     public bool HasActiveMarker => File.Exists(_markerPath);
 

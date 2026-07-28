@@ -14,6 +14,12 @@ using VpnRouter.Ipc.Contracts;
 using VpnRouter.Service.Ipc;
 using VpnRouter.Service.Portable;
 using VpnRouter.Service.Diagnostics;
+using VpnRouter.Service.Connection;
+using VpnRouter.Service.Recovery;
+using VpnRouter.Networking.Abstractions;
+using VpnRouter.Vpn.Abstractions;
+using VpnRouter.Core.Profiles;
+using System.Collections.Concurrent;
 
 var tests = new (string Name, Action Body)[]
 {
@@ -32,11 +38,15 @@ var tests = new (string Name, Action Body)[]
     ("Reuse persistent PowerShell worker", ReusesPersistentPowerShellWorker),
     ("Expand media service domains", ExpandsMediaServiceDomains),
     ("Interpret browser secure DNS policy", InterpretsBrowserSecureDnsPolicy),
+    ("Restore automatic DNS mode from snapshot", RestoresAutomaticDnsModeFromSnapshot),
+    ("Restore manual DNS mode from snapshot", RestoresManualDnsModeFromSnapshot),
+    ("Restore legacy DNS snapshot compatibly", RestoresLegacyDnsSnapshotCompatibly),
     ("Refresh repeated managed route expiration", RefreshesRepeatedManagedRouteExpiration),
     ("Retain rotating managed route answers", RetainsRotatingManagedRouteAnswers),
     ("Reject route plan above limit before mutation", RejectsRoutePlanAboveLimitBeforeMutation),
     ("Validate backend protocol and payload identity", ValidatesBackendProtocolAndPayloadIdentity),
     ("Restrict service pipe to launching user", RestrictsServicePipeToLaunchingUser),
+    ("Clean up after DNS ownership failure", CleansUpAfterDnsOwnershipFailure),
     ("Retain active and previous portable cache", RetainsActiveAndPreviousPortableCache),
     ("Create bounded troubleshooting summary", CreatesBoundedTroubleshootingSummary),
     ("Expire only eligible managed routes", ExpiresOnlyEligibleManagedRoutes),
@@ -306,6 +316,63 @@ static void InterpretsBrowserSecureDnsPolicy()
         "A non-off policy value should be included in the warning.");
 }
 
+static void RestoresAutomaticDnsModeFromSnapshot()
+{
+    const string snapshot = """
+        {
+          "InterfaceIndex": 8,
+          "AddressFamily": 2,
+          "ServerAddresses": [ "192.0.2.53" ],
+          "IsAutomatic": true
+        }
+        """;
+
+    var entry = DnsSnapshotRestorePlanner.ParseEntries(snapshot).Single();
+    var command = DnsSnapshotRestorePlanner.BuildRestoreCommand(entry);
+
+    AssertEqual(
+        "Set-DnsClientServerAddress -InterfaceIndex 8 -ResetServerAddresses",
+        command);
+}
+
+static void RestoresManualDnsModeFromSnapshot()
+{
+    const string snapshot = """
+        {
+          "InterfaceIndex": 8,
+          "AddressFamily": 2,
+          "ServerAddresses": [ "192.0.2.53", "198.51.100.53" ],
+          "IsAutomatic": false
+        }
+        """;
+
+    var entry = DnsSnapshotRestorePlanner.ParseEntries(snapshot).Single();
+    var command = DnsSnapshotRestorePlanner.BuildRestoreCommand(entry);
+
+    AssertEqual(
+        "Set-DnsClientServerAddress -InterfaceIndex 8 -ServerAddresses @('192.0.2.53','198.51.100.53')",
+        command);
+}
+
+static void RestoresLegacyDnsSnapshotCompatibly()
+{
+    const string snapshot = """
+        {
+          "InterfaceIndex": 8,
+          "AddressFamily": 2,
+          "ServerAddresses": [ "192.0.2.53" ]
+        }
+        """;
+
+    var entry = DnsSnapshotRestorePlanner.ParseEntries(snapshot).Single();
+    var command = DnsSnapshotRestorePlanner.BuildRestoreCommand(entry);
+
+    AssertEqual<bool?>(null, entry.IsAutomatic);
+    AssertEqual(
+        "Set-DnsClientServerAddress -InterfaceIndex 8 -ServerAddresses @('192.0.2.53')",
+        command);
+}
+
 static void RefreshesRepeatedManagedRouteExpiration()
 {
     var profileId = Guid.NewGuid();
@@ -435,6 +502,122 @@ static void RestrictsServicePipeToLaunchingUser()
     Assert(rules.Any(rule => systemSid.Equals(rule.IdentityReference)), "LocalSystem must retain pipe access");
     Assert(!rules.Any(rule => interactiveSid.Equals(rule.IdentityReference)), "InteractiveSid must not have pipe access");
     Assert(rules.All(rule => rule.AccessControlType == AccessControlType.Allow), "pipe ACL should contain only explicit allow rules");
+}
+
+static void CleansUpAfterDnsOwnershipFailure()
+{
+    CleansUpAfterDnsOwnershipFailureAsync().GetAwaiter().GetResult();
+}
+
+static async Task CleansUpAfterDnsOwnershipFailureAsync()
+{
+    var testRoot = Path.Combine(
+        Path.GetTempPath(),
+        $"VpnRouter-DnsOwnership-{Guid.NewGuid():N}");
+    var markerPath = Path.Combine(testRoot, "active-connection.json");
+    var legacyStatePath = Path.Combine(testRoot, "dns-filter-handoff.json");
+    Directory.CreateDirectory(testRoot);
+
+    try
+    {
+        var profileId = Guid.NewGuid();
+        var now = DateTimeOffset.UtcNow;
+        var profile = new VpnProfile(
+            profileId,
+            "DNS ownership cleanup test",
+            VpnProfileType.WireGuard,
+            true,
+            "test-only",
+            null,
+            now,
+            now);
+        var rules = new[]
+        {
+            new DomainRule(
+                Guid.NewGuid(),
+                profileId,
+                "ownership-test.invalid",
+                true,
+                true,
+                now)
+        };
+        var calls = new ConcurrentQueue<string>();
+        var vpnAdapter = new OwnershipTestVpnAdapter(calls);
+        var snapshotStore = new OwnershipTestSnapshotStore(calls);
+        var dnsController = new OwnershipTestDnsController(calls);
+        var dnsSettings = new OwnershipTestDnsSettingsManager(calls);
+        var resolver = new OwnershipTestDomainResolver(calls);
+        var routeManager = new OwnershipTestRouteManager(calls);
+        var recoveryStore = new ConnectionRecoveryStateStore(markerPath);
+        var legacyRecovery = new LegacyDnsFilterRecovery(
+            NullLogger<LegacyDnsFilterRecovery>.Instance,
+            legacyStatePath);
+        var stateStore = new ConnectionStateStore();
+        var orchestrator = new ConnectionOrchestrator(
+            vpnAdapter,
+            snapshotStore,
+            dnsController,
+            dnsSettings,
+            resolver,
+            routeManager,
+            recoveryStore,
+            legacyRecovery,
+            stateStore,
+            NullLogger<ConnectionOrchestrator>.Instance);
+
+        await orchestrator.ConnectAsync(
+            profile,
+            rules,
+            IPAddress.Parse("192.0.2.53"),
+            protectionMode: false,
+            CancellationToken.None);
+        stateStore.SetConnected(profileId, rules.Length);
+
+        Assert(recoveryStore.HasActiveMarker, "connect should create a recovery marker before fault injection");
+        AssertEqual(1, dnsController.StartCount);
+        AssertEqual(1, routeManager.AddCount);
+
+        dnsController.InjectOwnershipFailure(
+            new InvalidDataException("Injected DNS ownership failure for testing."));
+
+        var cleaned = false;
+        for (var attempt = 0; attempt < 200; attempt++)
+        {
+            if (!recoveryStore.HasActiveMarker
+                && dnsController.StopCount == 1
+                && routeManager.RemoveCount >= 2
+                && vpnAdapter.DisconnectCount == 1
+                && snapshotStore.RestoreCount == 1)
+            {
+                cleaned = true;
+                break;
+            }
+
+            await Task.Delay(10);
+        }
+
+        Assert(cleaned, "DNS ownership failure should complete all disconnect cleanup steps");
+        Assert(!recoveryStore.HasActiveMarker, "successful cleanup should clear the recovery marker");
+        AssertEqual(1, dnsController.StopCount);
+        AssertEqual(2, routeManager.RemoveCount);
+        AssertEqual(1, vpnAdapter.DisconnectCount);
+        AssertEqual(1, snapshotStore.RestoreCount);
+        Assert(!File.Exists(legacyStatePath), "test must not create or restore third-party DNS state");
+        AssertEqual(ConnectionStateKind.Failed, stateStore.Snapshot().State);
+        Assert(
+            calls.Contains("dns.stop")
+            && calls.Contains("routes.remove")
+            && calls.Contains("vpn.disconnect")
+            && calls.Contains("snapshot.restore"),
+            "failure cleanup should execute every owned-state cleanup category");
+    }
+    finally
+    {
+        if (Directory.Exists(testRoot))
+        {
+            Directory.Delete(testRoot, recursive: true);
+        }
+    }
 }
 
 static void RetainsActiveAndPreviousPortableCache()
@@ -662,4 +845,163 @@ static void AssertThrows<TException>(Action action)
     }
 
     throw new InvalidOperationException($"Expected exception {typeof(TException).Name}.");
+}
+
+sealed class OwnershipTestVpnAdapter(ConcurrentQueue<string> calls) : IVpnAdapter
+{
+    public VpnProfileType Type => VpnProfileType.WireGuard;
+
+    public int DisconnectCount { get; private set; }
+
+    public Task ValidateProfileAsync(VpnProfile profile, CancellationToken cancellationToken)
+    {
+        calls.Enqueue("vpn.validate");
+        return Task.CompletedTask;
+    }
+
+    public Task ConnectAsync(VpnProfile profile, CancellationToken cancellationToken)
+    {
+        calls.Enqueue("vpn.connect");
+        return Task.CompletedTask;
+    }
+
+    public Task DisconnectAsync(Guid profileId, CancellationToken cancellationToken)
+    {
+        DisconnectCount++;
+        calls.Enqueue("vpn.disconnect");
+        return Task.CompletedTask;
+    }
+
+    public Task<VpnInterfaceInfo> GetInterfaceInfoAsync(
+        Guid profileId,
+        CancellationToken cancellationToken) =>
+        Task.FromResult(new VpnInterfaceInfo(42, "test-only", []));
+
+    public Task<VpnConnectionStatus> GetConnectionStatusAsync(
+        Guid profileId,
+        CancellationToken cancellationToken) =>
+        Task.FromResult(new VpnConnectionStatus(true, "test-only"));
+
+    public Task<int> CleanupStaleConnectionsAsync(CancellationToken cancellationToken) =>
+        Task.FromResult(0);
+}
+
+sealed class OwnershipTestSnapshotStore(ConcurrentQueue<string> calls) : INetworkSnapshotStore
+{
+    public int RestoreCount { get; private set; }
+
+    public Task SaveCurrentAsync(CancellationToken cancellationToken)
+    {
+        calls.Enqueue("snapshot.save");
+        return Task.CompletedTask;
+    }
+
+    public Task RestoreAsync(CancellationToken cancellationToken)
+    {
+        RestoreCount++;
+        calls.Enqueue("snapshot.restore");
+        return Task.CompletedTask;
+    }
+}
+
+sealed class OwnershipTestDnsController(ConcurrentQueue<string> calls) : IDnsProxyController
+{
+    private readonly TaskCompletionSource<Exception> _failure =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public int StartCount { get; private set; }
+
+    public int StopCount { get; private set; }
+
+    public Task StartAsync(
+        IReadOnlyList<DomainRule> rules,
+        IPAddress? upstreamDnsServer,
+        Guid profileId,
+        int interfaceIndex,
+        CancellationToken cancellationToken)
+    {
+        StartCount++;
+        calls.Enqueue("dns.start");
+        return Task.CompletedTask;
+    }
+
+    public Task StopAsync(CancellationToken cancellationToken)
+    {
+        StopCount++;
+        calls.Enqueue("dns.stop");
+        return Task.CompletedTask;
+    }
+
+    public Task<Exception> WaitForFatalFailureAsync(CancellationToken cancellationToken) =>
+        _failure.Task.WaitAsync(cancellationToken);
+
+    public void InjectOwnershipFailure(Exception failure)
+    {
+        calls.Enqueue("dns.failure");
+        if (!_failure.TrySetResult(failure))
+        {
+            throw new InvalidOperationException("DNS ownership failure was already injected.");
+        }
+    }
+}
+
+sealed class OwnershipTestDnsSettingsManager(ConcurrentQueue<string> calls) : IDnsSettingsManager
+{
+    public Task PointActiveAdaptersToLocalProxyAsync(CancellationToken cancellationToken)
+    {
+        calls.Enqueue("dns-settings.point");
+        return Task.CompletedTask;
+    }
+}
+
+sealed class OwnershipTestDomainResolver(ConcurrentQueue<string> calls) : IDomainPreResolver
+{
+    public Task<IReadOnlyDictionary<string, IReadOnlyList<IPAddress>>> ResolveAsync(
+        IReadOnlyList<DomainRule> rules,
+        CancellationToken cancellationToken)
+    {
+        calls.Enqueue("domains.resolve");
+        IReadOnlyDictionary<string, IReadOnlyList<IPAddress>> result =
+            new Dictionary<string, IReadOnlyList<IPAddress>>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["ownership-test.invalid"] = [IPAddress.Parse("192.0.2.10")]
+            };
+        return Task.FromResult(result);
+    }
+}
+
+sealed class OwnershipTestRouteManager(ConcurrentQueue<string> calls) : IRouteManager
+{
+    public int AddCount { get; private set; }
+
+    public int RemoveCount { get; private set; }
+
+    public Task<IReadOnlyList<RouteEntry>> AddHostRoutesAsync(
+        IReadOnlyDictionary<string, IReadOnlyList<IPAddress>> domainIps,
+        Guid profileId,
+        int interfaceIndex,
+        CancellationToken cancellationToken)
+    {
+        AddCount++;
+        calls.Enqueue("routes.add");
+        return Task.FromResult<IReadOnlyList<RouteEntry>>([]);
+    }
+
+    public Task<int> RemoveExpiredRoutesAsync(
+        Guid profileId,
+        CancellationToken cancellationToken) =>
+        Task.FromResult(0);
+
+    public Task RemoveManagedRoutesAsync(Guid profileId, CancellationToken cancellationToken)
+    {
+        RemoveCount++;
+        calls.Enqueue("routes.remove");
+        return Task.CompletedTask;
+    }
+
+    public Task<bool> HasManagedRoutesAsync(CancellationToken cancellationToken) =>
+        Task.FromResult(false);
+
+    public Task RemoveAllManagedRoutesAsync(CancellationToken cancellationToken) =>
+        Task.CompletedTask;
 }

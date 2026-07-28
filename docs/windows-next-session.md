@@ -11,9 +11,19 @@ the current repository state, the completed macOS safety work, and the
 > deterministic, extraction/checksum verification passes, and the current
 > candidate is intentionally unsigned because the owner declined the cost of a
 > commercial code-signing certificate.
+> The owner subsequently defined the portable release as current-user-only and
+> waived a live second-account run on the single-user release machine. Keep the
+> exact-user ACL regression test; a future installer must explicitly distinguish
+> `Current user` from `All users`.
+> The owner also accepted the DNS ownership fault-injection test as sufficient
+> for `v0.1.0`: all 30 focused checks passed 10 consecutive runs and both
+> solutions built cleanly. Do not describe it as a live external DNS collision.
+> The owner waived the clean Windows 11, missing-WireGuard, and fresh
+> SmartScreen-reputation run for `v0.1.0`. Do not describe those cases as tested;
+> keep the unsigned warning, checksum guidance, and supported prerequisites.
 > Resume with the owner-operated matrix in
-> `docs/windows-release-hardening.md`, then repeat it with the exact unsigned
-> public-preview candidate on a clean machine. The detailed original work order remains below as implementation
+> `docs/windows-release-hardening.md`, then finish the remaining local artifact
+> and release-tag gates. The detailed original work order remains below as implementation
 > history.
 
 ## Safety and platform boundary
@@ -47,7 +57,7 @@ dotnet build .\windows\VpnRouterVs.sln -nr:false
 dotnet run --project .\windows\VpnRouter.Tests\VpnRouter.Tests.csproj --no-build
 ```
 
-The current focused test executable contains 20 checks. Reconcile the progress
+The current focused test executable contains 26 checks. Reconcile the progress
 document if the Windows baseline produces a different count. Do not run a
 network-mutating script until the normal build/tests pass and
 `scripts/windows/restore-network-dev.ps1` has been inspected without using the

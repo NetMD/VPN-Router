@@ -20,7 +20,36 @@ public sealed class WindowsNetworkSnapshotStore(
         Directory.CreateDirectory(Path.GetDirectoryName(_snapshotPath)!);
 
         var dnsJson = await RunPowerShellAsync(
-            "$targets = Get-NetAdapter | Where-Object { $_.Status -eq 'Up' -and $_.InterfaceDescription -notmatch 'WireGuard|Wintun' -and $_.Name -notmatch 'WireGuard|Wintun' }; $targets | ForEach-Object { Get-DnsClientServerAddress -InterfaceIndex $_.ifIndex } | Select-Object InterfaceAlias,InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 5",
+            """
+            $targets = Get-NetAdapter |
+              Where-Object {
+                $_.Status -eq 'Up' -and
+                $_.InterfaceDescription -notmatch 'WireGuard|Wintun' -and
+                $_.Name -notmatch 'WireGuard|Wintun'
+              }
+            $entries = foreach ($target in $targets) {
+              $ipv4RegistryPath = "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\$($target.InterfaceGuid)"
+              $ipv4Registry = Get-ItemProperty -Path $ipv4RegistryPath -ErrorAction SilentlyContinue
+              foreach ($dnsEntry in @(Get-DnsClientServerAddress -InterfaceIndex $target.ifIndex)) {
+                [pscustomobject]@{
+                  InterfaceAlias = $dnsEntry.InterfaceAlias
+                  InterfaceIndex = $dnsEntry.InterfaceIndex
+                  AddressFamily = $dnsEntry.AddressFamily
+                  ServerAddresses = @($dnsEntry.ServerAddresses)
+                  IsAutomatic = if ([int]$dnsEntry.AddressFamily -eq 2) {
+                    if ($null -eq $ipv4Registry) {
+                      $null
+                    } else {
+                      [string]::IsNullOrWhiteSpace([string]$ipv4Registry.NameServer)
+                    }
+                  } else {
+                    $null
+                  }
+                }
+              }
+            }
+            $entries | ConvertTo-Json -Depth 5
+            """,
             cancellationToken);
 
         var routeText = await RunPowerShellAsync(
@@ -61,76 +90,22 @@ public sealed class WindowsNetworkSnapshotStore(
         ILogger<WindowsNetworkSnapshotStore> logger,
         CancellationToken cancellationToken)
     {
-        foreach (var entry in ParseDnsEntries(dnsClientServerAddressJson))
+        foreach (var entry in DnsSnapshotRestorePlanner.ParseEntries(dnsClientServerAddressJson))
         {
-            if (!IsIpv4(entry.AddressFamily))
+            var command = DnsSnapshotRestorePlanner.BuildRestoreCommand(entry);
+            if (command is null)
             {
                 continue;
             }
 
-            var command = entry.ServerAddresses.Count == 0
-                ? $"Set-DnsClientServerAddress -InterfaceIndex {entry.InterfaceIndex} -ResetServerAddresses"
-                : $"Set-DnsClientServerAddress -InterfaceIndex {entry.InterfaceIndex} -ServerAddresses @({string.Join(",", entry.ServerAddresses.Select(ToPowerShellString))})";
-
             await RunPowerShellAsync(command, cancellationToken);
             logger.LogWarning(
-                "Restored IPv4 DNS settings for interface index {InterfaceIndex}. Server count={ServerCount}.",
+                "Restored IPv4 DNS settings for interface index {InterfaceIndex}. Automatic={IsAutomatic}. Server count={ServerCount}.",
                 entry.InterfaceIndex,
+                entry.IsAutomatic,
                 entry.ServerAddresses.Count);
         }
     }
-
-    private static IReadOnlyList<DnsSnapshotEntry> ParseDnsEntries(string json)
-    {
-        if (string.IsNullOrWhiteSpace(json))
-        {
-            return [];
-        }
-
-        using var document = JsonDocument.Parse(json);
-        var elements = document.RootElement.ValueKind == JsonValueKind.Array
-            ? document.RootElement.EnumerateArray().ToArray()
-            : [document.RootElement];
-
-        return elements
-            .Where(element => element.TryGetProperty("InterfaceIndex", out _))
-            .Select(element =>
-            {
-                var interfaceIndex = element.GetProperty("InterfaceIndex").GetInt32();
-                var addressFamily = element.TryGetProperty("AddressFamily", out var familyElement)
-                    ? familyElement.ToString()
-                    : string.Empty;
-                var serverAddresses = element.TryGetProperty("ServerAddresses", out var addressesElement)
-                    ? ReadServerAddresses(addressesElement)
-                    : [];
-
-                return new DnsSnapshotEntry(interfaceIndex, addressFamily, serverAddresses);
-            })
-            .ToArray();
-    }
-
-    private static IReadOnlyList<string> ReadServerAddresses(JsonElement element)
-    {
-        return element.ValueKind switch
-        {
-            JsonValueKind.Array => element.EnumerateArray()
-                .Select(item => item.GetString())
-                .Where(item => !string.IsNullOrWhiteSpace(item))
-                .Select(item => item!)
-                .ToArray(),
-            JsonValueKind.String => string.IsNullOrWhiteSpace(element.GetString()) ? [] : [element.GetString()!],
-            _ => []
-        };
-    }
-
-    private static bool IsIpv4(string addressFamily)
-    {
-        return string.Equals(addressFamily, "IPv4", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(addressFamily, "2", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(addressFamily, "InterNetwork", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static string ToPowerShellString(string value) => $"'{value.Replace("'", "''")}'";
 
     private static async Task<string> RunPowerShellAsync(string command, CancellationToken cancellationToken)
     {
@@ -157,6 +132,4 @@ public sealed class WindowsNetworkSnapshotStore(
     }
 
     private sealed record NetworkSnapshot(DateTimeOffset CreatedAt, string DnsClientServerAddressJson, string Ipv4RouteJson);
-
-    private sealed record DnsSnapshotEntry(int InterfaceIndex, string AddressFamily, IReadOnlyList<string> ServerAddresses);
 }

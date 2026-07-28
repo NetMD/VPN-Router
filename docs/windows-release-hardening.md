@@ -13,12 +13,15 @@ handshake, exact-user IPC ACL, and bounded troubleshooting output are implemente
 Public distribution remains blocked until:
 
 1. the owner-operated lifecycle/network matrix passes on the exact unsigned artifact;
-2. Windows Security, SmartScreen, and clean-machine behavior are recorded;
-3. the published SHA-256 checksum is independently verified;
+2. the published SHA-256 checksum is independently verified;
+3. the exact artifact is scanned on the development machine;
 4. the exact artifact-producing commit is tagged.
 
 The supported `0.1.0` baseline is Windows 11 x64 with WireGuard for Windows
 installed separately. No Windows Service or installer registration is created.
+The portable build is per-user: its runtime and data stay under the launching
+user's `%LOCALAPPDATA%`, and privileged IPC is limited to that launching user
+plus Administrators and LocalSystem.
 
 ## Automated release verification
 
@@ -91,24 +94,102 @@ Do not treat compilation or extraction as evidence for these checks.
 | Second portable launch | No second backend or dashboard; existing window activates | Passed by stable backend/UI PIDs and launcher exit 0, 2026-07-28 |
 | Close while disconnected | UI closes and backend exits gracefully | Passed locally twice, 2026-07-28 |
 | Close/reopen while connected | VPN stays connected and UI resynchronizes from backend | Passed for normal close and forced UI termination: backend PID stayed stable, tunnel/DNS state remained active, and the reopened UI reported `Connected`, 2026-07-28 |
-| Stale backend | Useful compatibility error and no network mutation | Pending |
-| Different interactive user | Privileged pipe access denied | Pending |
-| UAC cancellation | No backend, DNS, route, or WireGuard mutation | Pending |
-| DNS ownership loss | Full VPN Router cleanup without changing third-party products | Pending |
+| Stale backend | Useful compatibility error and no network mutation | Passed: the corrected candidate rejected a protocol-99 fake backend, showed the VPN Router error dialog, exited 1, and started neither the elevated backend nor desktop app; network state was unchanged, 2026-07-28 |
+| Different interactive user | Privileged pipe access denied | Live second-account run waived by owner: the portable release is current-user-only and the focused ACL check proves that the broad Interactive SID is absent and only the launching user, Administrators, and LocalSystem are allowed, 2026-07-28 |
+| UAC cancellation | No backend, DNS, route, or WireGuard mutation | Passed from normal Explorer launch: the owner selected No and closed the cancellation notice; no VPN Router process, tunnel, loopback DNS owner, active marker, or managed route remained, 2026-07-28 |
+| DNS ownership loss | Full VPN Router cleanup without changing third-party products | Passed by owner-approved automated evidence: an internal fault-injection test passed 10 consecutive 30-check runs and proved DNS stop, managed-route removal, VPN disconnect, network-snapshot restore, active-marker cleanup, and failed-state reporting, 2026-07-28 |
 | Backend termination | Next launch restores owned DNS, routes, and tunnel state | Passed: forced service termination left the expected owned state; relaunch removed 34 managed-route records, tunnel, loopback DNS, and active marker before reporting `Disconnected`, 2026-07-28 |
-| Reboot while connected | Next launch restores owned network state | Pending |
-| Cache cleanup disconnected | Active and previous payload retained; older caches removed | Partial: active/previous retention passed with two caches; no older cache existed, 2026-07-28 |
+| Reboot while connected | Next launch restores owned network state | Passed: after reboot, startup recovery removed 38 managed-route records, the tunnel adapter, loopback DNS ownership, and the active marker before reporting `Disconnected`, 2026-07-28 |
+| Cache cleanup disconnected | Active and previous payload retained; older caches removed | Passed: a synthetic older valid cache was removed while both pre-existing valid caches, user-data metadata, and network state were retained; the disconnected UI/backend then exited normally, 2026-07-28 |
 | Cache cleanup connected | Request refused with no deletion | Passed: privileged request returned `success=false` while connected, 2026-07-28 |
 | Redacted troubleshooting file | Counts/status only; no config, key, domain, IP, or DNS payload | Passed: schema v1, 19 lines, prohibited patterns absent, 2026-07-28 |
-| Unsigned clean-machine launch | SHA-256 matches; Windows Security is clean; unknown-publisher and SmartScreen behavior recorded | Pending |
+| Unsigned clean-machine launch | SHA-256 matches; Windows Security is clean; unknown-publisher and SmartScreen behavior recorded | Waived by owner for `v0.1.0`; no clean-machine, missing-WireGuard, or fresh SmartScreen reputation result is claimed, 2026-07-28 |
 
 Real WireGuard profiles and LocalAppData diagnostics must not be attached to the
 matrix. Record only sanitized counts, status, timestamps, error codes, and recovery
 outcomes.
 
+The owner waived the clean Windows 11 machine run for `v0.1.0`. This removes the
+clean-machine, missing-WireGuard, and fresh SmartScreen-reputation checks from
+the release gate; it does not record them as empirically passed. Public
+documentation must retain the unsigned/unknown-publisher warning, checksum
+verification instructions, and Windows 11 x64 plus separately installed
+WireGuard prerequisite. The exact artifact should still receive a local Windows
+Security scan before tagging.
+
+The owner waived a live different-account run because the release machine has no
+additional user account and `v0.1.0` is portable rather than installed. This is
+not recorded as an empirical second-account pass. The release decision relies on
+the exact-user pipe ACL implementation and focused regression check. Portable
+use is supported only for the current launching user. A future installer must
+offer an explicit `Current user` versus `All users` scope choice and apply
+storage, service registration, ACLs, upgrades, and removal consistently with the
+selected scope.
+
 The attempted UAC-cancellation run was approved instead of cancelled and therefore
 counts only as another successful normal launch. It does not satisfy the UAC
 cancellation row.
+
+A later UAC-cancellation run was started from the normal Explorer shell because
+the Codex PowerShell session was already elevated and could not produce a UAC
+prompt. The owner selected `No` and closed the cancellation notice. The
+post-cancellation state contained zero VPN Router processes, tunnel adapters,
+loopback DNS owners, active markers, and managed routes. Wi-Fi remained up with
+automatic IPv4 DNS, one alive default route, working DNS and HTTPS, and AdGuard
+`Running`. The empty managed-route file and network snapshot predated the manual
+run and were not changed by the cancellation path.
+
+The disconnected cache-cleanup path was exercised against the corrected
+candidate by adding one synthetic older valid cache under the per-user portable
+cache root. Cleanup removed only that synthetic cache and retained both
+pre-existing valid caches. Metadata outside the cache root and the route/DNS
+state were unchanged. After the window became ready, normal UI close shut down
+both the disconnected app and backend with no tunnel or loopback DNS owner left.
+
+An attempted live DNS-ownership-loss injection used two temporary Windows
+Firewall rules scoped only to the VPN Router backend and loopback UDP port 53.
+Windows loopback handling bypassed those rules, so the ownership monitor
+correctly remained healthy and this attempt does not satisfy the matrix row.
+Both test rules were removed. A normal IPC disconnect then removed 38 managed
+routes, the tunnel, loopback DNS ownership, and the active marker; DNS and HTTPS
+connectivity recovered, AdGuard remained running, and the disconnected app and
+backend exited normally.
+
+Automated coverage now injects a fatal DNS ownership signal through a test-only
+DNS controller and executes the production `ConnectionOrchestrator` health
+monitor and disconnect path. Recovery-marker and legacy DNS-filter paths are
+redirected to a temporary directory, so the test cannot touch LocalAppData or a
+third-party service. It verifies DNS proxy stop, managed-route removal, VPN
+disconnect, network-snapshot restore, recovery-marker removal, and failed-state
+reporting. The 30-check executable passed 10 consecutive runs; both Windows
+solutions then built with zero warnings and zero errors. No test command was
+added to the product IPC or UI. This automated result does not claim a live
+external ownership collision. The owner accepted this automated evidence as
+sufficient for the `v0.1.0` release gate; a live external collision is no longer
+required for this release.
+
+A later pre-commit release build from the current source produced a
+199,261,420-byte unsigned candidate with SHA-256
+`B4E2A75D1F3DACCE025D734BE3C880AA1609ECE7AF5C8E490135451C5BE5879C`.
+Version, checksum, and extraction verification passed. Windows Security was
+enabled with real-time protection and current-day signatures; its custom scan
+reported zero candidate-specific detections. The freshly extracted payload
+contained 526 files under only `app` and `backend`, with zero WireGuard
+configuration, key/certificate, profile, recovery, diagnostic, reparse-point, or
+out-of-root files. This is a pre-commit candidate, not the final tag artifact,
+and must be rebuilt and rescanned after the release commit.
+
+The same candidate completed a non-mutating sanitized-profile lifecycle test:
+import, rename, rule add/list/remove, connection-plan validation, and delete all
+passed. The existing profile count and secret-file name set were restored,
+network state remained unchanged, and the disconnected app/backend exited
+normally. No real configuration or private key was read.
+
+The owner matrix also accepts the failure-independent troubleshooting evidence:
+the focused prohibited-pattern test and a real 19-line schema-v1 report prove
+the same bounded counts/status format used after every failure state. Launcher
+readiness evidence combines automated protocol, extraction, and cache checks
+with live stale-backend rejection and UAC cancellation.
 
 A subsequent real-profile run connected successfully. Closing the dashboard left
 one backend, the tunnel adapter, loopback DNS ownership, and the active marker in
@@ -135,6 +216,47 @@ startup recovery before serving IPC: the marker, managed routes, tunnel, and
 loopback DNS were removed, and the backend reported `Disconnected` with no active
 profile. The original default route and AdGuard `Running`/`Automatic` state were
 unchanged.
+
+The connected-reboot variant was exercised with the exact recorded unsigned
+candidate. Immediately after reboot there were no VPN Router processes, while the
+active marker, 38 managed-route records, one tunnel adapter, and one loopback-DNS
+owner remained as the expected recovery input. Launching the candidate produced
+one UI and one backend; startup recovery removed those four classes of owned
+state and IPC reported `Disconnected` with no active profile. The single default
+route remained alive, AdGuard remained `Running`/`Automatic`, and DNS plus HTTPS
+connectivity succeeded over the user's current mobile hotspot. No saved Wi-Fi
+profile or third-party product was changed.
+
+### DNS source-mode regression follow-up
+
+The earlier disconnect checks proved that a usable DNS server was restored but
+did not prove that an adapter originally using automatic DNS remained automatic.
+A 2026-07-28 user report exposed that the saved DHCP-provided address was being
+restored as a manual DNS address.
+
+The corrected dogfood build records automatic/manual IPv4 DNS mode and restores
+automatic mode with `-ResetServerAddresses`. Its focused 29-check test run, both
+solution builds, extraction verification, and a real connect/disconnect run
+passed. The post-disconnect state retained automatic DNS, had no loopback DNS,
+managed routes, or VPN tunnel, and had working DNS and HTTPS connectivity.
+Corrected-build SHA-256:
+`A4D41597A1C25373AC70FF1029299533DE9065178B3DC823E5CB325E652FA2F1`.
+A physical reboot after the corrected disconnect also passed. The Wi-Fi adapter
+returned `Up` with DHCP and automatic IPv4 DNS enabled, owned the single alive
+default route, and had working DNS resolution and HTTPS connectivity. There were
+no VPN Router processes, tunnel adapters, or loopback DNS owners, and AdGuard
+remained running.
+
+### Stale-backend rejection
+
+The corrected unsigned candidate was run against a temporary local IPC server
+that returned protocol version 99. The real launcher showed its `VPN Router`
+error dialog and exited with code 1. It did not start an elevated backend or the
+desktop app. Before/after fingerprints of the IPv4 route table, DNS settings,
+active marker, managed-route state, and network snapshot were identical. The
+single alive default route, zero tunnel adapters, zero loopback DNS owners, and
+AdGuard `Running` state were also unchanged. The temporary IPC server was removed
+after the test.
 
 ## Unsigned distribution and optional future signing
 
@@ -178,10 +300,8 @@ Before tagging `v0.1.0`:
 3. confirm that the candidate is intentionally `NotSigned`;
 4. verify and publish the exact SHA-256 checksum;
 5. run the owner matrix on the development machine;
-6. run the same unsigned artifact on a clean supported Windows 11 x64 machine with WireGuard installed and
-   missing;
-7. scan the exact artifact with Windows Security and the chosen release scanning
+6. scan the exact artifact with Windows Security and the chosen release scanning
    service;
-8. inspect the extracted payload for raw configs, secrets, and local data;
-9. publish the README, checksum, known limitations, and recovery guidance;
-10. tag only the exact artifact-producing commit.
+7. inspect the extracted payload for raw configs, secrets, and local data;
+8. publish the README, checksum, known limitations, and recovery guidance;
+9. tag only the exact artifact-producing commit.

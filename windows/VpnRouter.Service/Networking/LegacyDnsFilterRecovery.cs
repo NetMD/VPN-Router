@@ -7,13 +7,29 @@ namespace VpnRouter.Service.Networking;
 /// Restores state written by builds that used to stop AdGuard automatically.
 /// New connections must never create this state or modify third-party services.
 /// </summary>
-public sealed class LegacyDnsFilterRecovery(ILogger<LegacyDnsFilterRecovery> logger)
+public sealed class LegacyDnsFilterRecovery
 {
     private const string LegacyServiceName = "Adguard Service";
-    private readonly string _statePath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "VpnRouter",
-        "dns-filter-handoff.json");
+    private readonly ILogger<LegacyDnsFilterRecovery> _logger;
+    private readonly string _statePath;
+
+    public LegacyDnsFilterRecovery(ILogger<LegacyDnsFilterRecovery> logger)
+        : this(
+            logger,
+            Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "VpnRouter",
+                "dns-filter-handoff.json"))
+    {
+    }
+
+    internal LegacyDnsFilterRecovery(
+        ILogger<LegacyDnsFilterRecovery> logger,
+        string statePath)
+    {
+        _logger = logger;
+        _statePath = Path.GetFullPath(statePath);
+    }
 
     public bool HasPendingRestore => File.Exists(_statePath);
 
@@ -46,7 +62,7 @@ public sealed class LegacyDnsFilterRecovery(ILogger<LegacyDnsFilterRecovery> log
             $"Set-Service -Name '{LegacyServiceName}' -StartupType {startupType}{startCommand}",
             cancellationToken);
         File.Delete(_statePath);
-        logger.LogInformation("Restored DNS filter state left by an older VPN Router build.");
+        _logger.LogInformation("Restored DNS filter state left by an older VPN Router build.");
     }
 
     private static async Task RunPowerShellAsync(string command, CancellationToken cancellationToken)
