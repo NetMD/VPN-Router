@@ -393,8 +393,14 @@ The initial launcher and disconnected checks were completed without pressing
   ownership, active marker, and all managed-route records. The baseline default
   route remained, AdGuard stayed `Running`/`Automatic`, and the UI and backend
   exited.
-- DNS ownership loss, forced backend termination, reboot recovery, different-user
-  ACL, and unsigned clean-machine behavior remain pending.
+- Force-terminating the elevated `VpnRouter.Service` while connected left the UI,
+  active marker, 34 managed-route records, tunnel adapter, and loopback DNS
+  ownership as the expected crash state. Relaunching started a new backend,
+  removed all of that owned state during startup recovery, and reported
+  `Disconnected` with no active profile. The default route and AdGuard state were
+  unchanged.
+- DNS ownership loss, reboot recovery, different-user ACL, and unsigned
+  clean-machine behavior remain pending.
 
 ## Next task
 

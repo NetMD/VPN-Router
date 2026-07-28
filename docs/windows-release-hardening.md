@@ -95,7 +95,7 @@ Do not treat compilation or extraction as evidence for these checks.
 | Different interactive user | Privileged pipe access denied | Pending |
 | UAC cancellation | No backend, DNS, route, or WireGuard mutation | Pending |
 | DNS ownership loss | Full VPN Router cleanup without changing third-party products | Pending |
-| Backend termination | Next launch restores owned DNS, routes, and tunnel state | Pending |
+| Backend termination | Next launch restores owned DNS, routes, and tunnel state | Passed: forced service termination left the expected owned state; relaunch removed 34 managed-route records, tunnel, loopback DNS, and active marker before reporting `Disconnected`, 2026-07-28 |
 | Reboot while connected | Next launch restores owned network state | Pending |
 | Cache cleanup disconnected | Active and previous payload retained; older caches removed | Partial: active/previous retention passed with two caches; no older cache existed, 2026-07-28 |
 | Cache cleanup connected | Request refused with no deletion | Passed: privileged request returned `success=false` while connected, 2026-07-28 |
@@ -126,6 +126,15 @@ adapter, loopback DNS ownership, and active marker intact. Relaunching created o
 new UI process, reused the original backend, and returned `Connected` with an
 active profile. Normal disconnect and UI close then restored the same clean
 baseline.
+
+The forced-backend variant terminated only the elevated `VpnRouter.Service` while
+connected. The UI, active marker, 34 managed-route records, tunnel adapter, and
+loopback DNS ownership initially remained, establishing the intended crash
+condition. Relaunching the portable executable started a new backend and completed
+startup recovery before serving IPC: the marker, managed routes, tunnel, and
+loopback DNS were removed, and the backend reported `Disconnected` with no active
+profile. The original default route and AdGuard `Running`/`Automatic` state were
+unchanged.
 
 ## Unsigned distribution and optional future signing
 
