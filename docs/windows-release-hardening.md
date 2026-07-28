@@ -90,7 +90,7 @@ Do not treat compilation or extraction as evidence for these checks.
 | First portable launch | One UAC prompt, one backend, one dashboard | Passed locally, 2026-07-28 |
 | Second portable launch | No second backend or dashboard; existing window activates | Passed by stable backend/UI PIDs and launcher exit 0, 2026-07-28 |
 | Close while disconnected | UI closes and backend exits gracefully | Passed locally twice, 2026-07-28 |
-| Close/reopen while connected | VPN stays connected and UI resynchronizes from backend | Passed: backend PID stayed stable, tunnel/DNS state remained active, and the reopened UI reported `Connected`, 2026-07-28 |
+| Close/reopen while connected | VPN stays connected and UI resynchronizes from backend | Passed for normal close and forced UI termination: backend PID stayed stable, tunnel/DNS state remained active, and the reopened UI reported `Connected`, 2026-07-28 |
 | Stale backend | Useful compatibility error and no network mutation | Pending |
 | Different interactive user | Privileged pipe access denied | Pending |
 | UAC cancellation | No backend, DNS, route, or WireGuard mutation | Pending |
@@ -119,6 +119,13 @@ marker, and all managed-route records. The original single default route remaine
 AdGuard remained `Running` with `Automatic` start type, and both VPN Router
 processes exited. No raw profile, key, domain, endpoint, or route value was read or
 recorded.
+
+The forced-UI variant was also exercised against the same unsigned artifact.
+Terminating only `VpnRouter.App` left the original `VpnRouter.Service` PID, tunnel
+adapter, loopback DNS ownership, and active marker intact. Relaunching created one
+new UI process, reused the original backend, and returned `Connected` with an
+active profile. Normal disconnect and UI close then restored the same clean
+baseline.
 
 ## Unsigned distribution and optional future signing
 

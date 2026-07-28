@@ -384,14 +384,17 @@ The initial launcher and disconnected checks were completed without pressing
   loopback DNS ownership, and active marker.
 - Reopening the portable executable reused the existing backend and reported
   `Connected`.
+- Force-terminating only `VpnRouter.App` also preserved the original
+  `VpnRouter.Service` PID, tunnel adapter, loopback DNS ownership, and active
+  marker. Relaunching created one UI, reused that backend, and resynchronized to
+  `Connected`.
 - Connected portable-cache cleanup was refused with no deletion.
 - A normal privileged disconnect removed the tunnel adapter, loopback DNS
   ownership, active marker, and all managed-route records. The baseline default
   route remained, AdGuard stayed `Running`/`Automatic`, and the UI and backend
   exited.
-- DNS ownership loss, forced backend termination, forced UI termination, reboot
-  recovery, different-user ACL, and unsigned clean-machine behavior remain
-  pending.
+- DNS ownership loss, forced backend termination, reboot recovery, different-user
+  ACL, and unsigned clean-machine behavior remain pending.
 
 ## Next task
 
