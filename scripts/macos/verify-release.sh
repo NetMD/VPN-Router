@@ -12,8 +12,9 @@ MINIMUM_MACOS_VERSION=${VPNROUTER_MINIMUM_MACOS_VERSION:-15.0}
 PRODUCTS_DIR="${DERIVED_DATA_PATH}/Build/Products/Release"
 WIREGUARD_GO_DIR="${PROJECT_DIR}/Vendor/wireguard-apple/Sources/WireGuardKitGo"
 GO_BINARY=${VPNROUTER_GO_BINARY:-$(command -v go 2>/dev/null || true)}
+SIGNED_APP_VERIFIER="${SCRIPT_DIR}/verify-signed-app.sh"
 
-for tool in ar awk lipo xcodebuild xcrun make plutil shasum; do
+for tool in ar awk codesign ditto lipo xcodebuild xcrun make plutil shasum; do
     if ! command -v "${tool}" >/dev/null 2>&1; then
         print -u2 "Required tool is missing: ${tool}"
         exit 1
@@ -51,9 +52,8 @@ xcodebuild \
     MACOSX_DEPLOYMENT_TARGET="${MINIMUM_MACOS_VERSION}" \
     MARKETING_VERSION="${PRODUCT_VERSION}" \
     CURRENT_PROJECT_VERSION="${BUILD_NUMBER}" \
-    SWIFT_COMPILATION_MODE=incremental \
+    SWIFT_COMPILATION_MODE=wholemodule \
     SWIFT_OPTIMIZATION_LEVEL=-O \
-    'OTHER_SWIFT_FLAGS=$(inherited) -Xfrontend -disable-sil-perf-optzns' \
     CODE_SIGNING_ALLOWED=NO \
     build
 
@@ -100,6 +100,31 @@ lipo "${WIREGUARD_ARCHIVE}" \
 )
 verify_minimum_macos "${ARCHIVE_INSPECTION_DIR}/go.o" "WireGuard Go object"
 verify_minimum_macos "${ARCHIVE_INSPECTION_DIR}/000000.o" "WireGuard CGO object"
+
+SIGNING_FIXTURE="${ARCHIVE_INSPECTION_DIR}/VPNRouter.app"
+ditto "${APP_PATH}" "${SIGNING_FIXTURE}"
+codesign \
+    --force \
+    --sign - \
+    --timestamp=none \
+    --entitlements "${PROJECT_DIR}/DNSProxyExtension/DNSProxyExtension.entitlements" \
+    "${SIGNING_FIXTURE}/Contents/Library/SystemExtensions/com.simple.VPNRouter.DNSProxyExtension.systemextension" \
+    >/dev/null 2>&1
+codesign \
+    --force \
+    --sign - \
+    --timestamp=none \
+    --entitlements "${PROJECT_DIR}/PacketTunnel/PacketTunnel.entitlements" \
+    "${SIGNING_FIXTURE}/Contents/PlugIns/PacketTunnel.appex" \
+    >/dev/null 2>&1
+codesign \
+    --force \
+    --sign - \
+    --timestamp=none \
+    --entitlements "${PROJECT_DIR}/VPNRouter/VPNRouter.entitlements" \
+    "${SIGNING_FIXTURE}" \
+    >/dev/null 2>&1
+"${SIGNED_APP_VERIFIER}" --mode adhoc-test "${SIGNING_FIXTURE}"
 
 print "Verified unsigned Release build: ${APP_PATH}"
 print "Version: ${PRODUCT_VERSION} (${BUILD_NUMBER})"

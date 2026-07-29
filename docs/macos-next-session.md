@@ -1,6 +1,6 @@
 # macOS Codex next session
 
-Last updated: 2026-07-29 KST
+Last updated: 2026-07-30 KST
 
 This is the first document Codex should read after `AGENTS.md` when work resumes
 on the owner's Mac. It records the exact continuation point after the Windows
@@ -46,6 +46,10 @@ code native and isolated.
 - If any required DNS Proxy condition fails, stop and clean up only VPN
   Router-owned Packet Tunnel, DNS Proxy, and route state. Never silently fall back
   to an unsafe connected state.
+- Route-plan expiry protection is mandatory and must not have a user-disable
+  control. When upgrading a legacy installation whose saved override was false,
+  remove the override and re-arm an already-connected provider; disconnect VPN
+  Router if re-arming cannot be confirmed.
 - Never stop, disable, reconfigure, or change another VPN, DNS, ad-blocking,
   antivirus, or security product.
 - Captive-portal sign-in remains out of scope. The user signs in while VPN Router
@@ -92,6 +96,9 @@ The repository contains:
   modifying it, plus explicit manual Private Relay guidance;
 - DNS Proxy ownership/XPC monitoring and orphan cleanup;
 - active IPv4 `utun` set monitoring that fails safe on a second-VPN transition;
+- mandatory Packet Tunnel cancellation when the host cannot refresh a route plan
+  before its fifteen-minute safety boundary, including safe migration of the
+  removed legacy disable preference;
 - bounded redacted troubleshooting export;
 - a consumer connection coordinator that withholds `Connected` until DNS Proxy
   ownership, XPC target publication/readiness, and safety monitoring all succeed;
@@ -232,6 +239,8 @@ use the existing private signing configuration without committing it, then verif
 - UDP and TCP target A/AAAA plus unrelated controls;
 - live dynamic CDN observations and route updates;
 - rotating-answer retention and expiry;
+- legacy disabled-expiry preference cleanup while disconnected, plus re-arm or
+  owned disconnect while already connected;
 - 512-route rejection before partial mutation;
 - default route and control destination preservation;
 - DNS Proxy preference/ownership loss;
@@ -254,17 +263,21 @@ raw DNS payloads, real profile content, private keys, Team IDs, or account data.
   unsigned arm64/macOS 15 Release package. It also verifies the minimum-OS load
   command in the Host App, both extensions, and representative Go/CGO archive
   members.
-- Xcode 26.6 / Swift 6.3.3 previously crashed in the optimized host SIL
-  performance pass. The script contains a documented
-  `-disable-sil-perf-optzns` workaround.
-- Public distribution remains blocked until a clean optimized Release archive
-  succeeds without that workaround.
+- Xcode 26.6 / Swift 6.3.3 previously crashed while optimizing synthesized
+  deinitializers for two generic continuation gates. They were replaced by
+  non-generic one-shot gates; the canonical script now completes a clean
+  whole-module `-O` Release without disabling optimizer passes.
 - Go 1.26.5 rebuilt the bridge without the earlier `LC_DYSYMTAB` or newer-minimum-
   OS linker warnings. Preserve the recorded version/checksum and validate the
   bridge through final signing, notarization, Gatekeeper, and clean-machine
   runtime evidence.
 - Developer ID Network Extension provisioning, nested signing, notarization,
   stapling, `spctl`, and clean supported-Mac installation remain unproven.
+- `scripts/macos/verify-signed-app.sh` validates a development or distribution
+  app's required Host/Packet Tunnel/DNS Proxy signatures, entitlements, versions,
+  arm64 slices, and minimum macOS without printing signing identities. In
+  distribution mode, `--notarized` additionally requires a valid stapled ticket
+  and Gatekeeper acceptance.
 - The prior private dogfood baseline was Apple Silicon, macOS 15 or later.
 
 Do not tag or claim a public macOS release until these gates and the signed parity

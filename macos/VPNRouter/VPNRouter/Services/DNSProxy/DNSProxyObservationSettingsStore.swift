@@ -116,23 +116,29 @@ struct DNSProxyObservationSettingsStore {
         _ request: @escaping (DNSProxyXPCProtocol, @escaping (Value) -> Void) -> Void
     ) async throws -> Value {
         try await withCheckedThrowingContinuation { continuation in
-            let gate = DNSProxyXPCContinuationGate(continuation)
+            let gate = DNSProxyXPCContinuationGate()
             let connection = NSXPCConnection(
                 machServiceName: Self.machServiceName,
                 options: .privileged
             )
             let timeout = DispatchWorkItem {
-                gate.resume(throwing: DNSProxyXPCError.requestTimedOut)
+                if gate.claim() {
+                    continuation.resume(throwing: DNSProxyXPCError.requestTimedOut)
+                }
                 connection.invalidate()
             }
             connection.remoteObjectInterface = NSXPCInterface(with: DNSProxyXPCProtocol.self)
             connection.interruptionHandler = {
                 timeout.cancel()
-                gate.resume(throwing: DNSProxyXPCError.connectionInterrupted)
+                if gate.claim() {
+                    continuation.resume(throwing: DNSProxyXPCError.connectionInterrupted)
+                }
             }
             connection.invalidationHandler = {
                 timeout.cancel()
-                gate.resume(throwing: DNSProxyXPCError.connectionInvalidated)
+                if gate.claim() {
+                    continuation.resume(throwing: DNSProxyXPCError.connectionInvalidated)
+                }
             }
             connection.activate()
             DispatchQueue.global(qos: .userInitiated).asyncAfter(
@@ -142,18 +148,24 @@ struct DNSProxyObservationSettingsStore {
 
             guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
                 timeout.cancel()
-                gate.resume(throwing: error)
+                if gate.claim() {
+                    continuation.resume(throwing: error)
+                }
                 connection.invalidate()
             }) as? DNSProxyXPCProtocol else {
                 timeout.cancel()
-                gate.resume(throwing: DNSProxyXPCError.invalidRemoteProxy)
+                if gate.claim() {
+                    continuation.resume(throwing: DNSProxyXPCError.invalidRemoteProxy)
+                }
                 connection.invalidate()
                 return
             }
 
             request(proxy) { value in
                 timeout.cancel()
-                gate.resume(returning: value)
+                if gate.claim() {
+                    continuation.resume(returning: value)
+                }
                 connection.invalidate()
             }
         }
@@ -191,28 +203,18 @@ struct DNSProxyRouteObservation: Decodable {
     let expiresAt: Date
 }
 
-private final class DNSProxyXPCContinuationGate<Value>: @unchecked Sendable {
+private final class DNSProxyXPCContinuationGate: @unchecked Sendable {
     private let lock = NSLock()
-    private var continuation: CheckedContinuation<Value, Error>?
+    private var isClaimed = false
 
-    init(_ continuation: CheckedContinuation<Value, Error>) {
-        self.continuation = continuation
-    }
-
-    func resume(returning value: Value) {
-        takeContinuation()?.resume(returning: value)
-    }
-
-    func resume(throwing error: Error) {
-        takeContinuation()?.resume(throwing: error)
-    }
-
-    private func takeContinuation() -> CheckedContinuation<Value, Error>? {
+    func claim() -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        let continuation = continuation
-        self.continuation = nil
-        return continuation
+        guard !isClaimed else {
+            return false
+        }
+        isClaimed = true
+        return true
     }
 }
 

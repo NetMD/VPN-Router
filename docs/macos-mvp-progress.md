@@ -47,7 +47,8 @@ diagnostic density.
    Host relaunch, provider termination, sleep/wake, network change, disconnect,
    and restart recovery.
 7. Do not claim public parity until Developer ID distribution provisioning and a
-   clean optimized Release archive also pass.
+   clean optimized Release archive also pass. The clean optimizer gate was later
+   completed on 2026-07-30; signing and runtime gates remain.
 
 ### 2026-07-29 consumer connection coordinator checkpoint
 
@@ -104,8 +105,9 @@ The Phase 4 technical baseline and remediation audit are recorded in
 `docs/macos-phase4-quality-audit.md`. The initial score was 12/20 with no P0
 blockers and five P1 findings. The automated remediation pass raises it to 17/20;
 the completed signed remediation and acceptance pass raises it to 18/20. Public
-distribution still requires a clean Release optimizer result without the
-documented Xcode 26.6 workaround.
+distribution still required a clean Release optimizer result without the
+documented Xcode 26.6 workaround at that checkpoint. The gate was subsequently
+closed on 2026-07-30.
 
 The automated Phase 4 implementation and owner-operated signed UI/lifecycle
 matrix are complete. Public Developer ID distribution remains intentionally
@@ -595,20 +597,22 @@ A fake-key `RunCodeSnippet` check verified that:
   refresh/expiration boundaries, and backward-compatible decoding of older route
   plans plus IPv6 bypass-domain filtering. The unsigned Xcode host/extension build
   also succeeds. The new IPv6 warning UI still needs inspection in a signed build.
-- Settings now provides **경로 계획 만료 시 자동으로 연결 해제**. The value is
-  shared with PacketTunnel through App Group `UserDefaults`, defaults to enabled,
-  and updates the active provider immediately through a schema-versioned message.
-  Disabling it requires a destructive-style confirmation that explains stale routes
-  may allow selected sites to bypass the VPN. Home also keeps an orange warning
-  visible while the protection is disabled.
+- Settings originally provided **경로 계획 만료 시 자동으로 연결 해제** as a
+  user-controlled value. The parity hardening pass on 2026-07-30 removed that
+  unsafe override: Settings now reports mandatory fifteen-minute expiry
+  protection, PacketTunnel always arms it, and the host removes any legacy
+  disabled preference. If an upgrade finds a connected legacy provider, the host
+  sends a fixed enable-only migration request and disconnects VPN Router if the
+  provider cannot confirm re-arming. No request can disable this protection.
 - The SwiftUI navigation, forms, buttons, empty states, confirmation dialogs, status
   messages, route summaries, diagnostics, and user-facing parser/runtime errors are
   now written in Korean. Protocol names such as WireGuard and Packet Tunnel, IP
   terminology, domain names, and internal configuration keys retain their technical
   names where translation would reduce clarity.
-- Two focused settings tests verify that fail-safe protection defaults to enabled and
-  persists both enabled and disabled values. `swift test` now passes fifteen tests,
-  and the unsigned Xcode host/extension build succeeds.
+- Two focused settings tests now verify that a legacy false value cannot disable
+  protection and that migration removes it while protection remains enabled. The
+  current complete suite passes 55 focused checks, and the unsigned Debug and
+  optimized Release Host/extension builds succeed.
 - A signed real-Mac expiry test paused only the host app after a manual route refresh,
   leaving PacketTunnel connected without its five-minute refresh source. With the
   fail-safe at its default enabled value, the VPN changed from Connected to
@@ -1029,9 +1033,10 @@ Automated evidence:
 - the unsigned arm64 Debug Host App, Packet Tunnel, and DNS Proxy System Extension
   build succeeded;
 - Xcode Analyze succeeded for the complete scheme;
-- an optimized unsigned arm64/minimum-macOS-15 Release Host App and both extensions
-  compiled and embedded successfully using the documented Swift optimizer
-  workaround;
+- a clean whole-module `-O` unsigned arm64/minimum-macOS-15 Release Host App and
+  both extensions compiled and embedded successfully without disabling optimizer
+  passes after the generic continuation gates were replaced with non-generic
+  one-shot state;
 - `git diff --check` passed.
 
 The first unsigned build attempt exposed an Xcode 26 explicit-module cache race
@@ -1051,17 +1056,39 @@ No earlier `LC_DYSYMTAB` or macOS-26 deployment warning appeared. `vtool`
 confirmed `minos 15.0` for the Host App, Packet Tunnel, DNS Proxy System Extension,
 and representative Go/CGO archive objects.
 
-The first two otherwise-identical clean bridge builds differed only in Go's
-embedded build ID and archive table timestamp. The vendored bridge Makefile now
-clears that unused build ID and runs `ranlib -D`. Two independent clean bridge
-builds and the subsequent clean canonical Release build then produced the same
-SHA-256:
-`89f244ce627d843b775b29a401009c0309266267e2ffecaca9841e024364e1ca`.
+The first two otherwise-identical clean bridge builds differed in Go's embedded
+build ID and archive table timestamp. A later cross-commit check also found Go
+VCS revision stamping. The vendored bridge Makefile now clears the unused build
+ID, disables VCS stamping, and runs `ranlib -D`. Two independent clean bridge
+builds then produced the same SHA-256:
+`29177134ad37d6105857d926977f0669759e1e4b542803d27dd5b794f10fd3fd`.
 
 The release script records the Go version and fails if any of those nested
 binaries or inspected archive members does not match the requested minimum macOS
 version. This is still unsigned compile/package evidence, not a distributable or
 runtime-proven artifact.
+
+Signing evidence preparation was then hardened without accessing any private
+signing metadata:
+
+- `scripts/macos/verify-signed-app.sh` now requires the Host App, Packet Tunnel,
+  and DNS Proxy System Extension with exact bundle/version/minimum-OS/arm64
+  metadata;
+- it verifies each nested signature and the complete signature chain, then checks
+  the exact Network Extension, System Extension install, app-group, Keychain,
+  network, and diagnostic-export entitlement contract;
+- development mode accepts only owner development or Developer ID signatures;
+  distribution mode additionally requires hardened Developer ID Application
+  signatures, while `--notarized` requires stapler and Gatekeeper success;
+- an explicit `adhoc-test` mode passed a complete isolated fixture, rejected a
+  fixture missing the DNS Proxy provider entitlement, and was rejected by
+  distribution mode;
+- the canonical unsigned Release verifier now creates and checks the isolated
+  ad-hoc fixture automatically.
+
+The DNS Proxy System Extension is no longer described as optional for public
+packaging. It is required for dynamic discovery, target AAAA protection, and DNS
+ownership; removing it would violate the parity contract.
 
 This is not signed Network Extension runtime evidence. The next gate is an
 owner-signed run of the normal Home connection path, including fresh System

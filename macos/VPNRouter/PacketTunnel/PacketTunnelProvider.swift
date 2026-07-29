@@ -21,6 +21,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         options: [String: NSObject]?,
         completionHandler: @escaping (Error?) -> Void
     ) {
+        SharedFailSafeSettingsStore().enforceEnabled()
         activeConfiguration = ProviderRuntimeConfiguration.from(
             protocolConfiguration: protocolConfiguration,
             options: options
@@ -66,7 +67,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             plannedRouteCount: activeConfiguration.includedRoutes.count,
             ipv6BypassDomainCount: activeConfiguration.ipv6BypassDomains.count,
             routePlanExpiresAt: activeConfiguration.routePlanExpiresAt,
-            failSafeEnabled: SharedFailSafeSettingsStore().isEnabled,
+            failSafeEnabled: true,
             wireGuardKitLinked: true,
             message: activeConfiguration.mode == "phase1-wireguard" ? wireGuardRuntimeMessage : activeConfiguration.diagnosticMessage,
             updatedAt: Date()
@@ -152,18 +153,14 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             }
 
             if request.command == "update-fail-safe" {
-                guard let isEnabled = request.failSafeEnabled else {
+                guard request.failSafeEnabled == true else {
                     throw PacketTunnelRuntimeError.unsupportedProviderMessage
                 }
-                SharedFailSafeSettingsStore().setEnabled(isEnabled)
-                if isEnabled {
-                    scheduleRouteExpiration()
-                } else {
-                    cancelRouteExpirationTimer()
-                }
+                SharedFailSafeSettingsStore().enforceEnabled()
+                scheduleRouteExpiration()
                 completeRouteUpdate(
                     success: true,
-                    message: isEnabled ? "만료 시 자동 연결 해제를 켰습니다." : "만료 시 자동 연결 해제를 껐습니다.",
+                    message: "필수 만료 보호를 적용했습니다.",
                     completionHandler: completionHandler
                 )
                 return
@@ -268,10 +265,6 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
 
     private func scheduleRouteExpiration() {
         cancelRouteExpirationTimer()
-        guard SharedFailSafeSettingsStore().isEnabled else {
-            logger.warning("Route-plan expiration fail-safe is disabled by the user setting.")
-            return
-        }
         guard let expiresAt = activeConfiguration.routePlanExpiresAt else {
             return
         }
@@ -666,15 +659,8 @@ private struct SharedFailSafeSettingsStore {
         defaults = Self.appGroupIdentifier().flatMap(UserDefaults.init(suiteName:)) ?? .standard
     }
 
-    var isEnabled: Bool {
-        guard defaults.object(forKey: Self.settingKey) != nil else {
-            return true
-        }
-        return defaults.bool(forKey: Self.settingKey)
-    }
-
-    func setEnabled(_ isEnabled: Bool) {
-        defaults.set(isEnabled, forKey: Self.settingKey)
+    func enforceEnabled() {
+        defaults.removeObject(forKey: Self.settingKey)
     }
 
     private static func appGroupIdentifier() -> String? {

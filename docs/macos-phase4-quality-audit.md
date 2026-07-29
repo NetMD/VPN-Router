@@ -222,7 +222,7 @@ Re-audited: 2026-07-24 KST
 | # | Dimension | Before | After | Remaining evidence |
 |---|---|---:|---:|---|
 | 1 | Accessibility | 2/4 | 3/4 | Final signed-build keyboard, VoiceOver, and high-contrast checks |
-| 2 | Performance | 2/4 | 3/4 | Connected sleep/wake and network-change checks; clean Release optimizer result |
+| 2 | Performance | 2/4 | 3/4 | Connected sleep/wake and network-change checks; clean Release optimizer result now passed |
 | 3 | Responsive design | 2/4 | 4/4 | Signed compact/wide and scrolling checks passed |
 | 4 | Theming | 3/4 | 4/4 | Final signed dark/high-contrast inspection |
 | 5 | Anti-patterns | 3/4 | 4/4 | Development controls are Debug-only and opt-in |
@@ -252,12 +252,14 @@ Analyze action, and a successful unsigned arm64 Release packaging check.
 - **P2:** The connected-status VoiceOver announcement was not exercised because
   the owner chose to skip that interaction. Offline VoiceOver labels, focus,
   selection state, shortcuts, and control descriptions passed.
-- **P1:** Xcode 26.6 / Swift 6.3.3 crashes in the optimized host-module SIL
-  performance pass unless the documented verification workaround is applied.
-  Public distribution remains blocked on a clean final Release archive.
-- **P2:** Resolve or fully validate the Go `c-archive` linker-warning disposition,
-  and decide whether the development-only DNS Proxy target is excluded from a
-  future public archive.
+- **Resolved:** Xcode 26.6 / Swift 6.3.3 crashed while optimizing synthesized
+  deinitializers for two generic continuation gates. Both gates now use
+  non-generic one-shot ownership state, and a clean whole-module `-O` Release
+  succeeds without disabling any optimizer pass.
+- **Resolved:** The reproducible Go 1.26.5 `c-archive` no longer emits the prior
+  linker warning, and minimum macOS 15 is verified. The DNS Proxy System Extension
+  is required for dynamic discovery, target AAAA protection, and DNS ownership;
+  it must remain embedded for a parity release.
 - **P3:** `ContentView.swift` still owns several feature surfaces. Split it by
   feature after signed behavior is stable to reduce recompilation and regression
   risk.

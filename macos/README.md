@@ -79,6 +79,15 @@ compilation and packaging; it cannot validate Network Extension activation.
 
 Signed dogfooding must be run from the owner's Xcode signing configuration on a
 real Mac. Never commit the Developer Team identifier or local signing settings.
+After Xcode produces the signed app, verify its nested structure without exposing
+signing metadata:
+
+```bash
+scripts/macos/verify-signed-app.sh --mode development /path/to/VPNRouter.app
+```
+
+For a hardened Developer ID build, use `--mode distribution`; after notarization
+and stapling, add `--notarized`.
 
 Codex resuming on the Mac should start with
 `docs/macos-next-session.md` at the repository root.

@@ -3,23 +3,24 @@ import XCTest
 @testable import VPNRouterSettings
 
 final class FailSafeSettingsStoreTests: XCTestCase {
-    func testDefaultsToEnabledWhenSettingDoesNotExist() throws {
+    func testMandatoryProtectionIgnoresLegacyDisabledSetting() throws {
         let (defaults, suiteName) = try makeDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
+        defaults.set(false, forKey: FailSafeSettingsStore.settingKey)
         XCTAssertTrue(FailSafeSettingsStore(defaults: defaults).isEnabled)
     }
 
-    func testPersistsEnabledAndDisabledValues() throws {
+    func testEnforceEnabledRemovesLegacyOverride() throws {
         let (defaults, suiteName) = try makeDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let store = FailSafeSettingsStore(defaults: defaults)
 
-        store.setEnabled(false)
-        XCTAssertFalse(store.isEnabled)
+        defaults.set(false, forKey: FailSafeSettingsStore.settingKey)
+        XCTAssertTrue(store.enforceEnabled())
 
-        store.setEnabled(true)
         XCTAssertTrue(store.isEnabled)
+        XCTAssertNil(defaults.object(forKey: FailSafeSettingsStore.settingKey))
     }
 
     private func makeDefaults() throws -> (UserDefaults, String) {

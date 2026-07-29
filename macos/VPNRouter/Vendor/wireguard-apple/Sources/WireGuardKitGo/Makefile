@@ -15,6 +15,7 @@ LIPO ?= lipo
 RANLIB ?= ranlib
 DESTDIR ?= $(CONFIGURATION_BUILD_DIR)
 BUILDDIR ?= $(CONFIGURATION_TEMP_DIR)/wireguard-go-bridge
+BRIDGE_INPUTS := Makefile go.mod go.sum $(wildcard *.go *.c *.h goruntime-*.diff)
 
 CFLAGS_PREFIX := $(if $(DEPLOYMENT_TARGET_CLANG_FLAG_NAME),-$(DEPLOYMENT_TARGET_CLANG_FLAG_NAME)=$($(DEPLOYMENT_TARGET_CLANG_ENV_NAME)),) -isysroot $(SDKROOT) -arch
 GOARCH_arm64 := arm64
@@ -27,7 +28,7 @@ version-header: $(DESTDIR)/wireguard-go-version.h
 
 REAL_GOROOT := $(shell go env GOROOT 2>/dev/null)
 export GOROOT := $(BUILDDIR)/goroot
-$(GOROOT)/.prepared:
+$(GOROOT)/.prepared: Makefile $(wildcard goruntime-*.diff)
 	[ -n "$(REAL_GOROOT)" ]
 	mkdir -p "$(GOROOT)"
 	rsync -a --delete --exclude=pkg/obj/go-build "$(REAL_GOROOT)/" "$(GOROOT)/"
@@ -40,8 +41,8 @@ $(BUILDDIR)/libwg-go-$(1).a: export CGO_CFLAGS := $(CFLAGS_PREFIX) $(ARCH)
 $(BUILDDIR)/libwg-go-$(1).a: export CGO_LDFLAGS := $(CFLAGS_PREFIX) $(ARCH)
 $(BUILDDIR)/libwg-go-$(1).a: export GOOS := $(GOOS_$(PLATFORM_NAME))
 $(BUILDDIR)/libwg-go-$(1).a: export GOARCH := $(GOARCH_$(1))
-$(BUILDDIR)/libwg-go-$(1).a: $(GOROOT)/.prepared go.mod
-	go build -ldflags="-w -buildid=" -trimpath -v -o "$(BUILDDIR)/libwg-go-$(1).a" -buildmode c-archive
+$(BUILDDIR)/libwg-go-$(1).a: $(GOROOT)/.prepared $(BRIDGE_INPUTS)
+	go build -buildvcs=false -ldflags="-w -buildid=" -trimpath -v -o "$(BUILDDIR)/libwg-go-$(1).a" -buildmode c-archive
 	$(RANLIB) -D "$(BUILDDIR)/libwg-go-$(1).a"
 	rm -f "$(BUILDDIR)/libwg-go-$(1).h"
 endef

@@ -13,14 +13,16 @@ struct FailSafeSettingsStore {
     }
 
     var isEnabled: Bool {
-        guard defaults.object(forKey: Self.settingKey) != nil else {
-            return true
-        }
-        return defaults.bool(forKey: Self.settingKey)
+        true
     }
 
-    func setEnabled(_ isEnabled: Bool) {
-        defaults.set(isEnabled, forKey: Self.settingKey)
+    @discardableResult
+    func enforceEnabled() -> Bool {
+        let legacyOverrideWasDisabled =
+            defaults.object(forKey: Self.settingKey) != nil
+            && !defaults.bool(forKey: Self.settingKey)
+        defaults.removeObject(forKey: Self.settingKey)
+        return legacyOverrideWasDisabled
     }
 
     private static func appGroupIdentifier() -> String? {

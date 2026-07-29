@@ -27,9 +27,6 @@ struct ContentView: View {
     @State private var siteMessage = "VPN 프로필을 선택하고 VPN으로 보낼 사이트를 추가하세요."
     @State private var routePlan: DomainRoutePlan?
     @State private var routePlanProfileId: ProfileMetadata.ID?
-    @State private var failSafeEnabled = true
-    @State private var settingsMessage = "만료 시 자동 연결 해제가 켜져 있습니다."
-    @State private var isShowingFailSafeDisableConfirmation = false
     @State private var dnsProxyProbeMessage = "DNS Proxy 권한과 preferences 접근 여부를 아직 확인하지 않았습니다."
     @State private var isRunningDNSProxyProbe = false
     @State private var isShowingDNSProxyEnableConfirmation = false
@@ -141,19 +138,6 @@ struct ContentView: View {
             }
         } message: { profile in
             Text("이 Mac에서 프로필 정보와 키체인 개인 키를 삭제합니다. VPN 사이트 목록은 유지됩니다.")
-        }
-        .confirmationDialog(
-            "만료 보호 기능을 끌까요?",
-            isPresented: $isShowingFailSafeDisableConfirmation
-        ) {
-            Button("보호 기능 끄기", role: .destructive) {
-                Task {
-                    await updateFailSafeSetting(false)
-                }
-            }
-            Button("취소", role: .cancel) {}
-        } message: {
-            Text("경로가 15분 이상 갱신되지 않아도 VPN 연결을 유지합니다. 선택한 사이트가 일반 네트워크로 우회할 수 있습니다.")
         }
         .confirmationDialog(
             "설치된 VPN Router 구성을 제거할까요?",
@@ -312,7 +296,6 @@ struct ContentView: View {
             }
 
             connectionOverviewCard
-            failSafeWarning
             ipv6BypassWarning
 
             ViewThatFits(in: .horizontal) {
@@ -1072,39 +1055,22 @@ struct ContentView: View {
 
             ProductCard(title: "연결 보호", systemImage: "checkmark.shield") {
                 VStack(alignment: .leading, spacing: 12) {
-                    Toggle(
-                        "경로 계획 만료 시 자동으로 연결 해제",
-                        isOn: Binding(
-                            get: { failSafeEnabled },
-                            set: { newValue in
-                                if newValue {
-                                    Task {
-                                        await updateFailSafeSetting(true)
-                                    }
-                                } else {
-                                    isShowingFailSafeDisableConfirmation = true
-                                }
-                            }
-                        )
+                    Label(
+                        "필수 만료 보호가 항상 켜져 있습니다.",
+                        systemImage: "checkmark.shield.fill"
                     )
+                    .font(.headline)
 
-                    Text("켜면 15분 안에 경로를 갱신하지 못했을 때 VPN을 자동으로 끊어 오래된 경로로 인한 우회를 막습니다.")
+                    Text("경로 계획을 15분 안에 갱신하지 못하면 VPN Router 연결을 자동으로 끊어 선택 사이트가 일반 네트워크로 우회하지 않게 합니다.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
 
-                    if !failSafeEnabled {
-                        Label(
-                            "보호 기능이 꺼져 있습니다. 경로가 오래되어도 VPN 연결이 유지되며 선택한 사이트가 일반 네트워크로 우회할 수 있습니다.",
-                            systemImage: "exclamationmark.triangle.fill"
-                        )
+                    Text("VPN Router가 소유한 연결과 네트워크 상태만 정리하며 다른 VPN이나 보안 제품은 변경하지 않습니다.")
                         .font(.callout)
-                        .foregroundStyle(.orange)
-                    }
+                        .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-
-            DiagnosticMessageView(message: settingsMessage)
 
 #if DEBUG
             ProductCard(title: "개발자 옵션", systemImage: "hammer") {
@@ -1172,18 +1138,6 @@ struct ContentView: View {
             .font(.callout)
             .foregroundStyle(.orange)
             .accessibilityLabel("IPv6 우회 경고")
-        }
-    }
-
-    @ViewBuilder
-    private var failSafeWarning: some View {
-        if !failSafeEnabled {
-            Label(
-                "만료 시 자동 연결 해제가 꺼져 있습니다.",
-                systemImage: "shield.slash.fill"
-            )
-            .font(.callout)
-            .foregroundStyle(.orange)
         }
     }
 
@@ -1381,8 +1335,42 @@ struct ContentView: View {
         await loadStatus()
         await loadProfiles()
         await loadSiteDomainsForSelectedProfile()
-        loadFailSafeSetting()
+        let legacyFailSafeWasDisabled = FailSafeSettingsStore().enforceEnabled()
+        await migrateMandatoryFailSafeIfNeeded(
+            legacyFailSafeWasDisabled: legacyFailSafeWasDisabled
+        )
         await reconcileDNSProxyAfterLaunch()
+    }
+
+    private func migrateMandatoryFailSafeIfNeeded(
+        legacyFailSafeWasDisabled: Bool
+    ) async {
+        guard legacyFailSafeWasDisabled,
+              status == .connected,
+              let session = manager?.connection as? NETunnelProviderSession else {
+            return
+        }
+
+        do {
+            let responseData = try await sendProviderMessage(
+                try JSONEncoder().encode(TunnelMandatoryFailSafeRequest()),
+                through: session
+            )
+            guard
+                let responseData,
+                let response = try? JSONDecoder().decode(
+                    TunnelRouteUpdateResponse.self,
+                    from: responseData
+                ),
+                response.success
+            else {
+                throw TunnelConfigurationError.unreadableRouteUpdateResponse
+            }
+            lastMessage = "이전 보호 설정을 필수 만료 보호로 안전하게 전환했습니다."
+        } catch {
+            await stopTunnel()
+            lastMessage = "이전 보호 설정을 안전하게 전환하지 못해 VPN Router 연결을 해제했습니다."
+        }
     }
 
     private func removeStatusObserver() {
@@ -1410,47 +1398,6 @@ struct ContentView: View {
             importMessage = profiles.isEmpty ? "가져온 VPN 프로필이 없습니다." : "저장된 VPN 프로필을 불러왔습니다."
         } catch {
             importMessage = "VPN 프로필을 불러오지 못했습니다: \(error.localizedDescription)"
-        }
-    }
-
-    private func loadFailSafeSetting() {
-        failSafeEnabled = FailSafeSettingsStore().isEnabled
-        settingsMessage = failSafeEnabled
-            ? "만료 시 자동 연결 해제가 켜져 있습니다."
-            : "만료 시 자동 연결 해제가 꺼져 있습니다."
-    }
-
-    private func updateFailSafeSetting(_ isEnabled: Bool) async {
-        failSafeEnabled = isEnabled
-        FailSafeSettingsStore().setEnabled(isEnabled)
-
-        guard status == .connected,
-              let session = manager?.connection as? NETunnelProviderSession else {
-            settingsMessage = isEnabled
-                ? "보호 기능을 켰습니다. 다음 연결부터 적용됩니다."
-                : "보호 기능을 껐습니다. 다음 연결부터 적용됩니다."
-            return
-        }
-
-        do {
-            let request = TunnelFailSafeUpdateRequest(failSafeEnabled: isEnabled)
-            let responseData = try await sendProviderMessage(
-                try JSONEncoder().encode(request),
-                through: session
-            )
-            guard
-                let responseData,
-                let response = try? JSONDecoder().decode(TunnelRouteUpdateResponse.self, from: responseData),
-                response.success
-            else {
-                throw TunnelConfigurationError.unreadableRouteUpdateResponse
-            }
-
-            settingsMessage = isEnabled
-                ? "보호 기능을 켰습니다. 현재 연결에도 바로 적용했습니다."
-                : "보호 기능을 껐습니다. 현재 연결은 경로가 만료되어도 자동으로 끊기지 않습니다."
-        } catch {
-            settingsMessage = "설정은 저장했지만 현재 연결에는 적용하지 못했습니다: \(error.localizedDescription)"
         }
     }
 
@@ -2009,8 +1956,8 @@ struct ContentView: View {
                 ? " IPv6 우회 위험 도메인: \(diagnostics.ipv6BypassDomainCount ?? 0)개."
                 : ""
             let failSafeMessage = diagnostics.failSafeEnabled == false
-                ? " 만료 시 자동 연결 해제: 꺼짐."
-                : " 만료 시 자동 연결 해제: 켜짐."
+                ? " 안전 오류: Packet Tunnel의 필수 만료 보호가 꺼져 있습니다."
+                : " 필수 만료 보호: 켜짐."
             lastMessage = "Packet Tunnel 응답 정상. 적용 경로: \(diagnostics.plannedRouteCount)개. \(diagnostics.message)\(expiryMessage)\(ipv6Message)\(failSafeMessage)"
         } catch {
             lastMessage = "Packet Tunnel 상태를 확인하지 못했습니다: \(error.localizedDescription)"
@@ -2564,9 +2511,13 @@ struct ContentView: View {
         through session: NETunnelProviderSession
     ) async throws -> Data? {
         try await withCheckedThrowingContinuation { continuation in
-            let gate = ProviderMessageContinuationGate(continuation)
+            let gate = ProviderMessageContinuationGate()
             let timeout = DispatchWorkItem {
-                gate.resume(throwing: TunnelConfigurationError.providerMessageTimedOut)
+                if gate.claim() {
+                    continuation.resume(
+                        throwing: TunnelConfigurationError.providerMessageTimedOut
+                    )
+                }
             }
             DispatchQueue.global(qos: .userInitiated).asyncAfter(
                 deadline: .now() + 5,
@@ -2575,11 +2526,15 @@ struct ContentView: View {
             do {
                 try session.sendProviderMessage(message) { response in
                     timeout.cancel()
-                    gate.resume(returning: response)
+                    if gate.claim() {
+                        continuation.resume(returning: response)
+                    }
                 }
             } catch {
                 timeout.cancel()
-                gate.resume(throwing: error)
+                if gate.claim() {
+                    continuation.resume(throwing: error)
+                }
             }
         }
     }
@@ -2696,7 +2651,7 @@ struct ContentView: View {
                 selectedSiteCount: siteDomains.count
             ),
             protection: .init(
-                routeExpiryDisconnectEnabled: failSafeEnabled,
+                routeExpiryDisconnectEnabled: true,
                 stateOwnership: "vpn-router-only"
             ),
             lifecycle: .init(
@@ -2800,28 +2755,18 @@ private enum FocusedField: Hashable {
     case siteDomain
 }
 
-private final class ProviderMessageContinuationGate<Value>: @unchecked Sendable {
+private final class ProviderMessageContinuationGate: @unchecked Sendable {
     private let lock = NSLock()
-    private var continuation: CheckedContinuation<Value, Error>?
+    private var isClaimed = false
 
-    init(_ continuation: CheckedContinuation<Value, Error>) {
-        self.continuation = continuation
-    }
-
-    func resume(returning value: Value) {
-        takeContinuation()?.resume(returning: value)
-    }
-
-    func resume(throwing error: Error) {
-        takeContinuation()?.resume(throwing: error)
-    }
-
-    private func takeContinuation() -> CheckedContinuation<Value, Error>? {
+    func claim() -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        let continuation = continuation
-        self.continuation = nil
-        return continuation
+        guard !isClaimed else {
+            return false
+        }
+        isClaimed = true
+        return true
     }
 }
 

@@ -32,15 +32,15 @@ nonisolated struct TunnelRouteUpdateResponse: Codable, Equatable {
     let routePlanExpiresAt: Date?
 }
 
-nonisolated struct TunnelFailSafeUpdateRequest: Codable, Equatable {
+nonisolated struct TunnelMandatoryFailSafeRequest: Codable, Equatable {
     let schemaVersion: Int
     let command: String
     let failSafeEnabled: Bool
 
-    init(failSafeEnabled: Bool) {
+    init() {
         schemaVersion = 1
         command = "update-fail-safe"
-        self.failSafeEnabled = failSafeEnabled
+        failSafeEnabled = true
     }
 }
 

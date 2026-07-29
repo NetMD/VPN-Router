@@ -1,6 +1,6 @@
 # VPN Router platform parity contract
 
-Last updated: 2026-07-29 KST
+Last updated: 2026-07-30 KST
 
 ## Owner decision
 
@@ -23,13 +23,13 @@ windowing, keyboard, and appearance behavior rather than copying XAML.
 | Secret storage | Store private keys only in the platform-native protected store; never include them in metadata, logs, diagnostics, or payloads. |
 | Site rules | Normalize root domains, include subdomains, and apply the same YouTube and Netflix media/CDN expansion set. |
 | Dynamic discovery | Observe target A answers used by real traffic and add IPv4 host routes without requiring a reconnect. |
-| Route lifetime | Refresh every five minutes where applicable, retain distinct rotating answers for their original fifteen-minute lifetime, and expire them individually. |
+| Route lifetime | Refresh every five minutes where applicable, retain distinct rotating answers for their original fifteen-minute lifetime, and expire them individually. If the maintained plan itself cannot be refreshed before its safety boundary, remove VPN Router's selected-site routes rather than leaving a stale plan active. |
 | Route bound | Reject a combined static/dynamic plan above 512 unique IPv4 host routes before partial mutation. |
 | IPv6 protection | Return empty successful target AAAA answers while preserving target A and unrelated AAAA behavior. |
 | Normal traffic | Keep the system default route and unrelated traffic on the primary network. |
 | Encrypted DNS | Detect supported browser policy, warn or block when ownership cannot be proven, and never change browser or Private Relay settings automatically. |
 | DNS ownership | Prove the actual response path before reporting Connected and monitor it continuously while connected. |
-| Fail-safe | On DNS ownership, provider, or relevant second-VPN transition loss, stop only VPN Router, remove its routes/DNS state, and leave the other product unchanged. |
+| Fail-safe | On DNS ownership, provider, relevant second-VPN transition loss, or route-plan maintenance failure, stop only VPN Router, remove its routes/DNS state, and leave the other product unchanged. This protection is mandatory and has no user-disable control. |
 | Lifecycle | Derive state from the privileged/native backend, survive UI relaunch, and recover VPN Router-owned state after failure or restart. |
 | Diagnostics | Export only schema-versioned bounded counts, states, timestamps, and failure codes; never raw domains, addresses, DNS payloads, configurations, keys, or unrestricted logs. |
 | Captive portals | Require portal sign-in while VPN Router is disconnected; no automatic portal mutation is part of `v0.1.0`. |
