@@ -1,0 +1,313 @@
+# macOS Codex next session
+
+Last updated: 2026-07-29 KST
+
+This is the first document Codex should read after `AGENTS.md` when work resumes
+on the owner's Mac. It records the exact continuation point after the Windows
+release-hardening pass and the owner-approved cross-platform parity decision.
+
+## Read order
+
+Read these files completely before editing:
+
+1. `docs/macos-next-session.md`
+2. `docs/platform-parity-contract.md`
+3. `docs/macos-mvp-handoff.md`
+4. `docs/macos-mvp-progress.md`
+5. `docs/macos-phase3-dns-proxy-spike.md`
+6. `docs/macos-phase4-quality-audit.md`
+7. `docs/macos-phase4-release-hardening.md`
+8. `docs/v0.1.0-release-plan.md`
+
+Use `docs/windows-mvp-progress.md` and the current Windows UI as behavioral and
+visual references only. Keep macOS networking, signing, storage, UI, and provider
+code native and isolated.
+
+## Owner decisions now in force
+
+- Windows and macOS must provide the same user-visible selected-site routing and
+  safety semantics.
+- The Windows dashboard is the preferred product UI reference. macOS should adopt
+  its status-first hierarchy, compact navigation, restrained light surfaces,
+  coral accent, plain-language status, and lower diagnostic density.
+- macOS must remain a native SwiftUI application with native windowing,
+  Automatic/Light/Dark appearance, keyboard support, VoiceOver, increased
+  contrast, and reduced-motion behavior.
+- The already proven macOS DNS Proxy path is no longer intended to remain a
+  Debug-only experiment. It is the target supported consumer connection path.
+- Static pre-resolution may be used internally while starting, or remain as an
+  explicitly labeled development/limited mode, but it must not be reported as
+  equivalent to Windows dynamic routing.
+- A consumer connection must not report `Connected` until VPN Router owns the DNS
+  Proxy configuration, the provider is reachable through XPC, target publication
+  succeeds, target AAAA filtering is active, and the dynamic route observation
+  path is ready.
+- If any required DNS Proxy condition fails, stop and clean up only VPN
+  Router-owned Packet Tunnel, DNS Proxy, and route state. Never silently fall back
+  to an unsafe connected state.
+- Never stop, disable, reconfigure, or change another VPN, DNS, ad-blocking,
+  antivirus, or security product.
+- Captive-portal sign-in remains out of scope. The user signs in while VPN Router
+  is disconnected.
+
+The complete product contract is in `docs/platform-parity-contract.md`.
+
+## Repository continuation state
+
+At the Windows-to-Mac handoff:
+
+- branch: `main`;
+- the Windows checkout was clean before this handoff documentation was created;
+- `main` contained nine local commits beyond the previous `origin/main`, including
+  Windows release hardening, owner-operated recovery evidence, the Windows
+  `v0.1.0` release candidate, and the platform parity decision;
+- this handoff is intended to be pushed with those commits, so verify that
+  `git status --short --branch` shows no unexpected divergence after pulling;
+- no `v0.1.0` tag has been created;
+- the existing Windows portable artifact was produced before the parity-document
+  commit and must be rebuilt and reverified from the eventual tag commit;
+- no macOS public release or parity claim has been made.
+
+Do not reset, squash, or discard the Windows commits when resuming macOS work.
+
+## What is already implemented on macOS
+
+The repository contains:
+
+- a SwiftUI host app;
+- a signed and real-Mac-tested Packet Tunnel using WireGuardKit;
+- Keychain-backed private-key storage and sanitized profile metadata;
+- profile import with a chosen display name, selection, validation, and deletion;
+- a shared VPN Sites list with YouTube and Netflix media expansion;
+- bounded static IPv4 `/32` route planning;
+- five-minute refresh, fifteen-minute per-answer retention/expiry, and a combined
+  512-route cap;
+- schema-versioned Packet Tunnel provider messaging and live route replacement;
+- a separate DNS Proxy system extension with UDP/TCP forwarding;
+- XPC publication of normalized target rules and bounded aggregate observations;
+- target AAAA empty-success filtering while preserving target A and unrelated
+  AAAA responses;
+- encrypted-DNS preflight that reads supported Chrome/Edge policy without
+  modifying it, plus explicit manual Private Relay guidance;
+- DNS Proxy ownership/XPC monitoring and orphan cleanup;
+- active IPv4 `utun` set monitoring that fails safe on a second-VPN transition;
+- bounded redacted troubleshooting export;
+- native lifecycle, compact-layout, theme, keyboard, VoiceOver, and recovery work.
+
+The Swift package test suite last passed 48 focused checks. The latest unsigned
+arm64 Debug app, Packet Tunnel, and DNS Proxy build also succeeded. Treat those as
+recorded evidence to reproduce on the Mac, not as proof from the Windows host.
+
+## Latest signed real-Mac evidence
+
+The latest signed DNS Proxy validation was build 20 on 2026-07-28:
+
+- initial XPC target setup used bounded retries and reached ready state;
+- Packet Tunnel and DNS Proxy ran together while Tailscale/no-exit-node was
+  already connected;
+- target IPv4 answers used VPN Router, target UDP/TCP AAAA answers were empty,
+  unrelated AAAA remained available, and default/control traffic stayed on the
+  primary interface;
+- control, YouTube, and Netflix HTTPS returned 200;
+- disconnecting and reconnecting Tailscale changed the active IPv4 tunnel set;
+- VPN Router failed safe about one second after the observed transition;
+- VPN Router routes were removed, Tailscale was preserved, and control DNS/HTTPS
+  remained healthy.
+
+Earlier signed runs also proved dynamic DNS-observed route insertion, DNS Proxy
+preference-loss cleanup, app relaunch, provider termination, sleep/wake, network
+change, normal disconnect, redacted export, and selected/control routing. The
+detailed chronology and limitations are in `docs/macos-mvp-progress.md`.
+
+These results prove a development configuration on one real Mac. They do not
+prove Developer ID distribution, notarization, clean-machine installation, every
+encrypted-DNS environment, or public parity.
+
+## Current code mismatch to fix first
+
+The supported Connect action still follows the old static-first flow in
+`macos/VPNRouter/VPNRouter/ContentView.swift`:
+
+1. `startTunnel()` builds and installs a static route plan.
+2. It starts the Packet Tunnel and allows `NEVPNStatus.connected` to drive the
+   consumer status.
+3. DNS Proxy activation, target publication, dynamic route refresh, and ownership
+   monitoring remain under Debug/developer diagnostics or begin only after the
+   Packet Tunnel is already connected.
+
+That behavior does not satisfy the new parity contract. Do not start by changing
+provider packet handling that already passed signed tests. First extract a
+consumer connection coordinator from the large `ContentView` ownership and move
+the proven activation sequence into it.
+
+## Immediate implementation order
+
+### 1. Reproduce the baseline
+
+From the repository root on the Mac:
+
+```bash
+git status --short --branch
+git pull --ff-only
+git log --oneline -12
+sw_vers
+uname -m
+xcodebuild -version
+swift --version
+cd macos/VPNRouter
+swift test
+```
+
+Expect 48 focused checks unless new committed tests intentionally change the
+count. Record the actual toolchain and result in `docs/macos-mvp-progress.md`.
+
+Do not run broad commands that print `.conf`, Keychain, provisioning, signing, or
+system-log contents. Do not commit Team IDs, certificate names, provisioning
+profiles, Apple account data, or notarization credentials.
+
+### 2. Introduce a consumer connection coordinator
+
+Move orchestration out of `ContentView` behind a small observable state machine.
+Keep existing native controllers and providers:
+
+- `DNSProxySystemExtensionController`
+- `DNSProxyConfigurationController`
+- `DNSProxyObservationSettingsStore`
+- `EncryptedDNSPreflightService`
+- `TunnelInterfaceFingerprint`
+- `NETunnelProviderManager` / `NETunnelProviderSession`
+
+Use explicit stages suitable for bounded diagnostics, for example:
+
+```text
+idle
+preflighting
+preparingPacketTunnel
+startingPacketTunnel
+enablingDNSProxy
+publishingTargets
+verifyingDNSProxy
+ready
+disconnecting
+failed(stage, code)
+```
+
+The UI may display plain Korean text, but persisted or exported diagnostics should
+use stable schema-versioned stage and failure codes rather than free-form logs.
+
+### 3. Make readiness atomic from the user's perspective
+
+The supported connection sequence should:
+
+1. validate the selected sanitized profile and selected sites;
+2. run encrypted-DNS/manual-precondition checks before network mutation;
+3. create the bounded initial route plan and prepare the Packet Tunnel;
+4. start the Packet Tunnel without exposing final `Connected` in the product UI;
+5. enable only VPN Router's DNS Proxy preference;
+6. publish the expanded target set over XPC using the proven bounded retry path;
+7. prove owned preference state, provider XPC health, target AAAA filtering
+   readiness, and dynamic observation readiness;
+8. arm ownership and active-tunnel-set monitoring;
+9. only then expose product state `Connected`.
+
+On failure, clean up in reverse ownership order. A partial start must not leave a
+Packet Tunnel reported as successfully connected with static-only IPv6 risk.
+Cleanup must be idempotent and must never alter another provider.
+
+Add focused tests for every state transition and failure stage before signed
+testing. Inject controller protocols/fakes rather than requiring Network
+Extension activation in unit tests.
+
+### 4. Preserve the proven safety semantics
+
+Do not regress:
+
+- five-minute route refresh;
+- fifteen-minute rotating-answer lifetime;
+- 512 unique IPv4 route limit before mutation;
+- target AAAA filtering for UDP and TCP;
+- default-route and unrelated-traffic preservation;
+- XPC timeouts and bounded startup retry;
+- owned preference checks;
+- fail-safe on active IPv4 tunnel-interface set change;
+- orphan DNS Proxy cleanup after host relaunch;
+- normal shutdown ordering: owned DNS Proxy first, Packet Tunnel second;
+- redacted diagnostics containing no raw domains, addresses, DNS payloads,
+  configuration text, keys, or unrestricted logs.
+
+### 5. Align the macOS UI to the Windows product reference
+
+After the coordinator and its tests are stable, update the five native views:
+
+1. Home
+2. VPN Profiles
+3. VPN Sites
+4. Troubleshooting
+5. Settings
+
+Use the Windows information hierarchy and wording density. Keep Network Extension,
+route, entitlement, XPC, and developer controls out of normal consumer surfaces.
+DNS Proxy installation/activation may require macOS-native system approval, so
+present that approval as a clear connection prerequisite rather than a diagnostic
+experiment.
+
+Retain the existing compact/wide adaptation, one scroll owner per screen,
+keyboard focus, VoiceOver labels/announcements, high contrast, reduced motion,
+and Automatic/Light/Dark choice. Do not copy XAML or introduce a cross-platform UI
+framework.
+
+### 6. Run the signed parity matrix
+
+Compilation and unsigned builds are only preliminary checks. On the owner's Mac,
+use the existing private signing configuration without committing it, then verify:
+
+- fresh connection and system-extension approval behavior;
+- UDP and TCP target A/AAAA plus unrelated controls;
+- live dynamic CDN observations and route updates;
+- rotating-answer retention and expiry;
+- 512-route rejection before partial mutation;
+- default route and control destination preservation;
+- DNS Proxy preference/ownership loss;
+- Tailscale stable coexistence and transition fail-safe;
+- host quit/relaunch;
+- Packet Tunnel and DNS Proxy provider termination;
+- sleep/wake and primary-network change;
+- normal disconnect and restart/orphan recovery;
+- bounded troubleshooting export;
+- the Windows-referenced UI at compact/wide, keyboard, VoiceOver, light/dark,
+  and increased-contrast settings.
+
+Record sanitized counts, states, durations, interfaces, and pass/fail results only.
+Do not record resolver addresses, selected domains beyond the public test rules,
+raw DNS payloads, real profile content, private keys, Team IDs, or account data.
+
+## Build and release limitations
+
+- `scripts/macos/verify-release.sh` builds the WireGuard Go bridge and verifies an
+  unsigned arm64/macOS 15 Release package.
+- Xcode 26.6 / Swift 6.3.3 previously crashed in the optimized host SIL
+  performance pass. The script contains a documented
+  `-disable-sil-perf-optzns` workaround.
+- Public distribution remains blocked until a clean optimized Release archive
+  succeeds without that workaround.
+- The Go `c-archive` `LC_DYSYMTAB` linker-warning disposition must be resolved or
+  validated through final signing, notarization, Gatekeeper, and clean-machine
+  runtime evidence.
+- Developer ID Network Extension provisioning, nested signing, notarization,
+  stapling, `spctl`, and clean supported-Mac installation remain unproven.
+- The prior private dogfood baseline was Apple Silicon, macOS 15 or later.
+
+Do not tag or claim a public macOS release until these gates and the signed parity
+matrix pass.
+
+## Completion record for each Mac work group
+
+1. Update `docs/macos-mvp-progress.md` with exact sanitized evidence.
+2. Update this document if the next starting point changes.
+3. Update `docs/platform-parity-contract.md` only for an owner-approved semantic
+   decision, not to excuse an implementation gap.
+4. Run `swift test` and the applicable unsigned/signed build checks.
+5. Run `git diff --check`.
+6. Review `git status --short` for generated signing, DerivedData, archives,
+   profiles, logs, and imported configs.
+7. Commit only sanitized source, tests, and documentation.

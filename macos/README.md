@@ -10,13 +10,22 @@ websites through that tunnel. Other traffic keeps using the Mac's normal network
 - WireGuard profiles only
 - selected-site IPv4 `/32` split routes
 - YouTube and Netflix media-domain expansion
-- five-minute static DNS re-resolution with a fifteen-minute fail-safe expiry
+- five-minute refresh with fifteen-minute rotating-answer retention and expiry
+- a separate DNS Proxy system extension that has passed signed development
+  testing for dynamic A observations and target AAAA filtering
 - Korean consumer UI
 
-Dynamic browser DNS observation remains a development-only experiment. The
-consumer path uses static pre-resolution. IPv6 split routing, encrypted-DNS
-coverage, second-VPN coexistence, automatic updates, and App Store distribution
-are not supported yet.
+The checked-in consumer Connect flow still starts with static pre-resolution, but
+the owner-approved parity target is to make the proven DNS Proxy path mandatory
+before the app reports `Connected`. That promotion and its new signed acceptance
+matrix are the next implementation milestone. Until they pass, this repository
+does not claim Windows/macOS feature parity or a public macOS release.
+
+Signed development tests have covered target UDP/TCP AAAA filtering, dynamic
+route updates, and a Tailscale/no-exit-node transition fail-safe. General
+encrypted-DNS environments, Developer ID distribution, notarization,
+clean-machine installation, automatic updates, and App Store distribution remain
+unsupported or unverified.
 
 ## Privacy and safety
 
@@ -68,3 +77,6 @@ only compilation and packaging; it cannot validate Network Extension activation.
 
 Signed dogfooding must be run from the owner's Xcode signing configuration on a
 real Mac. Never commit the Developer Team identifier or local signing settings.
+
+Codex resuming on the Mac should start with
+`docs/macos-next-session.md` at the repository root.

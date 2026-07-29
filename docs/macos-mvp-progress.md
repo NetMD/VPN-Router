@@ -1,17 +1,20 @@
 # VPN Router macOS MVP progress
 
-Last updated: 2026-07-28 KST
+Last updated: 2026-07-29 KST
 
 ## Current phase
 
-Phase 4 complete for signed private dogfooding: consumer UI and release hardening.
+Phase 4 is complete for the previous signed private-dogfood architecture. The
+next active milestone is the owner-approved Windows/macOS parity pass documented
+in `docs/macos-next-session.md` and `docs/platform-parity-contract.md`.
 
 The signed DNS Proxy spike proved native UDP/TCP forwarding, XPC observations,
 simultaneous Packet Tunnel operation, TTL-bounded dynamic IPv4 route updates, and
-clean teardown on this development Mac. The macOS MVP nevertheless keeps static
-pre-resolution as its default supported architecture because general encrypted
-DNS compatibility, Developer ID distribution provisioning, and IPv6 routing
-outside the explicit DNS Proxy path remain unverified.
+clean teardown on the previous development Mac. The checked-in consumer Connect
+flow still uses static pre-resolution as its supported path, but that is now an
+implementation gap rather than the intended final architecture. General
+encrypted-DNS compatibility, Developer ID distribution provisioning, and public
+distribution remain unverified.
 
 Owner direction changed on 2026-07-28 after the Windows/macOS parity review.
 `docs/platform-parity-contract.md` now defines the target: promote the proven DNS

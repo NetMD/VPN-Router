@@ -1,17 +1,21 @@
 # VPN Router macOS MVP handoff
 
-Last updated: 2026-07-20 KST
+Last updated: 2026-07-29 KST
 
 ## Start here
 
-This document is the entry point for Codex continuing development on a Mac. Read
-this file completely before creating the Xcode project or changing product scope.
-Also read:
+Codex continuing development on a Mac must read
+`docs/macos-next-session.md` first. That document contains the current executable
+work order after the signed DNS Proxy evidence and owner-approved parity
+decision. This handoff retains the architecture, safety decisions, and phase
+history. Read it completely before changing product scope. Also read:
 
-1. `docs/windows-mvp-progress.md` for behavior already proven on Windows;
-2. `docs/v0.1.0-release-plan.md` for the current product and safety decisions;
-3. `windows/VpnRouter.Core/Rules/DomainRuleExpander.cs` for the current media-domain behavior;
-4. `windows/VpnRouter.Vpn/WireGuard/WireGuardConfigParser.cs` for parsing cases and sanitization semantics, not for source reuse.
+1. `docs/platform-parity-contract.md` for the owner-approved common behavior;
+2. `docs/macos-mvp-progress.md` for signed real-Mac evidence and chronology;
+3. `docs/windows-mvp-progress.md` for behavior already proven on Windows;
+4. `docs/v0.1.0-release-plan.md` for the current Windows release state;
+5. `windows/VpnRouter.Core/Rules/DomainRuleExpander.cs` for the current media-domain behavior;
+6. `windows/VpnRouter.Vpn/WireGuard/WireGuardConfigParser.cs` for parsing cases and sanitization semantics, not for source reuse.
 
 The Windows implementation is a validated product prototype, not a portable
 networking library. Reproduce its user-visible behavior with macOS-native APIs.
@@ -368,7 +372,7 @@ misuse or third-party service manipulation is present.
 
 ## First commands on the Mac
 
-Run read-only inventory before creating files:
+Run read-only inventory at the beginning of every new Mac continuation:
 
 ```bash
 pwd
@@ -380,11 +384,13 @@ xcodebuild -version
 swift --version
 ```
 
-Then read this document and inspect only the sanitized Windows source files named in
-the Start here section. Do not run a broad search that prints `.conf` contents.
+Then follow `docs/macos-next-session.md`. Phase 0 is already complete for the
+previous development Mac, so reproduce the environment inventory but do not
+recreate the project or replace working signed identifiers. Do not run a broad
+search that prints `.conf` contents.
 
-Before scaffolding, write the discovered environment and proposed bundle identifiers
-into a new `docs/macos-mvp-progress.md`. Do not put Team IDs, signing certificates,
+Record only changed environment facts and sanitized test results in the existing
+`docs/macos-mvp-progress.md`. Do not put Team IDs, signing certificates,
 provisioning profiles, Apple account information, or Keychain data in that file.
 
 ## Definition of the first useful macOS checkpoint
