@@ -49,6 +49,50 @@ diagnostic density.
 7. Do not claim public parity until Developer ID distribution provisioning and a
    clean optimized Release archive also pass.
 
+### 2026-07-29 consumer connection coordinator checkpoint
+
+The first parity implementation group is complete in source and automated tests:
+
+- `ConsumerConnectionCoordinator` now owns the ordered consumer state machine
+  from `preflighting` through `ready`, plus `disconnecting` and stable
+  `failed(stage, code)` results.
+- The supported Connect action validates the selected profile/sites and
+  encrypted-DNS preconditions before mutation, prepares and starts Packet Tunnel,
+  enables only VPN Router's DNS Proxy, publishes the expanded targets through
+  the bounded XPC retry path, verifies owned preference/provider readiness, and
+  arms the active-tunnel-set safety prerequisite before exposing `Connected`.
+- A manual confirmation is required when browser policy or Private Relay state
+  cannot be verified through supported APIs. A blocking browser DoH policy stops
+  before Packet Tunnel mutation.
+- Failure after a Packet Tunnel or DNS Proxy start attempt cleans up in reverse
+  ownership order: VPN Router's owned DNS Proxy first, then Packet Tunnel. The
+  injected tests cover preflight, preparation, Packet Tunnel start, DNS Proxy
+  enablement, target publication, provider verification, and safety-monitor
+  arming failures.
+- Host relaunch no longer presents a connected Packet Tunnel as a complete
+  consumer connection until owned DNS Proxy target/XPC readiness is restored.
+  A connected static-only orphan is stopped through Network Extension instead of
+  being reported as parity-safe.
+- Five-minute static refresh, 15-second observation refresh, and the DNS Proxy
+  ownership/tunnel-interface monitors now run only after the coordinator reaches
+  `ready`.
+- Troubleshooting schema version 2 adds only the bounded coordinator stage and
+  stable failure code. It still has no raw domains, addresses, DNS payloads,
+  configuration text, keys, or unrestricted provider messages.
+
+The continuation environment was unchanged: macOS 26.5.2, arm64, Xcode 26.6,
+macOS SDK 26.5, and Swift 6.3.3. The pre-change baseline passed all 48 focused
+checks. The new suite passes 51 checks, including a seven-case parameterized
+failure matrix and disconnect ordering. An unsigned arm64/macOS 15 Debug build
+of the Host, Packet Tunnel, and DNS Proxy targets succeeds. The build reused the
+previously prepared WireGuard Go archive; the recorded `LC_DYSYMTAB` warning
+remains a release limitation, and signed Network Extension behavior is not
+claimed from this build.
+
+Next: exercise the new atomic consumer sequence in an owner-signed build, promote
+fresh DNS Proxy system-extension approval from developer diagnostics into a
+consumer prerequisite, then begin the Windows-referenced five-screen UI pass.
+
 Captive-portal discovery, sign-in, and recovery are explicitly outside the
 `v0.1.0` release scope by owner decision on 2026-07-28. VPN Router must not be
 used to perform portal authentication; the user completes the portal with VPN

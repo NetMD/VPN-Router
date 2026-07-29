@@ -140,6 +140,27 @@ provider packet handling that already passed signed tests. First extract a
 consumer connection coordinator from the large `ContentView` ownership and move
 the proven activation sequence into it.
 
+### Continuation update: coordinator implemented, signed gate pending
+
+On 2026-07-29 the coordinator work above was implemented:
+
+- the consumer state machine has stable stages and bounded failure codes;
+- Connect keeps product state pending through Packet Tunnel start, owned DNS
+  Proxy enablement, XPC target publication, provider readiness, and the
+  tunnel-interface safety prerequisite;
+- partial starts clean up owned DNS Proxy state before Packet Tunnel;
+- relaunch refuses to treat a connected static-only Packet Tunnel as ready;
+- route refresh and ownership monitors are gated on consumer readiness;
+- troubleshooting schema 2 records only stage and failure code;
+- all 51 focused checks pass, including every injected failure stage and
+  disconnect ordering;
+- the unsigned arm64/macOS 15 Host/Packet Tunnel/DNS Proxy Debug build succeeds.
+
+This is automated and unsigned evidence only. Resume with an owner-signed test of
+the atomic sequence. Fresh system-extension approval must then become a normal
+consumer prerequisite rather than a Debug diagnostic control. If the signed
+sequence passes, continue with the five-screen Windows-referenced UI alignment.
+
 ## Immediate implementation order
 
 ### 1. Reproduce the baseline

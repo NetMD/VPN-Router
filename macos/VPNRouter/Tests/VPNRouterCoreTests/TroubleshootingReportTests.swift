@@ -10,6 +10,8 @@ final class TroubleshootingReportTests: XCTestCase {
             system: .init(operatingSystem: "macOS", architecture: "arm64"),
             connection: .init(
                 state: "disconnected",
+                stage: "verifyingDNSProxy",
+                failureCode: "dns-proxy-xpc-unready",
                 configurationInstalled: true,
                 packetTunnelSessionAvailable: false
             ),
@@ -36,8 +38,10 @@ final class TroubleshootingReportTests: XCTestCase {
         let data = try TroubleshootingReportEncoder.encode(report)
         let text = try XCTUnwrap(String(data: data, encoding: .utf8))
 
-        XCTAssertTrue(text.contains("\"schemaVersion\" : 1"))
+        XCTAssertTrue(text.contains("\"schemaVersion\" : 2"))
         XCTAssertTrue(text.contains("\"plannedRouteCount\" : 27"))
+        XCTAssertTrue(text.contains("\"stage\" : \"verifyingDNSProxy\""))
+        XCTAssertTrue(text.contains("\"failureCode\" : \"dns-proxy-xpc-unready\""))
         XCTAssertFalse(text.localizedCaseInsensitiveContains("privatekey"))
         XCTAssertFalse(text.localizedCaseInsensitiveContains("sanitizedconfiguration"))
         XCTAssertFalse(text.localizedCaseInsensitiveContains("dnspayload"))
@@ -53,6 +57,8 @@ final class TroubleshootingReportTests: XCTestCase {
             system: .init(operatingSystem: "macOS", architecture: "arm64"),
             connection: .init(
                 state: "connected",
+                stage: "ready",
+                failureCode: nil,
                 configurationInstalled: true,
                 packetTunnelSessionAvailable: true
             ),

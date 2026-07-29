@@ -66,6 +66,13 @@ struct DNSProxyObservationSettingsStore {
         }
     }
 
+    func verifyConsumerReadiness() async throws {
+        let snapshot = try await summary()
+        guard snapshot.eventCounts["providerStarted", default: 0] > 0 else {
+            throw DNSProxyXPCError.providerNotStarted
+        }
+    }
+
     private func expandedTargetDomains(_ domains: [String]) -> [String] {
         let profileId = DomainRuleStore.sharedSiteRulesProfileId
         let rules = domains.map {
@@ -218,6 +225,7 @@ private enum DNSProxyXPCError: LocalizedError {
     case emptyTargetDomains
     case targetDomainsRejected
     case emptySnapshot
+    case providerNotStarted
     case unsupportedSchema(Int)
 
     var errorDescription: String? {
@@ -238,6 +246,8 @@ private enum DNSProxyXPCError: LocalizedError {
             "DNS Proxy가 대상 도메인 설정을 거부했습니다."
         case .emptySnapshot:
             "DNS Proxy가 빈 진단 응답을 반환했습니다."
+        case .providerNotStarted:
+            "DNS Proxy provider 시작 상태를 확인할 수 없습니다."
         case .unsupportedSchema(let version):
             "지원하지 않는 DNS Proxy 진단 스키마입니다: \(version)"
         }

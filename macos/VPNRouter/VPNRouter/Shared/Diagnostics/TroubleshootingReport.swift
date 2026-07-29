@@ -1,7 +1,7 @@
 import Foundation
 
 nonisolated struct TroubleshootingReport: Codable, Equatable {
-    static let currentSchemaVersion = 1
+    static let currentSchemaVersion = 2
 
     let schemaVersion: Int
     let generatedAt: Date
@@ -46,6 +46,8 @@ nonisolated struct TroubleshootingReport: Codable, Equatable {
 
     nonisolated struct ConnectionSummary: Codable, Equatable {
         let state: String
+        let stage: String
+        let failureCode: String?
         let configurationInstalled: Bool
         let packetTunnelSessionAvailable: Bool
     }

@@ -11,7 +11,8 @@ let package = Package(
         .library(name: "VPNRouterCore", targets: ["VPNRouterCore"]),
         .library(name: "VPNRouterSettings", targets: ["VPNRouterSettings"]),
         .library(name: "VPNRouterDNSObservation", targets: ["VPNRouterDNSObservation"]),
-        .library(name: "VPNRouterDNSProxyControl", targets: ["VPNRouterDNSProxyControl"])
+        .library(name: "VPNRouterDNSProxyControl", targets: ["VPNRouterDNSProxyControl"]),
+        .library(name: "VPNRouterConnection", targets: ["VPNRouterConnection"])
     ],
     targets: [
         .target(
@@ -58,13 +59,20 @@ let package = Package(
             ],
             sources: ["DNSProxyConfigurationPolicy.swift"]
         ),
+        .target(
+            name: "VPNRouterConnection",
+            path: "VPNRouter/Services/Tunnel",
+            exclude: ["TunnelProfileConfiguration.swift"],
+            sources: ["ConsumerConnectionCoordinator.swift"]
+        ),
         .testTarget(
             name: "VPNRouterCoreTests",
             dependencies: [
                 "VPNRouterCore",
                 "VPNRouterSettings",
                 "VPNRouterDNSObservation",
-                "VPNRouterDNSProxyControl"
+                "VPNRouterDNSProxyControl",
+                "VPNRouterConnection"
             ]
         )
     ]
