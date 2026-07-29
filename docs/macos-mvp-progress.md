@@ -1105,3 +1105,10 @@ metadata, minimum OS, architecture, and required entitlements. A no-connect
 launch smoke also passed. This advances the gate to owner-operated System
 Extension approval and live connection testing; it does not prove activation,
 routing, DNS, disconnect, or recovery.
+
+The signed Home Connect action then reached the required manual browser
+secure-DNS/Private Relay confirmation. Exercising **Cancel** left Packet Tunnel
+unconfigured and preserved the already-approved DNS Proxy System Extension
+state. The confirmation was reopened without auto-accepting it and remains
+awaiting owner input. This proves the current signed preflight cancellation path
+does not partially install the tunnel; it is not a successful connection result.

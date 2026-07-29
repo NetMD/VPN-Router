@@ -113,8 +113,12 @@ recorded evidence to reproduce on the Mac, not as proof from the Windows host.
 An owner-signed optimized Release app from commit `f390972` passed
 `verify-signed-app.sh --mode development` for the Host App, Packet Tunnel, and DNS
 Proxy System Extension, then passed a no-connect launch smoke. The app was left
-open for the owner-operated connection/approval matrix. No signing identity,
-Team ID, profile content, key, or network detail was recorded.
+open for the owner-operated connection/approval matrix. Its Home Connect action
+reached the mandatory encrypted-DNS/Private Relay confirmation; cancellation
+created no Packet Tunnel configuration and left the already-approved DNS Proxy
+System Extension state unchanged. The confirmation was reopened and left
+awaiting owner input. No signing identity, Team ID, profile content, key, or
+network detail was recorded.
 
 ## Latest signed real-Mac evidence
 

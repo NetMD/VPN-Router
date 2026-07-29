@@ -88,6 +88,11 @@ remains in the signed matrix.
   development verifier for all three nested bundles and launched successfully
   without invoking a connection. This is signed structure/launch evidence, not
   Network Extension activation or routing evidence.
+- macOS: the same signed build exposed an enabled Home Connect action, entered
+  the required manual encrypted-DNS/Private Relay confirmation, and accepted
+  cancellation without creating a Packet Tunnel configuration or changing the
+  already-approved DNS Proxy System Extension state. The confirmation was then
+  reopened and left for owner input.
 - Repository: `git diff --check` passes.
 - Windows: a temporary official .NET 10.0.301 SDK cross-targeted the current
   Core, IPC, Networking, VPN, Launcher, Service, and Tests projects successfully
