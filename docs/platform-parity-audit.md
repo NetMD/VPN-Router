@@ -92,7 +92,8 @@ remains in the signed matrix.
   the required manual encrypted-DNS/Private Relay confirmation, and accepted
   cancellation without creating a Packet Tunnel configuration or changing the
   already-approved DNS Proxy System Extension state. The confirmation was then
-  reopened and left for owner input.
+  reopened for owner input. A subsequent check found it dismissed with Packet
+  Tunnel still unconfigured, so no approval or successful connection is inferred.
 - Repository: `git diff --check` passes.
 - Windows: a temporary official .NET 10.0.301 SDK cross-targeted the current
   Core, IPC, Networking, VPN, Launcher, Service, and Tests projects successfully

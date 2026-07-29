@@ -1110,5 +1110,7 @@ The signed Home Connect action then reached the required manual browser
 secure-DNS/Private Relay confirmation. Exercising **Cancel** left Packet Tunnel
 unconfigured and preserved the already-approved DNS Proxy System Extension
 state. The confirmation was reopened without auto-accepting it and remains
-awaiting owner input. This proves the current signed preflight cancellation path
-does not partially install the tunnel; it is not a successful connection result.
+subject to owner input. A subsequent check found the confirmation dismissed and
+Packet Tunnel still unconfigured, so no approval or successful connection is
+inferred. This proves the current signed preflight cancellation path does not
+partially install the tunnel; it is not a successful connection result.

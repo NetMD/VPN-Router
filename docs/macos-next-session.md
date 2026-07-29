@@ -117,8 +117,10 @@ open for the owner-operated connection/approval matrix. Its Home Connect action
 reached the mandatory encrypted-DNS/Private Relay confirmation; cancellation
 created no Packet Tunnel configuration and left the already-approved DNS Proxy
 System Extension state unchanged. The confirmation was reopened and left
-awaiting owner input. No signing identity, Team ID, profile content, key, or
-network detail was recorded.
+for owner input; a subsequent check found it dismissed with Packet Tunnel still
+unconfigured. Reopen it with Home Connect after the owner completes the stated
+manual checks. No signing identity, Team ID, profile content, key, or network
+detail was recorded.
 
 ## Latest signed real-Mac evidence
 
