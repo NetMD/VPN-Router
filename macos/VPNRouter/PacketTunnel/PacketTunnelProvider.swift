@@ -9,12 +9,13 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         subsystem: Bundle.main.bundleIdentifier ?? "VPNRouter.PacketTunnel",
         category: "PacketTunnel"
     )
-    private lazy var wireGuardAdapter = WireGuardAdapter(with: self) { [weak self] level, message in
-        self?.wireGuardRuntimeMessage = "WireGuardKit: \(message)"
-        self?.logger.log(level: level.osLogType, "WireGuardKit: \(message, privacy: .public)")
+    private lazy var wireGuardAdapter = WireGuardAdapter(with: self) { [weak self] level, _ in
+        self?.updateWireGuardRuntimeMessage("WireGuard 런타임 이벤트를 확인했습니다.")
+        self?.logger.log(level: level.osLogType, "WireGuardKit emitted a runtime event.")
     }
     private var activeConfiguration = ProviderRuntimeConfiguration.phase0Stub
-    private var wireGuardRuntimeMessage = "WireGuard가 아직 시작되지 않았습니다."
+    private let wireGuardRuntimeMessageLock = NSLock()
+    private var storedWireGuardRuntimeMessage = "WireGuard가 아직 시작되지 않았습니다."
     private var routeExpirationTimer: DispatchSourceTimer?
 
     override func startTunnel(
@@ -43,8 +44,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         logger.info("Stopping packet tunnel. Reason: \(reason.rawValue)")
         cancelRouteExpirationTimer()
         wireGuardAdapter.stop { [logger] error in
-            if let error {
-                logger.error("WireGuardKit stop returned: \(String(describing: error), privacy: .public)")
+            if error != nil {
+                logger.error("WireGuardKit stop returned an error.")
             }
             completionHandler()
         }
@@ -69,7 +70,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             routePlanExpiresAt: activeConfiguration.routePlanExpiresAt,
             failSafeEnabled: true,
             wireGuardKitLinked: true,
-            message: activeConfiguration.mode == "phase1-wireguard" ? wireGuardRuntimeMessage : activeConfiguration.diagnosticMessage,
+            message: activeConfiguration.mode == "phase1-wireguard"
+                ? currentWireGuardRuntimeMessage()
+                : activeConfiguration.diagnosticMessage,
             updatedAt: Date()
         )
 
@@ -98,22 +101,22 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                 privateKey: privateKey
             )
 
-            wireGuardRuntimeMessage = "WireGuard 시작을 요청했습니다."
+            updateWireGuardRuntimeMessage("WireGuard 시작을 요청했습니다.")
             wireGuardAdapter.start(tunnelConfiguration: tunnelConfiguration) { [weak self] error in
                 if let error {
-                    self?.wireGuardRuntimeMessage = "WireGuard를 시작하지 못했습니다: \(String(describing: error))"
-                    self?.logger.error("WireGuardKit start failed: \(String(describing: error), privacy: .public)")
+                    self?.updateWireGuardRuntimeMessage("WireGuard를 시작하지 못했습니다.")
+                    self?.logger.error("WireGuardKit start failed.")
                     completionHandler(error)
                     return
                 }
 
-                self?.wireGuardRuntimeMessage = "WireGuard 연결을 시작했습니다."
+                self?.updateWireGuardRuntimeMessage("WireGuard 연결을 시작했습니다.")
                 self?.logger.info("WireGuardKit adapter started.")
                 self?.scheduleRouteExpiration()
                 completionHandler(nil)
             }
         } catch {
-            logger.error("Unable to start WireGuardKit adapter: \(error.localizedDescription, privacy: .public)")
+            logger.error("Unable to start WireGuardKit adapter.")
             completionHandler(error)
         }
     }
@@ -217,9 +220,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                     completionHandler?(nil)
                     return
                 }
-                if let error {
-                    self.wireGuardRuntimeMessage = "WireGuard 경로를 새로고치지 못했습니다: \(String(describing: error))"
-                    self.logger.error("WireGuardKit route update failed: \(String(describing: error), privacy: .public)")
+                if error != nil {
+                    self.updateWireGuardRuntimeMessage("WireGuard 경로를 새로고치지 못했습니다.")
+                    self.logger.error("WireGuardKit route update failed.")
                     self.completeRouteUpdate(
                         success: false,
                         message: "WireGuardKit이 새 경로 계획을 적용하지 못했습니다.",
@@ -229,7 +232,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                 }
 
                 self.activeConfiguration = replacement
-                self.wireGuardRuntimeMessage = "WireGuard에 새 분할 경로를 적용했습니다."
+                self.updateWireGuardRuntimeMessage("WireGuard에 새 분할 경로를 적용했습니다.")
                 self.scheduleRouteExpiration()
                 self.logger.info("Applied refreshed split-route plan with \(replacement.includedRoutes.count) route(s).")
                 self.completeRouteUpdate(
@@ -239,7 +242,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                 )
             }
         } catch {
-            logger.error("Rejected provider route update: \(error.localizedDescription, privacy: .public)")
+            logger.error("Rejected provider route update.")
             completeRouteUpdate(
                 success: false,
                 message: error.localizedDescription,
@@ -276,7 +279,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                 return
             }
             self.logger.error("Split-route plan expired before a successful refresh; cancelling tunnel.")
-            self.wireGuardRuntimeMessage = "경로 계획이 만료되어 VPN 연결 해제를 요청했습니다."
+            self.updateWireGuardRuntimeMessage("경로 계획이 만료되어 VPN 연결 해제를 요청했습니다.")
             self.cancelTunnelWithError(PacketTunnelRuntimeError.routePlanExpired)
         }
         routeExpirationTimer = timer
@@ -286,6 +289,18 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     private func cancelRouteExpirationTimer() {
         routeExpirationTimer?.cancel()
         routeExpirationTimer = nil
+    }
+
+    private func currentWireGuardRuntimeMessage() -> String {
+        wireGuardRuntimeMessageLock.lock()
+        defer { wireGuardRuntimeMessageLock.unlock() }
+        return storedWireGuardRuntimeMessage
+    }
+
+    private func updateWireGuardRuntimeMessage(_ message: String) {
+        wireGuardRuntimeMessageLock.lock()
+        storedWireGuardRuntimeMessage = message
+        wireGuardRuntimeMessageLock.unlock()
     }
 }
 

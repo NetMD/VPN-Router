@@ -34,6 +34,9 @@ enum AppAppearance: String, CaseIterable, Identifiable {
 
 @main
 struct VPNRouterApp: App {
+    @NSApplicationDelegateAdaptor(ApplicationDelegate.self)
+    private var applicationDelegate
+
     @AppStorage(AppAppearance.storageKey)
     private var appAppearanceRawValue = AppAppearance.automatic.rawValue
 

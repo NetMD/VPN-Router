@@ -64,7 +64,10 @@ let package = Package(
             name: "VPNRouterConnection",
             path: "VPNRouter/Services/Tunnel",
             exclude: ["TunnelProfileConfiguration.swift"],
-            sources: ["ConsumerConnectionCoordinator.swift"]
+            sources: [
+                "ConsumerConnectionCoordinator.swift",
+                "PacketTunnelStartWaitPolicy.swift"
+            ]
         ),
         .target(
             name: "VPNRouterProfilePolicy",

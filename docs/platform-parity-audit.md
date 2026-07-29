@@ -13,15 +13,15 @@ proof even when earlier development builds passed the same low-level behavior.
 | Profile lifecycle | Native service profile store and DPAPI import/rename/select/delete; Windows release matrix recorded in `docs/windows-mvp-progress.md`. | Keychain-backed import/select/delete plus `ProfileRenamePolicy`; four focused rename tests prove trimming, targeted mutation, stable identity/secret reference, and bounded failures. | Implemented; current macOS signed persistence rerun pending. |
 | Secret storage | DPAPI-protected material; redacted diagnostics tests and release evidence. | `KeychainSecretStore`; metadata contains only sanitized configuration and summary. Existing signed import/delete evidence is recorded in `docs/macos-mvp-progress.md`. | Implemented; no raw configuration or key was used in this audit. |
 | Site rules | Shared product semantics in native C# expander and Windows tests. | `DomainRuleExpander` and five focused normalization/media-expansion tests. | Automated on both recorded matrices. |
-| Dynamic discovery | Local DNS proxy observes target A answers and updates host routes; Windows signed matrix recorded. | DNS Proxy XPC observations feed `DynamicRoutePlanMerger` and live Packet Tunnel route replacement; signed build 20 evidence recorded. | Implemented; current consumer-path signed rerun pending. |
+| Dynamic discovery | Local DNS proxy observes target A answers and updates host routes; Windows signed matrix recorded. | DNS Proxy XPC observations feed `DynamicRoutePlanMerger` and live Packet Tunnel route replacement; the current signed consumer path published targets, reached readiness, and applied 41 routes. | Implemented; long-duration current-build rotation/expiry rerun pending. |
 | Route lifetime | Five-minute refresh and individual fifteen-minute expiration while the native service remains active. | Five-minute refresh, bounded static history, observation TTL merge, and individual expiration within each replacement plan. If the host cannot maintain a fresh plan, Packet Tunnel mandatorily disconnects at the plan boundary so no stale selected-site route survives. | Same safety result through native lifecycle differences; automated, with a signed long-duration rerun pending for the current build. |
 | Route bound | Windows rejects more than 512 combined routes before mutation. | Static planner and dynamic merger reject more than 512 unique IPv4 routes before provider update. | Automated. |
-| IPv6 protection | Windows DNS proxy returns target AAAA empty-success and preserves unrelated AAAA. | macOS UDP/TCP DNS parser/provider does the same; parser tests and signed build 20 cover target/control behavior. | Automated plus historical signed evidence; current signed rerun pending. |
-| Normal traffic | Windows signed route matrix preserves default/control traffic. | Network Extension uses selected IPv4 `/32` included routes and preserves the primary default route; historical signed matrix passed. | Current signed rerun pending. |
+| IPv6 protection | Windows DNS proxy returns target AAAA empty-success and preserves unrelated AAAA. | macOS UDP/TCP DNS parser/provider does the same; the current signed consumer run returned target A, empty target AAAA, and preserved unrelated AAAA over both UDP and TCP. | Current signed behavior passed. |
+| Normal traffic | Windows signed route matrix preserves default/control traffic. | Network Extension uses selected IPv4 `/32` included routes; the current signed run put a selected target on a non-default `utun` and kept a control destination on the primary default interface. | Current signed behavior passed. |
 | Encrypted DNS | Windows detects browser policy and DNS conflicts without changing them. | `EncryptedDNSPreflightService` and `DNSProxyConfigurationPolicy` block enabled/unknown policy, allow explicit disablement, and require manual Private Relay confirmation. | Automated policy evidence; manual current-build check pending. |
-| DNS ownership | Windows owns its local DNS path and health monitor before final connected state. | `ConsumerConnectionCoordinator` withholds ready through owned preference, XPC publication, provider readiness, and safety arming. | Eight injected failure cases pass; signed atomic sequence pending. |
+| DNS ownership | Windows owns its local DNS path and health monitor before final connected state. | `ConsumerConnectionCoordinator` withholds ready through owned preference, XPC publication, provider readiness, and safety arming. The current signed sequence exposed `Connected` only after the complete path. | Automated and current signed atomic start passed; explicit ownership-loss injection pending. |
 | Fail-safe | Windows DNS health/recovery cleanup stops only VPN Router-owned proxy/routes/VPN and restores its snapshot; Settings exposes no disable control. | Coordinator cleans DNS Proxy before Packet Tunnel; ownership and active-`utun` monitors fail safe without altering another provider. Route-plan expiry protection is mandatory; a legacy disabled preference is removed and an already-connected provider is re-armed or disconnected. | Automated plus historical Tailscale/expiry evidence; current signed migration and matrix rerun pending. |
-| Lifecycle | Windows privileged service owns state and startup recovery. | `NEVPNStatus`, owned preference reconciliation, relaunch rejection of static-only state, wake/network observation, and orphan cleanup. | Historical signed matrix passed; current consumer relaunch/restart rerun pending. |
+| Lifecycle | Windows privileged service owns state and startup recovery. | `NEVPNStatus`, owned preference reconciliation, connected-Quit background coordination, unexpected-provider failure state, wake/network observation, and orphan cleanup. | Current signed normal disconnect, connected close/reopen, provider-loss cleanup, and reconnect passed; sleep/network-change rerun pending. |
 | Diagnostics | Windows schema-bounded troubleshooting artifact and redaction tests. | Troubleshooting schema 2 contains bounded counts/state/timestamps/stage/failure code only. | Automated plus historical signed export; current UI export rerun pending. |
 | Captive portals | Disconnect-first manual guidance; no automatic mutation. | Same disconnect-first guidance; no portal or third-party mutation code. | In scope statement satisfied. |
 
@@ -71,7 +71,7 @@ remains in the signed matrix.
 
 ## Automated evidence at this audit point
 
-- macOS: 25 XCTest cases plus 30 Swift Testing cases pass (55 focused checks).
+- macOS: 25 XCTest cases plus 34 Swift Testing cases pass (59 focused checks).
 - macOS: unsigned arm64 Debug build and Xcode Analyze pass for the Host App,
   Packet Tunnel, and DNS Proxy System Extension when `libwg-go.a` is staged.
 - macOS: the canonical release script rebuilt `libwg-go.a` with Go 1.26.5 and
@@ -94,6 +94,17 @@ remains in the signed matrix.
   already-approved DNS Proxy System Extension state. The confirmation was then
   reopened for owner input. A subsequent check found it dismissed with Packet
   Tunnel still unconfigured, so no approval or successful connection is inferred.
+- macOS: later owner-signed optimized development builds under `/Applications`
+  completed the full consumer connection, normal disconnect, reconnect,
+  provider-loss cleanup/recovery, and connected close/reopen sequence. UDP/TCP
+  target A/AAAA and unrelated AAAA controls passed, selected traffic used a
+  split `utun`, control traffic retained the primary default route, and three
+  HTTPS controls returned 200. The current installed dogfood build is
+  `0.1.0 (6)`; this is development evidence, not distribution evidence.
+- macOS: the reported compact-window error-access problem is fixed with visible
+  full-page scrolling, full-height selectable status text, and a verified status
+  copy action. A 700-by-500 signed window accepted accessibility page scrolling
+  in both directions.
 - Repository: `git diff --check` passes.
 - Windows: a temporary official .NET 10.0.301 SDK cross-targeted the current
   Core, IPC, Networking, VPN, Launcher, Service, and Tests projects successfully
@@ -106,17 +117,14 @@ remains in the signed matrix.
 
 ## Gates still required before declaring parity
 
-1. Use the verified owner-signed macOS build to prove the normal Home Connect
-   action remains pending through System Extension approval and complete DNS
-   readiness. Signed structure and launch have passed; activation has not.
-2. Run all current-build DNS, dynamic-route, expiry/bound, default-route,
-   ownership-loss, second-VPN, relaunch/provider/lifecycle, disconnect/restart,
-   redaction, profile/Keychain, and UI/accessibility checks listed in
+1. Run the remaining current-build dynamic-route rotation/expiry/bound,
+   ownership-loss, second-VPN, sleep/network-change, redaction,
+   profile/Keychain, and full UI/accessibility checks listed in
    `docs/macos-next-session.md`.
-3. Rerun the Windows tests and signed recovery/UI smoke checks after removal of the
+2. Rerun the Windows tests and signed recovery/UI smoke checks after removal of the
    false Protection Mode control.
-4. Complete Developer ID signing, nested entitlement validation, notarization,
+3. Complete Developer ID signing, nested entitlement validation, notarization,
    stapling, Gatekeeper, and clean supported-Mac installation.
 
-Until all four gates pass, the implementation is aligned but public platform
+Until all three gates pass, the implementation is aligned but public platform
 parity is not proven and no release tag should be created.

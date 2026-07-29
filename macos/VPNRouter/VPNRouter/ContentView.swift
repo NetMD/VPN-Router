@@ -88,11 +88,11 @@ struct ContentView: View {
             }
         }
         .onChange(of: status) { _, newStatus in
+            updateTerminationPolicy(for: newStatus)
             announceForVoiceOver("VPN 상태: \(statusText)")
-            if newStatus == .disconnected,
-               dnsProxyConfigurationController.isEnabled {
+            if newStatus == .disconnected || newStatus == .invalid {
                 Task {
-                    await disableOrphanedDNSProxy()
+                    await handlePacketTunnelStopped(newStatus)
                 }
             }
         }
@@ -256,6 +256,8 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, alignment: .top)
             }
             .contentMargins(32)
+            .scrollIndicators(.visible)
+            .scrollBounceBehavior(.basedOnSize)
             .background(Color(nsColor: .windowBackgroundColor))
             .frame(minWidth: 440, minHeight: 420, alignment: .topLeading)
         }
@@ -430,8 +432,13 @@ struct ContentView: View {
     private var homeRecentStatusCard: some View {
         ProductCard(title: "최근 상태", systemImage: "clock.arrow.circlepath") {
             DiagnosticMessageView(message: lastMessage)
-            Button("문제 해결 열기") {
-                selectedSection = .diagnostics
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) {
+                    statusMessageButtons
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    statusMessageButtons
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -819,6 +826,11 @@ struct ContentView: View {
                     }
 
                     DiagnosticMessageView(message: lastMessage)
+                    Button {
+                        copyStatusMessage()
+                    } label: {
+                        Label("상태 메시지 복사", systemImage: "doc.on.doc")
+                    }
                 }
                 ipv6BypassWarning
 
@@ -1151,12 +1163,38 @@ struct ContentView: View {
         }
     }
 
+    @ViewBuilder
+    private var statusMessageButtons: some View {
+        Button {
+            copyStatusMessage()
+        } label: {
+            Label("상태 메시지 복사", systemImage: "doc.on.doc")
+        }
+
+        Button("문제 해결 열기") {
+            selectedSection = .diagnostics
+        }
+    }
+
+    private func copyStatusMessage() {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(lastMessage, forType: .string)
+    }
+
     private var statusText: String {
         switch connectionCoordinator.state {
         case .running(let stage):
             return stage == .disconnecting ? "연결 해제 중" : "보호 연결 준비 중"
         case .ready:
-            return status == .reasserting ? "경로 갱신 중" : "연결됨"
+            switch status {
+            case .connected:
+                return "연결됨"
+            case .reasserting:
+                return "경로 갱신 중"
+            default:
+                break
+            }
         case .failed:
             return "연결 실패"
         case .idle:
@@ -1190,7 +1228,8 @@ struct ContentView: View {
     }
 
     private var connectionButtonColor: Color {
-        if connectionCoordinator.state.isReady {
+        if connectionCoordinator.state.isReady
+                && (status == .connected || status == .reasserting) {
             return .green
         }
         if canStop {
@@ -1201,8 +1240,10 @@ struct ContentView: View {
 
     private var connectionStatusSymbol: String {
         switch connectionCoordinator.state {
-        case .ready:
+        case .ready where status == .connected || status == .reasserting:
             return "checkmark.shield.fill"
+        case .ready:
+            return "exclamationmark.triangle.fill"
         case .failed:
             return "exclamationmark.triangle.fill"
         case .running:
@@ -1214,8 +1255,10 @@ struct ContentView: View {
 
     private var connectionStatusColor: Color {
         switch connectionCoordinator.state {
-        case .ready:
+        case .ready where status == .connected || status == .reasserting:
             return .green
+        case .ready:
+            return .red
         case .failed:
             return .red
         case .running:
@@ -1254,7 +1297,6 @@ struct ContentView: View {
         activeOperation == nil
             && (
                 connectionCoordinator.state.isStarting
-                    || connectionCoordinator.state.isReady
                     || status == .connecting
                     || status == .connected
                     || status == .reasserting
@@ -1610,11 +1652,21 @@ struct ContentView: View {
         do {
             manager = try await loadOrCreateManager(preferPhase1: true)
             status = manager?.connection.status ?? .invalid
+            updateTerminationPolicy(for: status)
             lastMessage = "시스템에서 현재 VPN 상태를 불러왔습니다."
         } catch {
             status = .invalid
+            updateTerminationPolicy(for: status)
             lastMessage = "VPN 구성을 불러오지 못했습니다: \(error.localizedDescription)"
         }
+    }
+
+    private func updateTerminationPolicy(for status: NEVPNStatus) {
+        ActiveConnectionTerminationPolicy.shared.shouldKeepCoordinatorRunning =
+            status == .connecting
+                || status == .connected
+                || status == .reasserting
+                || status == .disconnecting
     }
 
     private func installStubConfiguration() async {
@@ -1912,20 +1964,39 @@ struct ContentView: View {
     private func waitForPacketTunnelConnection(
         _ manager: NETunnelProviderManager
     ) async throws {
-        for _ in 0..<300 {
+        var waitPolicy = PacketTunnelStartWaitPolicy()
+
+        for pollIndex in 0..<300 {
+            let startState: PacketTunnelStartState
             switch manager.connection.status {
+            case .invalid:
+                startState = .invalid
+            case .disconnected:
+                startState = .disconnected
+            case .connecting:
+                startState = .connecting
+            case .connected:
+                startState = .connected
+            case .reasserting:
+                startState = .reasserting
+            case .disconnecting:
+                startState = .disconnecting
+            @unknown default:
+                startState = .invalid
+            }
+
+            switch waitPolicy.evaluate(startState, pollIndex: pollIndex) {
             case .connected:
                 status = .connected
                 return
-            case .invalid, .disconnected:
+            case .failed:
                 throw ConsumerConnectionStepError(
                     code: "packet-tunnel-disconnected-during-start",
                     message: "Packet Tunnel이 준비되기 전에 연결이 종료되었습니다."
                 )
-            default:
-                break
+            case .wait:
+                try await Task.sleep(nanoseconds: 100_000_000)
             }
-            try await Task.sleep(nanoseconds: 100_000_000)
         }
         throw ConsumerConnectionStepError(
             code: "packet-tunnel-start-timeout",
@@ -2222,6 +2293,19 @@ struct ContentView: View {
             return
         }
 
+        await dnsProxyConfigurationController.enableForDiagnostics(
+            expectedBundleIdentifier: TunnelIdentifiers.dnsProxySystemExtensionBundleIdentifier
+        )
+        guard dnsProxyConfigurationController.runtimeState == .ownedEnabled else {
+            manager?.connection.stopVPNTunnel()
+            connectionCoordinator.recordFailure(
+                stage: .verifyingDNSProxy,
+                code: "dns-proxy-restart-failed-after-relaunch"
+            )
+            lastMessage = "재실행 후 VPN Router DNS Proxy provider를 다시 시작하지 못해 Packet Tunnel만 안전하게 해제했습니다."
+            return
+        }
+
         do {
             try await DNSProxyObservationSettingsStore()
                 .configureForDiagnosticRun(domains: siteDomains)
@@ -2253,6 +2337,22 @@ struct ContentView: View {
         dnsProxyObservationMessage = dnsProxyConfigurationController.runtimeState == .ownedEnabled
             ? "Packet Tunnel은 해제됐지만 VPN Router DNS Proxy 비활성화를 확인하지 못했습니다."
             : "Packet Tunnel 종료 후 VPN Router DNS Proxy를 비활성화했습니다."
+    }
+
+    private func handlePacketTunnelStopped(_ newStatus: NEVPNStatus) async {
+        if connectionCoordinator.state.isReady {
+            connectionCoordinator.recordFailure(
+                stage: .verifyingDNSProxy,
+                code: "packet-tunnel-runtime-disconnected"
+            )
+            lastMessage = newStatus == .invalid
+                ? "Packet Tunnel 구성이 예기치 않게 사라져 VPN Router 보호 연결을 종료했습니다."
+                : "Packet Tunnel이 예기치 않게 종료되어 VPN Router 보호 연결을 종료했습니다."
+        }
+
+        if dnsProxyConfigurationController.isEnabled {
+            await disableOrphanedDNSProxy()
+        }
     }
 
     private func runDNSProxyOwnershipMonitor() async {
@@ -2833,6 +2933,7 @@ private struct DiagnosticMessageView: View {
             .font(.callout)
             .foregroundStyle(.secondary)
             .textSelection(.enabled)
+            .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .topLeading)
             .accessibilityElement(children: .combine)
             .accessibilityLabel(message)

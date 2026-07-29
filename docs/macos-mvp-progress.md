@@ -611,7 +611,7 @@ A fake-key `RunCodeSnippet` check verified that:
   names where translation would reduce clarity.
 - Two focused settings tests now verify that a legacy false value cannot disable
   protection and that migration removes it while protection remains enabled. The
-  current complete suite passes 55 focused checks, and the unsigned Debug and
+  current complete suite passes 59 focused checks, and the unsigned Debug and
   optimized Release Host/extension builds succeed.
 - A signed real-Mac expiry test paused only the host app after a manual route refresh,
   leaving PacketTunnel connected without its five-minute refresh source. With the
@@ -1114,3 +1114,72 @@ subject to owner input. A subsequent check found the confirmation dismissed and
 Packet Tunnel still unconfigured, so no approval or successful connection is
 inferred. This proves the current signed preflight cancellation path does not
 partially install the tunnel; it is not a successful connection result.
+
+## 2026-07-30 signed consumer connection debugging and recovery
+
+The owner-signed consumer run exposed and resolved several runtime-only defects
+that compilation could not reveal:
+
+- launching the signed app from a temporary build directory caused DNS Proxy
+  System Extension activation to reject the containing-app location; installing
+  the verified app under `/Applications` advanced the sequence;
+- PlugInKit contained a second elected Packet Tunnel registration at the old
+  temporary path. The stale VPN Router registration alone was removed, leaving
+  exactly one elected Packet Tunnel at `/Applications/VPNRouter.app`;
+- `startVPNTunnel()` initially reports `.disconnected` before macOS posts its
+  asynchronous `.connecting` transition. The app treated that first sample as a
+  terminal failure and sent its own stop about one millisecond after start,
+  before `neagent` completed extension discovery. A bounded five-second initial
+  grace now waits for the first transition while still failing immediately if
+  the tunnel disconnects after progress;
+- a focused `PacketTunnelStartWaitPolicy` suite covers the initial asynchronous
+  transition, disconnect-after-progress, grace expiry, and disconnecting state.
+  The complete suite now passes 25 XCTest cases plus 34 Swift Testing cases
+  (59 focused checks);
+- the owner-signed optimized Release connected only after Packet Tunnel, owned
+  DNS Proxy, XPC target publication/readiness, and safety monitoring completed.
+  A clean normal disconnect returned the native VPN state to `Disconnected` and
+  removed the provider process;
+- on that signed connection, UDP and TCP each returned seven combined target A
+  answers, zero target AAAA answers, and two unrelated control AAAA answers.
+  YouTube, Netflix, and the control HTTPS endpoint each returned HTTP 200;
+- a selected target route used a non-default `utun`, while the control
+  destination continued to use the primary default interface;
+- terminating only the VPN Router Packet Tunnel changed the native state to
+  `Disconnected`, disabled the owned DNS Proxy configuration, changed the UI to
+  `Connection failed`, removed the stale `Connected` presentation, and left the
+  reconnect action available. The following owner-confirmed reconnect succeeded;
+- the status observer now records
+  `packet-tunnel-runtime-disconnected` when a ready Packet Tunnel exits
+  unexpectedly. Status text, color, symbol, and primary action require an active
+  native tunnel state instead of trusting stale coordinator readiness;
+- a later optimized Packet Tunnel start crash was reduced to a symbol-only crash
+  stack. It occurred while a WireGuard Go callback thread interpolated and
+  mutated the shared Swift runtime-message string. The callback now records only
+  a bounded generic event through a lock; raw WireGuard callback/error text is no
+  longer copied into OS logs or UI diagnostics. The next signed start remained
+  connected and produced no new crash report;
+- provider-message IPC makes a connected Packet Tunnel depend on the host
+  coordinator process. Connected Quit now hides the app while preserving the
+  host, Packet Tunnel, DNS Proxy, and native VPN session. Reopening restores the
+  window in `Connected` state. After normal disconnect, Quit terminates the host
+  normally. Forced provider loss still uses the verified fail-safe path;
+- the detail scroll view now exposes visible scroll indicators and content-sized
+  bounce behavior. Status messages wrap to full height and have a
+  `Copy status message` action on Home and Troubleshooting. Clipboard equality
+  was verified, and a 700-by-500 compact Troubleshooting window successfully
+  moved content with both page-up and page-down accessibility scroll actions.
+
+The latest installed dogfood app is an owner-signed development
+`0.1.0 (6)` optimized Release under `/Applications`. The signed verifier passed
+the Host App, Packet Tunnel, and DNS Proxy nested structure and entitlements.
+The canonical unsigned whole-module `-O` build still passes for arm64/minimum
+macOS 15 with the reproducible WireGuard Go archive SHA-256
+`29177134ad37d6105857d926977f0669759e1e4b542803d27dd5b794f10fd3fd`.
+
+This closes the signed atomic start, normal disconnect, provider-loss recovery,
+basic DNS/route behavior, connected UI close/reopen, and reported
+scroll/copy defects. It does not yet close the long-duration route
+retention/expiry, current-build 512-route live rejection, DNS ownership-loss,
+sleep/network-change, second-VPN transition, full five-screen accessibility, or
+Developer ID/notarization/clean-install gates.

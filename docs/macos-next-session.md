@@ -106,21 +106,16 @@ The repository contains:
 - Windows-referenced five-screen information hierarchy with one Home
   Connect/Disconnect action and technical controls contained in Troubleshooting.
 
-The Swift package test suite last passed 55 focused checks. The latest unsigned
+The Swift package test suite last passed 59 focused checks. The latest unsigned
 arm64 Debug app, Packet Tunnel, and DNS Proxy build also succeeded. Treat those as
 recorded evidence to reproduce on the Mac, not as proof from the Windows host.
 
-An owner-signed optimized Release app from commit `f390972` passed
-`verify-signed-app.sh --mode development` for the Host App, Packet Tunnel, and DNS
-Proxy System Extension, then passed a no-connect launch smoke. The app was left
-open for the owner-operated connection/approval matrix. Its Home Connect action
-reached the mandatory encrypted-DNS/Private Relay confirmation; cancellation
-created no Packet Tunnel configuration and left the already-approved DNS Proxy
-System Extension state unchanged. The confirmation was reopened and left
-for owner input; a subsequent check found it dismissed with Packet Tunnel still
-unconfigured. Reopen it with Home Connect after the owner completes the stated
-manual checks. No signing identity, Team ID, profile content, key, or network
-detail was recorded.
+Later owner-signed optimized Release builds installed under `/Applications`
+completed the atomic consumer connection, DNS/route checks, normal disconnect,
+unexpected-provider cleanup/reconnect, and connected close/reopen lifecycle.
+The compact-window status is now fully scrollable and copyable. The latest
+installed dogfood build at this handoff is `0.1.0 (6)`. No signing identity,
+Team ID, profile content, key, or network detail was recorded.
 
 ## Latest signed real-Mac evidence
 
@@ -147,7 +142,7 @@ These results prove a development configuration on one real Mac. They do not
 prove Developer ID distribution, notarization, clean-machine installation, every
 encrypted-DNS environment, or public parity.
 
-## Current continuation point: implementation complete, signed gate pending
+## Current continuation point: core signed path passed, release matrix pending
 
 On 2026-07-29 the consumer-path and UI parity implementation was completed:
 
@@ -167,15 +162,17 @@ On 2026-07-29 the consumer-path and UI parity implementation was completed:
   Windows information hierarchy with native adaptive SwiftUI cards;
 - Home has one large Connect/Disconnect action and status/profile/site summaries;
   route/provider/recovery controls are isolated in Troubleshooting;
-- all 55 focused checks pass, including every injected failure stage,
+- all 59 focused checks pass, including every injected failure stage,
   disconnect ordering, and profile-rename identity/secret-reference invariants;
 - the unsigned arm64 Host/Packet Tunnel/DNS Proxy Debug build succeeds. Xcode
   26.6 required `SWIFT_ENABLE_EXPLICIT_MODULES=NO` and
   `CLANG_ENABLE_EXPLICIT_MODULES=NO` after a temporary explicit-module cache race.
 
-This is automated and unsigned evidence only. Resume with the owner-signed atomic
-consumer sequence and UI inspection. Do not return to coordinator or layout
-implementation unless the signed run exposes a concrete defect.
+The later signed run exposed and fixed the initial Packet Tunnel status race,
+stale connected UI after provider loss, provider callback synchronization, and
+connected host-quit lifecycle. Resume with the remaining release matrix rather
+than repeating the already-passed atomic sequence unless a new build changes
+networking or lifecycle code.
 
 ## Immediate implementation order
 
@@ -195,14 +192,14 @@ cd macos/VPNRouter
 swift test
 ```
 
-Expect 55 focused checks unless new committed tests intentionally change the
+Expect 59 focused checks unless new committed tests intentionally change the
 count. Record the actual toolchain and result in `docs/macos-mvp-progress.md`.
 
 Do not run broad commands that print `.conf`, Keychain, provisioning, signing, or
 system-log contents. Do not commit Team IDs, certificate names, provisioning
 profiles, Apple account data, or notarization credentials.
 
-### 2. Run the owner-signed atomic consumer connection
+### 2. Reconfirm the owner-signed consumer path on the release candidate
 
 Use the existing private Xcode signing configuration without recording it:
 
@@ -214,8 +211,8 @@ Use the existing private Xcode signing configuration without recording it:
    readiness, and safety monitoring;
 5. confirm `Connected` appears only after the complete sequence;
 6. disconnect and confirm DNS Proxy cleanup precedes Packet Tunnel stop;
-7. deny or interrupt one approval/start attempt and confirm owned partial state is
-   removed without altering another product.
+7. preserve the recorded approval-cancellation and unexpected-provider cleanup
+   results; rerun them only if the candidate changes the affected code.
 
 ### 3. Preserve the proven safety semantics
 
