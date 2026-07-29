@@ -99,9 +99,9 @@ remains in the signed matrix.
   provider-loss cleanup/recovery, and connected close/reopen sequence. UDP/TCP
   target A/AAAA and unrelated AAAA controls passed, selected traffic used a
   split `utun`, control traffic retained the primary default route, and three
-  HTTPS controls returned 200. Later signed build 13 repeated the connected
-  close/reopen path and restored the existing main window; this is development
-  evidence, not distribution evidence.
+  HTTPS controls returned 200. Exact-commit signed build 14 from `8e7c4ae`
+  repeated the DNS/route and connected close/reopen path and restored the
+  existing main window; this is development evidence, not distribution evidence.
 - macOS: the reported compact-window error-access problem is fixed with visible
   full-page scrolling, full-height selectable status text, and a verified status
   copy action. A 700-by-500 signed window accepted accessibility page scrolling

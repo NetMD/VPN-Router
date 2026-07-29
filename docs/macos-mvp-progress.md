@@ -1171,8 +1171,8 @@ that compilation could not reveal:
   was verified, and a 700-by-500 compact Troubleshooting window successfully
   moved content with both page-up and page-down accessibility scroll actions.
 
-The latest installed dogfood app at this checkpoint is an owner-signed
-development `0.1.0 (13)` optimized Release under `/Applications`.
+The latest installed dogfood app at this checkpoint is owner-signed development
+`0.1.0 (14)`, built from commit `8e7c4ae`, under `/Applications`.
 The signed verifier passed
 the Host App, Packet Tunnel, and DNS Proxy nested structure and entitlements.
 The canonical unsigned whole-module `-O` build still passes for arm64/minimum
@@ -1218,3 +1218,10 @@ Subsequent signed builds repeated and extended the consumer checks:
   results. The corrected check uses the exact executable process name and was
   cross-checked against native state and the selected route. No provider-loss
   claim is based on the discarded command-line pattern.
+
+Exact-commit build 14 repeated the final smoke: all five sidebar VoiceOver
+labels were present, the owner-confirmed connection reached `Connected`, target
+A remained available while target AAAA was empty and unrelated AAAA remained
+available, a selected route used `utun`, connected Quit preserved all three
+processes and native state for the checked interval, `open` restored the main
+window, and normal Disconnect removed the Packet Tunnel process.

@@ -114,8 +114,9 @@ Later owner-signed optimized Release builds installed under `/Applications`
 completed the atomic consumer connection, DNS/route checks, normal disconnect,
 unexpected-provider cleanup/reconnect, and connected close/reopen lifecycle.
 The compact-window status is now fully scrollable and copyable. The latest
-installed dogfood build at this handoff is `0.1.0 (13)`. It repeated the signed
-DNS/route/HTTPS and connected close/reopen checks, plus current-build profile
+installed dogfood build at this handoff is `0.1.0 (14)` from commit `8e7c4ae`.
+It repeated the signed DNS/route and connected close/reopen checks, plus
+current-build profile
 rename, redacted export, theme, compact/wide scrolling, and explicit sidebar
 VoiceOver labels. A 16-minute-30-second run crossed the safety boundary while
 routes changed from 41 to 85 and then 74 without a failure. No signing identity,
