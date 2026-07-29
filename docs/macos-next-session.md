@@ -110,6 +110,12 @@ The Swift package test suite last passed 55 focused checks. The latest unsigned
 arm64 Debug app, Packet Tunnel, and DNS Proxy build also succeeded. Treat those as
 recorded evidence to reproduce on the Mac, not as proof from the Windows host.
 
+An owner-signed optimized Release app from commit `f390972` passed
+`verify-signed-app.sh --mode development` for the Host App, Packet Tunnel, and DNS
+Proxy System Extension, then passed a no-connect launch smoke. The app was left
+open for the owner-operated connection/approval matrix. No signing identity,
+Team ID, profile content, key, or network detail was recorded.
+
 ## Latest signed real-Mac evidence
 
 The latest signed DNS Proxy validation was build 20 on 2026-07-28:

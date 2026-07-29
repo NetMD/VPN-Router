@@ -1097,3 +1097,11 @@ cleanup on denial/failure, profile rename persistence, and compact/wide
 accessibility inspection. No Team ID, signing identity, provisioning data,
 configuration text, private key, domain list, DNS payload, or resolver address was
 recorded.
+
+The existing owner signing configuration then produced an optimized Release app
+from commit `f390972` without exposing signing metadata. The signed-app verifier
+accepted the Host App, Packet Tunnel, and DNS Proxy System Extension signatures,
+metadata, minimum OS, architecture, and required entitlements. A no-connect
+launch smoke also passed. This advances the gate to owner-operated System
+Extension approval and live connection testing; it does not prove activation,
+routing, DNS, disconnect, or recovery.

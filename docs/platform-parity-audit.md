@@ -84,6 +84,10 @@ remains in the signed matrix.
   rejects a missing DNS Proxy provider entitlement, and refuses to treat ad-hoc
   signatures as Developer ID evidence. The canonical release script now runs its
   positive fixture check automatically.
+- macOS: an owner-signed optimized Release app from commit `f390972` passed the
+  development verifier for all three nested bundles and launched successfully
+  without invoking a connection. This is signed structure/launch evidence, not
+  Network Extension activation or routing evidence.
 - Repository: `git diff --check` passes.
 - Windows: a temporary official .NET 10.0.301 SDK cross-targeted the current
   Core, IPC, Networking, VPN, Launcher, Service, and Tests projects successfully
@@ -96,9 +100,9 @@ remains in the signed matrix.
 
 ## Gates still required before declaring parity
 
-1. Run the current source as an owner-signed macOS build and prove the normal Home
-   Connect action remains pending through System Extension approval and complete
-   DNS readiness.
+1. Use the verified owner-signed macOS build to prove the normal Home Connect
+   action remains pending through System Extension approval and complete DNS
+   readiness. Signed structure and launch have passed; activation has not.
 2. Run all current-build DNS, dynamic-route, expiry/bound, default-route,
    ownership-loss, second-VPN, relaunch/provider/lifecycle, disconnect/restart,
    redaction, profile/Keychain, and UI/accessibility checks listed in

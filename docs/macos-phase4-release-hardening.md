@@ -36,6 +36,12 @@ private signing settings from `project.pbxproj`.
 The unsigned output is not a distributable VPN app. It is compile and packaging
 evidence only.
 
+On 2026-07-30 an owner-signed optimized Release app from commit `f390972` passed
+the verifier in development mode and a no-connect launch smoke. This confirms the
+current nested development signature/entitlement structure, but not Developer ID
+distribution, notarization, System Extension approval, or Network Extension
+runtime behavior.
+
 Xcode 26.6 / Swift 6.3.3 previously crashed in the SIL performance inliner while
 optimizing synthesized deinitializers for two generic continuation gates.
 Incremental compilation alone and `-Osize` both reproduced the crash. The gates
