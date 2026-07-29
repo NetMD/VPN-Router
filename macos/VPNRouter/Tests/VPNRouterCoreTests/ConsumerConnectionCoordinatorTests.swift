@@ -14,6 +14,7 @@ struct ConsumerConnectionCoordinatorTests {
         #expect(
             recorder.events == [
                 "preflight",
+                "activate-extension",
                 "prepare",
                 "start",
                 "enable",
@@ -26,6 +27,7 @@ struct ConsumerConnectionCoordinatorTests {
 
     @Test(arguments: [
         FailureCase(step: .preflight, expectedStage: .preflighting, expectedCleanup: []),
+        FailureCase(step: .activateExtension, expectedStage: .activatingDNSProxyExtension, expectedCleanup: []),
         FailureCase(step: .prepare, expectedStage: .preparingPacketTunnel, expectedCleanup: []),
         FailureCase(step: .start, expectedStage: .startingPacketTunnel, expectedCleanup: ["stop"]),
         FailureCase(step: .enable, expectedStage: .enablingDNSProxy, expectedCleanup: ["disable", "stop"]),
@@ -74,6 +76,7 @@ struct FailureCase: Sendable {
 
 enum Step: String, Sendable {
     case preflight
+    case activateExtension = "activate-extension"
     case prepare
     case start
     case enable
@@ -94,6 +97,7 @@ private final class Recorder {
     func operations() -> ConsumerConnectionCoordinator.Operations {
         .init(
             preflight: { try self.perform(.preflight) },
+            activateDNSProxyExtension: { try self.perform(.activateExtension) },
             preparePacketTunnel: { try self.perform(.prepare) },
             startPacketTunnel: { try self.perform(.start) },
             enableDNSProxy: { try self.perform(.enable) },

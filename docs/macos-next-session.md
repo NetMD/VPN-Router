@@ -77,7 +77,7 @@ The repository contains:
 - a SwiftUI host app;
 - a signed and real-Mac-tested Packet Tunnel using WireGuardKit;
 - Keychain-backed private-key storage and sanitized profile metadata;
-- profile import with a chosen display name, selection, validation, and deletion;
+- profile import with a chosen display name, rename, selection, validation, and deletion;
 - a shared VPN Sites list with YouTube and Netflix media expansion;
 - bounded static IPv4 `/32` route planning;
 - five-minute refresh, fifteen-minute per-answer retention/expiry, and a combined
@@ -92,9 +92,13 @@ The repository contains:
 - DNS Proxy ownership/XPC monitoring and orphan cleanup;
 - active IPv4 `utun` set monitoring that fails safe on a second-VPN transition;
 - bounded redacted troubleshooting export;
-- native lifecycle, compact-layout, theme, keyboard, VoiceOver, and recovery work.
+- a consumer connection coordinator that withholds `Connected` until DNS Proxy
+  ownership, XPC target publication/readiness, and safety monitoring all succeed;
+- native lifecycle, compact-layout, theme, keyboard, VoiceOver, and recovery work;
+- Windows-referenced five-screen information hierarchy with one Home
+  Connect/Disconnect action and technical controls contained in Troubleshooting.
 
-The Swift package test suite last passed 48 focused checks. The latest unsigned
+The Swift package test suite last passed 51 focused checks. The latest unsigned
 arm64 Debug app, Packet Tunnel, and DNS Proxy build also succeeded. Treat those as
 recorded evidence to reproduce on the Mac, not as proof from the Windows host.
 
@@ -123,28 +127,13 @@ These results prove a development configuration on one real Mac. They do not
 prove Developer ID distribution, notarization, clean-machine installation, every
 encrypted-DNS environment, or public parity.
 
-## Current code mismatch to fix first
+## Current continuation point: implementation complete, signed gate pending
 
-The supported Connect action still follows the old static-first flow in
-`macos/VPNRouter/VPNRouter/ContentView.swift`:
-
-1. `startTunnel()` builds and installs a static route plan.
-2. It starts the Packet Tunnel and allows `NEVPNStatus.connected` to drive the
-   consumer status.
-3. DNS Proxy activation, target publication, dynamic route refresh, and ownership
-   monitoring remain under Debug/developer diagnostics or begin only after the
-   Packet Tunnel is already connected.
-
-That behavior does not satisfy the new parity contract. Do not start by changing
-provider packet handling that already passed signed tests. First extract a
-consumer connection coordinator from the large `ContentView` ownership and move
-the proven activation sequence into it.
-
-### Continuation update: coordinator implemented, signed gate pending
-
-On 2026-07-29 the coordinator work above was implemented:
+On 2026-07-29 the consumer-path and UI parity implementation was completed:
 
 - the consumer state machine has stable stages and bounded failure codes;
+- a normal Connect requests DNS Proxy System Extension activation before any
+  Packet Tunnel mutation and awaits macOS approval/completion;
 - Connect keeps product state pending through Packet Tunnel start, owned DNS
   Proxy enablement, XPC target publication, provider readiness, and the
   tunnel-interface safety prerequisite;
@@ -152,18 +141,25 @@ On 2026-07-29 the coordinator work above was implemented:
 - relaunch refuses to treat a connected static-only Packet Tunnel as ready;
 - route refresh and ownership monitors are gated on consumer readiness;
 - troubleshooting schema 2 records only stage and failure code;
+- profile rename now preserves the profile ID and Keychain secret reference and is
+  blocked while connected;
+- Home, VPN Profiles, VPN Sites, Troubleshooting, and Settings now follow the
+  Windows information hierarchy with native adaptive SwiftUI cards;
+- Home has one large Connect/Disconnect action and status/profile/site summaries;
+  route/provider/recovery controls are isolated in Troubleshooting;
 - all 51 focused checks pass, including every injected failure stage and
   disconnect ordering;
-- the unsigned arm64/macOS 15 Host/Packet Tunnel/DNS Proxy Debug build succeeds.
+- the unsigned arm64 Host/Packet Tunnel/DNS Proxy Debug build succeeds. Xcode
+  26.6 required `SWIFT_ENABLE_EXPLICIT_MODULES=NO` and
+  `CLANG_ENABLE_EXPLICIT_MODULES=NO` after a temporary explicit-module cache race.
 
-This is automated and unsigned evidence only. Resume with an owner-signed test of
-the atomic sequence. Fresh system-extension approval must then become a normal
-consumer prerequisite rather than a Debug diagnostic control. If the signed
-sequence passes, continue with the five-screen Windows-referenced UI alignment.
+This is automated and unsigned evidence only. Resume with the owner-signed atomic
+consumer sequence and UI inspection. Do not return to coordinator or layout
+implementation unless the signed run exposes a concrete defect.
 
 ## Immediate implementation order
 
-### 1. Reproduce the baseline
+### 1. Reproduce the automated baseline
 
 From the repository root on the Mac:
 
@@ -179,67 +175,29 @@ cd macos/VPNRouter
 swift test
 ```
 
-Expect 48 focused checks unless new committed tests intentionally change the
+Expect 51 focused checks unless new committed tests intentionally change the
 count. Record the actual toolchain and result in `docs/macos-mvp-progress.md`.
 
 Do not run broad commands that print `.conf`, Keychain, provisioning, signing, or
 system-log contents. Do not commit Team IDs, certificate names, provisioning
 profiles, Apple account data, or notarization credentials.
 
-### 2. Introduce a consumer connection coordinator
+### 2. Run the owner-signed atomic consumer connection
 
-Move orchestration out of `ContentView` behind a small observable state machine.
-Keep existing native controllers and providers:
+Use the existing private Xcode signing configuration without recording it:
 
-- `DNSProxySystemExtensionController`
-- `DNSProxyConfigurationController`
-- `DNSProxyObservationSettingsStore`
-- `EncryptedDNSPreflightService`
-- `TunnelInterfaceFingerprint`
-- `NETunnelProviderManager` / `NETunnelProviderSession`
+1. launch a signed build with Packet Tunnel and DNS Proxy extensions embedded;
+2. press the normal Home Connect action;
+3. if macOS requests System Extension approval, confirm the UI remains
+   `Connecting` and no final connected state appears before approval;
+4. verify the stage advances through owned DNS Proxy enablement, XPC publication,
+   readiness, and safety monitoring;
+5. confirm `Connected` appears only after the complete sequence;
+6. disconnect and confirm DNS Proxy cleanup precedes Packet Tunnel stop;
+7. deny or interrupt one approval/start attempt and confirm owned partial state is
+   removed without altering another product.
 
-Use explicit stages suitable for bounded diagnostics, for example:
-
-```text
-idle
-preflighting
-preparingPacketTunnel
-startingPacketTunnel
-enablingDNSProxy
-publishingTargets
-verifyingDNSProxy
-ready
-disconnecting
-failed(stage, code)
-```
-
-The UI may display plain Korean text, but persisted or exported diagnostics should
-use stable schema-versioned stage and failure codes rather than free-form logs.
-
-### 3. Make readiness atomic from the user's perspective
-
-The supported connection sequence should:
-
-1. validate the selected sanitized profile and selected sites;
-2. run encrypted-DNS/manual-precondition checks before network mutation;
-3. create the bounded initial route plan and prepare the Packet Tunnel;
-4. start the Packet Tunnel without exposing final `Connected` in the product UI;
-5. enable only VPN Router's DNS Proxy preference;
-6. publish the expanded target set over XPC using the proven bounded retry path;
-7. prove owned preference state, provider XPC health, target AAAA filtering
-   readiness, and dynamic observation readiness;
-8. arm ownership and active-tunnel-set monitoring;
-9. only then expose product state `Connected`.
-
-On failure, clean up in reverse ownership order. A partial start must not leave a
-Packet Tunnel reported as successfully connected with static-only IPv6 risk.
-Cleanup must be idempotent and must never alter another provider.
-
-Add focused tests for every state transition and failure stage before signed
-testing. Inject controller protocols/fakes rather than requiring Network
-Extension activation in unit tests.
-
-### 4. Preserve the proven safety semantics
+### 3. Preserve the proven safety semantics
 
 Do not regress:
 
@@ -256,28 +214,15 @@ Do not regress:
 - redacted diagnostics containing no raw domains, addresses, DNS payloads,
   configuration text, keys, or unrestricted logs.
 
-### 5. Align the macOS UI to the Windows product reference
+### 4. Inspect the five native screens
 
-After the coordinator and its tests are stable, update the five native views:
+At compact and wide window sizes, confirm Home, VPN Profiles, VPN Sites,
+Troubleshooting, and Settings reflow without clipping or nested scrolling. Check
+keyboard focus, VoiceOver names/state, Automatic/Light/Dark, and increased
+contrast. Confirm profile rename persists across relaunch and never changes or
+exposes Keychain material.
 
-1. Home
-2. VPN Profiles
-3. VPN Sites
-4. Troubleshooting
-5. Settings
-
-Use the Windows information hierarchy and wording density. Keep Network Extension,
-route, entitlement, XPC, and developer controls out of normal consumer surfaces.
-DNS Proxy installation/activation may require macOS-native system approval, so
-present that approval as a clear connection prerequisite rather than a diagnostic
-experiment.
-
-Retain the existing compact/wide adaptation, one scroll owner per screen,
-keyboard focus, VoiceOver labels/announcements, high contrast, reduced motion,
-and Automatic/Light/Dark choice. Do not copy XAML or introduce a cross-platform UI
-framework.
-
-### 6. Run the signed parity matrix
+### 5. Run the signed parity matrix
 
 Compilation and unsigned builds are only preliminary checks. On the owner's Mac,
 use the existing private signing configuration without committing it, then verify:

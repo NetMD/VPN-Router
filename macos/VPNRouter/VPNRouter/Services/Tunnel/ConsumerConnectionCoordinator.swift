@@ -4,6 +4,7 @@ import Foundation
 enum ConsumerConnectionStage: String, Codable, CaseIterable, Sendable {
     case idle
     case preflighting
+    case activatingDNSProxyExtension
     case preparingPacketTunnel
     case startingPacketTunnel
     case enablingDNSProxy
@@ -85,6 +86,7 @@ final class ConsumerConnectionCoordinator: ObservableObject {
 
     struct Operations {
         let preflight: ThrowingStep
+        let activateDNSProxyExtension: ThrowingStep
         let preparePacketTunnel: ThrowingStep
         let startPacketTunnel: ThrowingStep
         let enableDNSProxy: ThrowingStep
@@ -109,6 +111,10 @@ final class ConsumerConnectionCoordinator: ObservableObject {
 
         do {
             try await run(.preflighting, operations.preflight)
+            try await run(
+                .activatingDNSProxyExtension,
+                operations.activateDNSProxyExtension
+            )
             try await run(.preparingPacketTunnel, operations.preparePacketTunnel)
 
             packetTunnelStartAttempted = true

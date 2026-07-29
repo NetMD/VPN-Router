@@ -989,3 +989,71 @@ evidence that:
 5. the status shown by the host app is derived from `NEVPNStatus`.
 
 Compilation alone does not satisfy this gate.
+
+## 2026-07-29 consumer activation and five-screen parity pass
+
+The macOS continuation was run on macOS 26.5.2, Apple M1 Max arm64, Xcode 26.6
+(17F113), and Swift 6.3.3 after fast-forwarding `main` to the Windows parity
+handoff.
+
+Completed implementation:
+
+- the normal consumer coordinator now includes
+  `activatingDNSProxyExtension` after preflight and before Packet Tunnel
+  preparation;
+- `DNSProxySystemExtensionController` provides an awaited activation operation,
+  keeps the connection pending during macOS approval, and returns bounded
+  restart/failure results to the coordinator;
+- no Packet Tunnel or DNS Proxy preference mutation occurs before extension
+  activation completes;
+- the existing reverse-order owned cleanup remains covered at every later failure
+  stage;
+- profile rename now preserves the profile UUID and Keychain secret reference,
+  updates only sanitized metadata atomically, and is disabled while connected;
+- the five native screens now use the Windows product information hierarchy:
+  Home, VPN Profiles, VPN Sites, Troubleshooting, and Settings;
+- Home contains one prominent Connect/Disconnect action, consumer readiness,
+  selected profile/site/route summaries, a non-network-mutating connection-plan
+  readiness action matching Windows, and recent plain-language status;
+- provider status, route refresh, diagnostic export, and owned recovery controls
+  are contained in Troubleshooting rather than duplicated on Home;
+- native SwiftUI adaptive layout, one detail scroll owner, keyboard shortcuts,
+  VoiceOver labels, increased-contrast colors, and Automatic/Light/Dark behavior
+  remain in place.
+
+Automated evidence:
+
+- `swift test` passed 25 XCTest cases plus 26 Swift Testing cases (51 focused
+  checks), including the new system-extension activation stage and eight injected
+  connection failure cases;
+- the unsigned arm64 Debug Host App, Packet Tunnel, and DNS Proxy System Extension
+  build succeeded;
+- Xcode Analyze succeeded for the complete scheme;
+- an optimized unsigned arm64/minimum-macOS-15 Release Host App and both extensions
+  compiled and embedded successfully using the documented Swift optimizer
+  workaround;
+- `git diff --check` passed.
+
+The first unsigned build attempt exposed an Xcode 26 explicit-module cache race
+while compiling WireGuardKit C sources (`_DarwinFoundation2.pcm` was referenced
+before it existed). Moving only the temporary module cache aside and building with
+`SWIFT_ENABLE_EXPLICIT_MODULES=NO`,
+`CLANG_ENABLE_EXPLICIT_MODULES=NO`, and indexing disabled succeeded. The reused
+temporary `libwg-go.a` still emits the previously recorded malformed
+`LC_DYSYMTAB` warning.
+
+The canonical release-verification script could not rebuild the Go bridge because
+the current machine has no Go compiler in its executable paths. The fallback
+Release compile reused the temporary Debug archive, which was built for macOS 26
+and therefore also emitted a newer-deployment-target warning when linked for
+macOS 15. This fallback proves optimized Swift/App/extension compilation only; it
+does not replace a fresh minimum-macOS-15 bridge build or qualify as a release
+artifact.
+
+This is not signed Network Extension runtime evidence. The next gate is an
+owner-signed run of the normal Home connection path, including fresh System
+Extension approval/pending UI, full DNS readiness before `Connected`, reverse
+cleanup on denial/failure, profile rename persistence, and compact/wide
+accessibility inspection. No Team ID, signing identity, provisioning data,
+configuration text, private key, domain list, DNS payload, or resolver address was
+recorded.

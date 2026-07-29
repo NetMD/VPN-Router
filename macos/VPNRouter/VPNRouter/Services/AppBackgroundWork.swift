@@ -54,6 +54,16 @@ enum AppBackgroundWork {
         }
     }
 
+    static func renameProfile(
+        id: UUID,
+        displayName: String
+    ) async throws -> [ProfileMetadata] {
+        try await run {
+            try ProfileStore().renameProfile(id: id, displayName: displayName)
+                .sorted { $0.updatedAt > $1.updatedAt }
+        }
+    }
+
     static func replaceRulesAndBuildPlan(domains: [String]) async throws -> DomainRoutePlan {
         let freshPlan = try await run {
             let store = try DomainRuleStore()

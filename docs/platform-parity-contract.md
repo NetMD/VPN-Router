@@ -1,6 +1,6 @@
 # VPN Router platform parity contract
 
-Last updated: 2026-07-28 KST
+Last updated: 2026-07-29 KST
 
 ## Owner decision
 

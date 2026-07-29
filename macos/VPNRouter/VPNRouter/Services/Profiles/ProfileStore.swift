@@ -57,6 +57,27 @@ nonisolated struct ProfileStore {
         return profiles
     }
 
+    func renameProfile(
+        id: UUID,
+        displayName: String,
+        updatedAt: Date = Date()
+    ) throws -> [ProfileMetadata] {
+        let normalizedName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedName.isEmpty else {
+            throw ProfileStoreError.emptyDisplayName
+        }
+
+        var profiles = try loadProfiles()
+        guard let index = profiles.firstIndex(where: { $0.id == id }) else {
+            throw ProfileStoreError.profileNotFound
+        }
+
+        profiles[index].displayName = normalizedName
+        profiles[index].updatedAt = updatedAt
+        try saveProfiles(profiles)
+        return profiles
+    }
+
     private nonisolated static func defaultFileURL(fileManager: FileManager) throws -> URL {
         let applicationSupportURL = try fileManager.url(
             for: .applicationSupportDirectory,
@@ -69,6 +90,20 @@ nonisolated struct ProfileStore {
             .appendingPathComponent("VPNRouter", isDirectory: true)
             .appendingPathComponent("Profiles", isDirectory: true)
             .appendingPathComponent("profiles.json", isDirectory: false)
+    }
+}
+
+private enum ProfileStoreError: LocalizedError {
+    case emptyDisplayName
+    case profileNotFound
+
+    var errorDescription: String? {
+        switch self {
+        case .emptyDisplayName:
+            return "프로필 이름은 비워 둘 수 없습니다."
+        case .profileNotFound:
+            return "이름을 변경할 프로필을 찾지 못했습니다."
+        }
     }
 }
 
