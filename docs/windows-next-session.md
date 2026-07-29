@@ -32,6 +32,11 @@ the current repository state, the completed macOS safety work, and the
 > were removed, and Settings now describes the mandatory owned-state cleanup that
 > the service actually performs. Run both Windows solutions and all focused tests
 > before producing another candidate. See `docs/platform-parity-audit.md`.
+> A macOS cross-target pass with .NET 10.0.301 compiled every non-WinUI project
+> with zero warnings/errors and passed 28/30 focused checks. The two remaining
+> checks require PowerShell and Windows Principal, and WinUI still requires its
+> Windows-only XAML compiler. Do not treat the cross-target pass as the native
+> Windows rerun.
 
 ## Safety and platform boundary
 

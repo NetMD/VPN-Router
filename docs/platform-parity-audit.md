@@ -50,7 +50,7 @@ sites on route failure, but its value was only logged and echoed by validation.
 That false user-visible promise has been removed together with the unused IPC
 field. Settings now describes the actually implemented mandatory owned-state
 cleanup, matching the common fail-safe contract. The native Windows test suite
-must be rerun on Windows because this Mac has no `dotnet` executable.
+must still be rerun on Windows.
 
 The new macOS card hierarchy follows the layout-system spacing and responsive
 guidance while retaining native SwiftUI resizing, keyboard focus, VoiceOver,
@@ -70,8 +70,14 @@ remains in the signed matrix.
   SHA-256 is reproducibly
   `89f244ce627d843b775b29a401009c0309266267e2ffecaca9841e024364e1ca`.
 - Repository: `git diff --check` passes.
-- Windows: the previously recorded release matrix remains historical evidence;
-  current source rerun is pending on a Windows/.NET environment.
+- Windows: a temporary official .NET 10.0.301 SDK cross-targeted the current
+  Core, IPC, Networking, VPN, Launcher, Service, and Tests projects successfully
+  with zero warnings/errors. The focused executable passed 28 of 30 checks on
+  macOS; only the PowerShell worker and Windows Principal ACL checks failed
+  because their Windows APIs are absent.
+- Windows: the Settings XAML is well-formed XML. WinUI compilation remains
+  Windows-only because its packaged `XamlCompiler.exe` cannot execute on macOS;
+  the previously recorded signed release matrix remains historical evidence.
 
 ## Gates still required before declaring parity
 

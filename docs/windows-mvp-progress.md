@@ -524,3 +524,19 @@ This edit was made on the Mac parity pass, where `dotnet` is unavailable.
 Therefore the Windows solutions and focused test executable must be rebuilt and
 rerun on Windows before a release candidate is regenerated. No Windows runtime or
 artifact claim is made from this source-only correction.
+
+Follow-up cross-target evidence used an official .NET 10.0.301 arm64 SDK unpacked
+only under `/private/tmp`:
+
+- Core, IPC, Networking, VPN, Launcher, Service, and Tests compiled with zero
+  warnings and zero errors using `EnableWindowsTargeting=true`;
+- 28 of the 30 focused checks passed under the macOS .NET runtime;
+- the persistent PowerShell worker check could not start `powershell.exe`, and
+  the service-pipe ACL check reported that Windows Principal is unsupported;
+- the WinUI project restored, but its Windows-only `XamlCompiler.exe` could not
+  execute on macOS; `xmllint` separately confirmed that `MainWindow.xaml` remains
+  well-formed XML.
+
+These results validate the changed IPC/service/test call sites but do not replace
+the required Windows build of both solutions, all 30 native test results, WinUI
+XAML compilation, or signed recovery/UI smoke checks.
