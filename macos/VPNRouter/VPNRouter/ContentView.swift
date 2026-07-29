@@ -231,6 +231,7 @@ struct ContentView: View {
                     NavigationLink(value: section) {
                         Label(section.title, systemImage: section.systemImage)
                     }
+                    .accessibilityLabel(section.title)
                 }
             }
             .navigationTitle("VPN Router")
@@ -1662,11 +1663,10 @@ struct ContentView: View {
     }
 
     private func updateTerminationPolicy(for status: NEVPNStatus) {
-        ActiveConnectionTerminationPolicy.shared.shouldKeepCoordinatorRunning =
-            status == .connecting
-                || status == .connected
-                || status == .reasserting
-                || status == .disconnecting
+        ActiveConnectionTerminationPolicy.shared.update(
+            status: status,
+            manager: manager
+        )
     }
 
     private func installStubConfiguration() async {
@@ -2412,26 +2412,39 @@ struct ContentView: View {
             case .waitForHealthRetry:
                 dnsProxyObservationMessage = "DNS Proxy 상태 확인이 일시적으로 실패했습니다. 안전을 위해 다시 확인합니다."
             case .failSafe:
-                await failSafeForDNSProxyLoss(
-                    reason: tunnelInterfaceSetChanged
-                        ? "DNS Proxy 활성화 후 활성 터널 인터페이스가 변경되어 다른 VPN의 연결 전환을 감지했습니다."
-                        : dnsProxyConfigurationController.runtimeState == .ownedEnabled
-                            ? "DNS Proxy provider 응답을 연속으로 확인하지 못했습니다."
-                            : "DNS Proxy 구성의 활성 상태 또는 소유권을 잃었습니다."
-                )
+                if tunnelInterfaceSetChanged {
+                    await failSafeForDNSProxyLoss(
+                        reason: "DNS Proxy 활성화 후 활성 터널 인터페이스가 변경되어 다른 VPN의 연결 전환을 감지했습니다.",
+                        code: "dns-proxy-tunnel-interface-transition"
+                    )
+                } else if dnsProxyConfigurationController.runtimeState == .ownedEnabled {
+                    await failSafeForDNSProxyLoss(
+                        reason: "DNS Proxy provider 응답을 연속으로 확인하지 못했습니다.",
+                        code: "dns-proxy-health-check-failed"
+                    )
+                } else {
+                    await failSafeForDNSProxyLoss(
+                        reason: "DNS Proxy 구성의 활성 상태 또는 소유권을 잃었습니다.",
+                        code: "dns-proxy-ownership-lost"
+                    )
+                }
                 return
             }
         }
     }
 
-    private func failSafeForDNSProxyLoss(reason: String) async {
-        manager?.connection.stopVPNTunnel()
-        status = manager?.connection.status ?? .invalid
+    private func failSafeForDNSProxyLoss(
+        reason: String,
+        code: String = "dns-proxy-runtime-safety-loss"
+    ) async {
         connectionCoordinator.recordFailure(
             stage: .verifyingDNSProxy,
-            code: "dns-proxy-runtime-safety-loss"
+            code: code
         )
         lastMessage = "\(reason) 선택 사이트가 일반 경로로 우회하지 않도록 VPN Router 연결을 해제했습니다."
+        dnsProxyObservationMessage = lastMessage
+        manager?.connection.stopVPNTunnel()
+        status = manager?.connection.status ?? .invalid
 
         if dnsProxyConfigurationController.runtimeState == .ownedEnabled {
             await dnsProxyConfigurationController.disable(
@@ -2439,7 +2452,6 @@ struct ContentView: View {
                 allowOwnedRemovalFallback: false
             )
         }
-        dnsProxyObservationMessage = lastMessage
     }
 
     private func dynamicRouteUpdateMessage(

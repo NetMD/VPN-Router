@@ -1160,26 +1160,61 @@ that compilation could not reveal:
   longer copied into OS logs or UI diagnostics. The next signed start remained
   connected and produced no new crash report;
 - provider-message IPC makes a connected Packet Tunnel depend on the host
-  coordinator process. Connected Quit now hides the app while preserving the
-  host, Packet Tunnel, DNS Proxy, and native VPN session. Reopening restores the
-  window in `Connected` state. After normal disconnect, Quit terminates the host
-  normally. Forced provider loss still uses the verified fail-safe path;
+  coordinator process. Connected Quit now closes only the main window while
+  preserving the host, Packet Tunnel, DNS Proxy, and native VPN session.
+  Reopening restores the existing window in `Connected` state. After normal
+  disconnect, Quit terminates the host normally. Forced provider loss still uses
+  the verified fail-safe path;
 - the detail scroll view now exposes visible scroll indicators and content-sized
   bounce behavior. Status messages wrap to full height and have a
   `Copy status message` action on Home and Troubleshooting. Clipboard equality
   was verified, and a 700-by-500 compact Troubleshooting window successfully
   moved content with both page-up and page-down accessibility scroll actions.
 
-The latest installed dogfood app is an owner-signed development
-`0.1.0 (6)` optimized Release under `/Applications`. The signed verifier passed
+The latest installed dogfood app at this checkpoint is an owner-signed
+development `0.1.0 (13)` optimized Release under `/Applications`.
+The signed verifier passed
 the Host App, Packet Tunnel, and DNS Proxy nested structure and entitlements.
 The canonical unsigned whole-module `-O` build still passes for arm64/minimum
 macOS 15 with the reproducible WireGuard Go archive SHA-256
 `29177134ad37d6105857d926977f0669759e1e4b542803d27dd5b794f10fd3fd`.
 
 This closes the signed atomic start, normal disconnect, provider-loss recovery,
-basic DNS/route behavior, connected UI close/reopen, and reported
-scroll/copy defects. It does not yet close the long-duration route
-retention/expiry, current-build 512-route live rejection, DNS ownership-loss,
-sleep/network-change, second-VPN transition, full five-screen accessibility, or
-Developer ID/notarization/clean-install gates.
+basic DNS/route behavior, long-duration route maintenance, connected UI
+close/reopen, and reported scroll/copy defects. It does not yet close the
+current-build 512-route live rejection, DNS ownership-loss,
+sleep/network-change, second-VPN transition, connected VoiceOver announcement,
+or Developer ID/notarization/clean-install gates.
+
+Subsequent signed builds repeated and extended the consumer checks:
+
+- UDP and TCP returned target A answers, empty target AAAA, and preserved
+  unrelated control AAAA; selected and control routes remained split and all
+  three HTTPS checks returned 200;
+- build 13 connected Quit closed only the main window. The host coordinator,
+  Packet Tunnel, DNS Proxy, native connected state, and selected `utun` route
+  remained active, and `open` restored the same window as the main window;
+- all five screens selected successfully at compact and wide sizes. The detail
+  ScrollView exposed page-up/page-down accessibility actions, with long compact
+  pages moving in both directions and fitting wide pages correctly remaining at
+  their boundary;
+- Automatic, Light, and Dark changed immediately and the original Automatic
+  selection was restored;
+- the selected profile completed a signed UI rename-to-temporary-and-back round
+  trip without reading or printing its Keychain secret;
+- status-message copy changed the clipboard to the current non-empty safe
+  message;
+- signed SwiftUI export produced a 907-byte schema-2 diagnostic artifact. A
+  bounded scan found no private-key, configuration, endpoint, resolver, or DNS
+  payload pattern. Both temporary exported files were removed after validation.
+- a signed connection remained healthy through 16 minutes 30 seconds, crossing
+  the fifteen-minute safety boundary while the host continued refresh. The
+  bounded route count changed from 41 to 85 and then 74 as DNS observations were
+  added and older entries expired; the final diagnostic state was `connected`
+  with no failure code. UDP/TCP target A, empty target AAAA, unrelated AAAA, and
+  the selected `utun` route remained healthy before normal disconnect;
+- an intermediate lifecycle monitor incorrectly searched the provider command
+  line for its bundle identifier and produced false `PacketTunnel absent`
+  results. The corrected check uses the exact executable process name and was
+  cross-checked against native state and the selected route. No provider-loss
+  claim is based on the discarded command-line pattern.

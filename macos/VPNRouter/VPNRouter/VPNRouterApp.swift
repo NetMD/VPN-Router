@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 enum AppAppearance: String, CaseIterable, Identifiable {
@@ -48,5 +49,18 @@ struct VPNRouterApp: App {
                 )
         }
         .windowResizability(.contentMinSize)
+        .commands {
+            CommandGroup(replacing: .appTermination) {
+                Button("VPN Router 종료") {
+                    if ActiveConnectionTerminationPolicy.shared
+                        .shouldKeepCoordinatorRunning {
+                        ApplicationDelegate.closeMainWindows(in: NSApp)
+                    } else {
+                        NSApp.terminate(nil)
+                    }
+                }
+                .keyboardShortcut("q", modifiers: .command)
+            }
+        }
     }
 }

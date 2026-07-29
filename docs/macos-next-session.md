@@ -114,7 +114,11 @@ Later owner-signed optimized Release builds installed under `/Applications`
 completed the atomic consumer connection, DNS/route checks, normal disconnect,
 unexpected-provider cleanup/reconnect, and connected close/reopen lifecycle.
 The compact-window status is now fully scrollable and copyable. The latest
-installed dogfood build at this handoff is `0.1.0 (6)`. No signing identity,
+installed dogfood build at this handoff is `0.1.0 (13)`. It repeated the signed
+DNS/route/HTTPS and connected close/reopen checks, plus current-build profile
+rename, redacted export, theme, compact/wide scrolling, and explicit sidebar
+VoiceOver labels. A 16-minute-30-second run crossed the safety boundary while
+routes changed from 41 to 85 and then 74 without a failure. No signing identity,
 Team ID, profile content, key, or network detail was recorded.
 
 ## Latest signed real-Mac evidence
@@ -170,9 +174,11 @@ On 2026-07-29 the consumer-path and UI parity implementation was completed:
 
 The later signed run exposed and fixed the initial Packet Tunnel status race,
 stale connected UI after provider loss, provider callback synchronization, and
-connected host-quit lifecycle. Resume with the remaining release matrix rather
-than repeating the already-passed atomic sequence unless a new build changes
-networking or lifecycle code.
+connected host-quit lifecycle. Connected Quit closes only the main window so the
+host continues DNS ownership and route-refresh work; reopening restores the
+existing window. Resume with the remaining release matrix rather than repeating
+the already-passed atomic sequence unless a new build changes networking or
+lifecycle code.
 
 ## Immediate implementation order
 
