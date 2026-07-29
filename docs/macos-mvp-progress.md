@@ -1042,13 +1042,26 @@ before it existed). Moving only the temporary module cache aside and building wi
 temporary `libwg-go.a` still emits the previously recorded malformed
 `LC_DYSYMTAB` warning.
 
-The canonical release-verification script could not rebuild the Go bridge because
-the current machine has no Go compiler in its executable paths. The fallback
-Release compile reused the temporary Debug archive, which was built for macOS 26
-and therefore also emitted a newer-deployment-target warning when linked for
-macOS 15. This fallback proves optimized Swift/App/extension compilation only; it
-does not replace a fresh minimum-macOS-15 bridge build or qualify as a release
-artifact.
+That fallback limitation was subsequently cleared without changing the system
+toolchain. The official Go 1.26.5 arm64 archive was checksum-verified and unpacked
+under `/private/tmp`, then supplied through `VPNROUTER_GO_BINARY`. The canonical
+release script rebuilt `libwg-go.a` from a clean release DerivedData directory and
+completed the unsigned `0.1.0 (1)` arm64 Release package for minimum macOS 15.
+No earlier `LC_DYSYMTAB` or macOS-26 deployment warning appeared. `vtool`
+confirmed `minos 15.0` for the Host App, Packet Tunnel, DNS Proxy System Extension,
+and representative Go/CGO archive objects.
+
+The first two otherwise-identical clean bridge builds differed only in Go's
+embedded build ID and archive table timestamp. The vendored bridge Makefile now
+clears that unused build ID and runs `ranlib -D`. Two independent clean bridge
+builds and the subsequent clean canonical Release build then produced the same
+SHA-256:
+`89f244ce627d843b775b29a401009c0309266267e2ffecaca9841e024364e1ca`.
+
+The release script records the Go version and fails if any of those nested
+binaries or inspected archive members does not match the requested minimum macOS
+version. This is still unsigned compile/package evidence, not a distributable or
+runtime-proven artifact.
 
 This is not signed Network Extension runtime evidence. The next gate is an
 owner-signed run of the normal Home connection path, including fresh System

@@ -72,8 +72,10 @@ scripts/macos/verify-release.sh
 
 The script builds the WireGuard Go bridge and an unsigned arm64 Release app with
 version `0.1.0`, build `1`, and a macOS 15 deployment target. It verifies the
-embedded Packet Tunnel and prints the bridge checksum. An unsigned build proves
-only compilation and packaging; it cannot validate Network Extension activation.
+embedded Packet Tunnel and DNS Proxy System Extension, checks minimum-OS load
+commands in the app, extensions, and representative Go archive objects, and
+prints the Go version and bridge checksum. An unsigned build proves only
+compilation and packaging; it cannot validate Network Extension activation.
 
 Signed dogfooding must be run from the owner's Xcode signing configuration on a
 real Mac. Never commit the Developer Team identifier or local signing settings.

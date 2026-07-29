@@ -62,11 +62,13 @@ remains in the signed matrix.
 
 - macOS: 25 XCTest cases plus 30 Swift Testing cases pass (55 focused checks).
 - macOS: unsigned arm64 Debug build and Xcode Analyze pass for the Host App,
-  Packet Tunnel, and DNS Proxy System Extension when the previously staged
-  `libwg-go.a` is present. A clean DerivedData Analyze reaches the Packet Tunnel
-  link and then fails because Go is unavailable to create that archive.
-- macOS: optimized unsigned Release compilation and embedding pass with the
-  documented Swift optimizer workaround.
+  Packet Tunnel, and DNS Proxy System Extension when `libwg-go.a` is staged.
+- macOS: the canonical release script rebuilt `libwg-go.a` with Go 1.26.5 and
+  completed a clean optimized unsigned arm64 Release build for macOS 15 with the
+  documented Swift optimizer workaround. The Host App, both extensions, and
+  inspected Go/CGO archive members all report minimum macOS 15.0; the archive
+  SHA-256 is reproducibly
+  `89f244ce627d843b775b29a401009c0309266267e2ffecaca9841e024364e1ca`.
 - Repository: `git diff --check` passes.
 - Windows: the previously recorded release matrix remains historical evidence;
   current source rerun is pending on a Windows/.NET environment.
@@ -80,13 +82,10 @@ remains in the signed matrix.
    ownership-loss, second-VPN, relaunch/provider/lifecycle, disconnect/restart,
    redaction, profile/Keychain, and UI/accessibility checks listed in
    `docs/macos-next-session.md`.
-3. Install or supply Go and rebuild `libwg-go.a` for the actual minimum macOS
-   target. The fallback archive used in the latest Release compile targets macOS
-   26 and is not a release artifact.
-4. Rerun the Windows tests and signed recovery/UI smoke checks after removal of the
+3. Rerun the Windows tests and signed recovery/UI smoke checks after removal of the
    false Protection Mode control.
-5. Complete Developer ID signing, nested entitlement validation, notarization,
+4. Complete Developer ID signing, nested entitlement validation, notarization,
    stapling, Gatekeeper, and clean supported-Mac installation.
 
-Until all five gates pass, the implementation is aligned but public platform
+Until all four gates pass, the implementation is aligned but public platform
 parity is not proven and no release tag should be created.

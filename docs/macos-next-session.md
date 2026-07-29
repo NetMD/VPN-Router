@@ -251,14 +251,17 @@ raw DNS payloads, real profile content, private keys, Team IDs, or account data.
 ## Build and release limitations
 
 - `scripts/macos/verify-release.sh` builds the WireGuard Go bridge and verifies an
-  unsigned arm64/macOS 15 Release package.
+  unsigned arm64/macOS 15 Release package. It also verifies the minimum-OS load
+  command in the Host App, both extensions, and representative Go/CGO archive
+  members.
 - Xcode 26.6 / Swift 6.3.3 previously crashed in the optimized host SIL
   performance pass. The script contains a documented
   `-disable-sil-perf-optzns` workaround.
 - Public distribution remains blocked until a clean optimized Release archive
   succeeds without that workaround.
-- The Go `c-archive` `LC_DYSYMTAB` linker-warning disposition must be resolved or
-  validated through final signing, notarization, Gatekeeper, and clean-machine
+- Go 1.26.5 rebuilt the bridge without the earlier `LC_DYSYMTAB` or newer-minimum-
+  OS linker warnings. Preserve the recorded version/checksum and validate the
+  bridge through final signing, notarization, Gatekeeper, and clean-machine
   runtime evidence.
 - Developer ID Network Extension provisioning, nested signing, notarization,
   stapling, `spctl`, and clean supported-Mac installation remain unproven.

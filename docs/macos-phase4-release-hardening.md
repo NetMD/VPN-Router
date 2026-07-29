@@ -1,6 +1,6 @@
 # macOS Phase 4 release hardening
 
-Last updated: 2026-07-24 KST
+Last updated: 2026-07-29 KST
 
 ## Distribution decision
 
@@ -19,11 +19,13 @@ private signing settings from `project.pbxproj`.
 
 `scripts/macos/verify-release.sh`:
 
-1. verifies required Xcode, Go, and packaging tools;
+1. verifies required Xcode, Go, and packaging tools and records the Go version;
 2. builds `libwg-go.a` for arm64;
 3. builds an unsigned Release app with explicit version and deployment target;
-4. checks the app version and embedded Packet Tunnel;
-5. prints the WireGuard Go archive SHA-256.
+4. checks the app version and both embedded Network Extensions;
+5. verifies minimum-OS load commands in the Host App, both extensions, and
+   representative Go/CGO archive members;
+6. prints the WireGuard Go archive SHA-256.
 
 The unsigned output is not a distributable VPN app. It is compile and packaging
 evidence only.
@@ -38,17 +40,19 @@ release remains gated on a clean final Release archive.
 
 ## WireGuard archive warning disposition
 
-Xcode Analyze succeeds but the current Go `c-archive` can produce a linker warning
-about a malformed `LC_DYSYMTAB` in `libwg-go.a`. The archive links and the signed
-Packet Tunnel has run on this development Mac, but the warning is not silently
-accepted for public release.
+On 2026-07-29 the checksum-verified official Go 1.26.5 arm64 toolchain rebuilt
+`libwg-go.a` in a clean release directory. The canonical unsigned Release build
+completed without the earlier malformed `LC_DYSYMTAB` or newer-deployment-target
+warning. The Host App, Packet Tunnel, DNS Proxy System Extension, `go.o`, and a
+representative CGO object all report minimum macOS 15.0. The archive SHA-256 is
+`89f244ce627d843b775b29a401009c0309266267e2ffecaca9841e024364e1ca`.
+The bridge Makefile clears the path-dependent Go build ID and uses deterministic
+archive metadata; two independent clean bridge builds and the canonical clean
+Release build produced that same checksum.
 
-Public distribution remains blocked until one of these is true:
-
-- the pinned WireGuard/Go toolchain produces an archive without the warning; or
-- the archive is validated by the final Xcode linker, Developer ID signing,
-  notarization, Gatekeeper assessment, and a clean-machine signed runtime test,
-  with the toolchain versions recorded.
+This resolves the unsigned toolchain-warning gate. Public distribution still
+requires the same archive to pass final Developer ID nested signing, notarization,
+Gatekeeper assessment, and a clean supported-Mac signed runtime test.
 
 ## Signed owner-operated matrix
 
