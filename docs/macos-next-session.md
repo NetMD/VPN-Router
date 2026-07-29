@@ -12,12 +12,13 @@ Read these files completely before editing:
 
 1. `docs/macos-next-session.md`
 2. `docs/platform-parity-contract.md`
-3. `docs/macos-mvp-handoff.md`
-4. `docs/macos-mvp-progress.md`
-5. `docs/macos-phase3-dns-proxy-spike.md`
-6. `docs/macos-phase4-quality-audit.md`
-7. `docs/macos-phase4-release-hardening.md`
-8. `docs/v0.1.0-release-plan.md`
+3. `docs/platform-parity-audit.md`
+4. `docs/macos-mvp-handoff.md`
+5. `docs/macos-mvp-progress.md`
+6. `docs/macos-phase3-dns-proxy-spike.md`
+7. `docs/macos-phase4-quality-audit.md`
+8. `docs/macos-phase4-release-hardening.md`
+9. `docs/v0.1.0-release-plan.md`
 
 Use `docs/windows-mvp-progress.md` and the current Windows UI as behavioral and
 visual references only. Keep macOS networking, signing, storage, UI, and provider
@@ -98,7 +99,7 @@ The repository contains:
 - Windows-referenced five-screen information hierarchy with one Home
   Connect/Disconnect action and technical controls contained in Troubleshooting.
 
-The Swift package test suite last passed 51 focused checks. The latest unsigned
+The Swift package test suite last passed 55 focused checks. The latest unsigned
 arm64 Debug app, Packet Tunnel, and DNS Proxy build also succeeded. Treat those as
 recorded evidence to reproduce on the Mac, not as proof from the Windows host.
 
@@ -147,8 +148,8 @@ On 2026-07-29 the consumer-path and UI parity implementation was completed:
   Windows information hierarchy with native adaptive SwiftUI cards;
 - Home has one large Connect/Disconnect action and status/profile/site summaries;
   route/provider/recovery controls are isolated in Troubleshooting;
-- all 51 focused checks pass, including every injected failure stage and
-  disconnect ordering;
+- all 55 focused checks pass, including every injected failure stage,
+  disconnect ordering, and profile-rename identity/secret-reference invariants;
 - the unsigned arm64 Host/Packet Tunnel/DNS Proxy Debug build succeeds. Xcode
   26.6 required `SWIFT_ENABLE_EXPLICIT_MODULES=NO` and
   `CLANG_ENABLE_EXPLICIT_MODULES=NO` after a temporary explicit-module cache race.
@@ -175,7 +176,7 @@ cd macos/VPNRouter
 swift test
 ```
 
-Expect 51 focused checks unless new committed tests intentionally change the
+Expect 55 focused checks unless new committed tests intentionally change the
 count. Record the actual toolchain and result in `docs/macos-mvp-progress.md`.
 
 Do not run broad commands that print `.conf`, Keychain, provisioning, signing, or

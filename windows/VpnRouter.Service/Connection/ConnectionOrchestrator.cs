@@ -27,14 +27,12 @@ public sealed class ConnectionOrchestrator(
         VpnProfile profile,
         IReadOnlyList<DomainRule> rules,
         IPAddress? upstreamDnsServer,
-        bool protectionMode,
         CancellationToken cancellationToken)
     {
         logger.LogInformation(
-            "Starting connection for profile {ProfileId} with {RuleCount} rule(s). ProtectionMode={ProtectionMode}",
+            "Starting connection for profile {ProfileId} with {RuleCount} rule(s).",
             profile.Id,
-            rules.Count,
-            protectionMode);
+            rules.Count);
 
         var effectiveRules = DomainRuleExpander.Expand(rules);
         logger.LogInformation(

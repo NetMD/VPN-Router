@@ -86,3 +86,6 @@ choice.
 
 Compilation, unsigned Network Extension builds, or static pre-resolution alone
 do not satisfy this contract.
+
+The requirement-by-requirement implementation and evidence status is tracked in
+`docs/platform-parity-audit.md`.

@@ -361,25 +361,16 @@
                             <StackPanel Width="900" HorizontalAlignment="Center" Padding="42,34,42,42" Spacing="24">
                                 <StackPanel Spacing="4">
                                     <TextBlock Text="설정" Style="{StaticResource PageTitleStyle}" />
-                                    <TextBlock Text="VPN 경로가 실패했을 때의 동작을 선택합니다." Style="{StaticResource CaptionStyle}" />
+                                    <TextBlock Text="VPN Router의 필수 연결 보호 동작을 확인합니다." Style="{StaticResource CaptionStyle}" />
                                 </StackPanel>
                                 <Border Style="{StaticResource CardStyle}" Padding="28">
-                                    <Grid ColumnSpacing="24">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-                                        <StackPanel Spacing="5">
-                                            <TextBlock Text="보호 모드" Style="{StaticResource SectionTitleStyle}" />
-                                            <TextBlock Text="VPN 경로를 적용할 수 없으면 등록한 사이트의 연결을 차단합니다." Style="{StaticResource CaptionStyle}" MaxWidth="580" />
-                                        </StackPanel>
-                                        <ToggleSwitch
-                                            x:Name="ProtectionModeToggle"
-                                            Grid.Column="1"
-                                            OffContent="꺼짐"
-                                            OnContent="켜짐"
-                                            VerticalAlignment="Center" />
-                                    </Grid>
+                                    <StackPanel Spacing="5">
+                                        <TextBlock Text="필수 연결 보호" Style="{StaticResource SectionTitleStyle}" />
+                                        <TextBlock
+                                            Text="DNS 응답 경로, VPN 구성 또는 관리 중인 경로를 안전하게 유지할 수 없으면 VPN Router가 소유한 연결과 네트워크 상태만 자동으로 정리합니다. 다른 VPN이나 보안 제품은 변경하지 않습니다."
+                                            Style="{StaticResource CaptionStyle}"
+                                            MaxWidth="650" />
+                                    </StackPanel>
                                 </Border>
                             </StackPanel>
                         </ScrollViewer>

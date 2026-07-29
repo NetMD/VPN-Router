@@ -25,6 +25,13 @@ the current repository state, the completed macOS safety work, and the
 > `docs/windows-release-hardening.md`, then finish the remaining local artifact
 > and release-tag gates. The detailed original work order remains below as implementation
 > history.
+>
+> Parity audit update (2026-07-29): the Settings **Protection Mode** toggle was
+> found to be a false promise. Its value was only logged and echoed by plan
+> validation; no site-blocking behavior existed. The control and unused IPC field
+> were removed, and Settings now describes the mandatory owned-state cleanup that
+> the service actually performs. Run both Windows solutions and all focused tests
+> before producing another candidate. See `docs/platform-parity-audit.md`.
 
 ## Safety and platform boundary
 
@@ -57,7 +64,7 @@ dotnet build .\windows\VpnRouterVs.sln -nr:false
 dotnet run --project .\windows\VpnRouter.Tests\VpnRouter.Tests.csproj --no-build
 ```
 
-The current focused test executable contains 26 checks. Reconcile the progress
+The current focused test executable contains 30 checks. Reconcile the progress
 document if the Windows baseline produces a different count. Do not run a
 network-mutating script until the normal build/tests pass and
 `scripts/windows/restore-network-dev.ps1` has been inspected without using the

@@ -505,3 +505,22 @@ changing Windows IPv4 DNS back to automatic.
 - It is safe to inspect Endpoint lines only if needed, but prefer UI/summary output.
 - Avoid enabling DNS mutation until the recovery script and current build are confirmed.
 - Keep `.slnx` and `VpnRouterVs.sln` both building; Visual Studio uses the classic `.sln` more reliably.
+
+## 2026-07-29 parity truthfulness correction
+
+The cross-platform requirement audit found that the Windows Settings
+**Protection Mode** toggle claimed selected sites would be blocked if VPN routes
+could not be applied, but the value was only logged and added to connection-plan
+checks. It did not change DNS, route, VPN, recovery, or fail-safe behavior.
+
+The false user-visible promise and its unused IPC/orchestrator parameter were
+removed. Settings now describes the service's actual mandatory behavior: on DNS,
+VPN, or managed-route safety loss, clean up only VPN Router-owned DNS, routes,
+WireGuard connection, recovery marker, and network snapshot without changing
+another VPN or security product. This matches
+`docs/platform-parity-contract.md`.
+
+This edit was made on the Mac parity pass, where `dotnet` is unavailable.
+Therefore the Windows solutions and focused test executable must be rebuilt and
+rerun on Windows before a release candidate is regenerated. No Windows runtime or
+artifact claim is made from this source-only correction.

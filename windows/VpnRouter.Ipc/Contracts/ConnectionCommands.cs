@@ -2,7 +2,7 @@ using VpnRouter.Core.Rules;
 
 namespace VpnRouter.Ipc.Contracts;
 
-public sealed record ConnectRequest(Guid ProfileId, IReadOnlyList<DomainRule> Rules, bool ProtectionMode);
+public sealed record ConnectRequest(Guid ProfileId, IReadOnlyList<DomainRule> Rules);
 
 public sealed record DisconnectRequest(Guid ProfileId);
 
@@ -53,7 +53,7 @@ public sealed record RenameProfileRequest(Guid ProfileId, string Name);
 
 public sealed record DeleteProfileRequest(Guid ProfileId);
 
-public sealed record ValidateConnectionPlanRequest(Guid ProfileId, IReadOnlyList<DomainRule> Rules, bool ProtectionMode);
+public sealed record ValidateConnectionPlanRequest(Guid ProfileId, IReadOnlyList<DomainRule> Rules);
 
 public sealed record ValidateConnectionPlanResponse(
     bool CanConnect,

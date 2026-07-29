@@ -139,7 +139,7 @@ public sealed partial class MainWindow : Window
             var command = _isConnected ? IpcCommandKind.Disconnect : IpcCommandKind.Connect;
             var payload = _isConnected
                 ? new DisconnectRequest(profileId.Value)
-                : (object)new ConnectRequest(profileId.Value, rules, ProtectionModeToggle.IsOn);
+                : (object)new ConnectRequest(profileId.Value, rules);
 
             var response = await _pipeClient.SendAsync(command, payload, TimeSpan.FromSeconds(30), CancellationToken.None);
             if (!response.Success)
@@ -215,7 +215,7 @@ public sealed partial class MainWindow : Window
 
             var response = await _pipeClient.SendAsync(
                 IpcCommandKind.ValidateConnectionPlan,
-                new ValidateConnectionPlanRequest(profileId.Value, BuildDomainRules(profileId.Value), ProtectionModeToggle.IsOn),
+                new ValidateConnectionPlanRequest(profileId.Value, BuildDomainRules(profileId.Value)),
                 TimeSpan.FromSeconds(10),
                 CancellationToken.None);
 

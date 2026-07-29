@@ -569,7 +569,6 @@ static async Task CleansUpAfterDnsOwnershipFailureAsync()
             profile,
             rules,
             IPAddress.Parse("192.0.2.53"),
-            protectionMode: false,
             CancellationToken.None);
         stateStore.SetConnected(profileId, rules.Length);
 

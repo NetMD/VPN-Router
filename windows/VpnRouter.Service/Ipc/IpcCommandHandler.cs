@@ -142,7 +142,6 @@ public sealed class IpcCommandHandler(
             profile,
             request.Rules,
             upstreamDnsServer,
-            request.ProtectionMode,
             cancellationToken);
         connectionStateStore.SetConnected(profile.Id, request.Rules.Count);
         return new IpcResponseEnvelope(true, $"Connect accepted for {request.Rules.Count} site(s).");
@@ -389,11 +388,6 @@ public sealed class IpcCommandHandler(
         foreach (var browserWarning in BrowserSecureDnsDetector.DetectWarnings())
         {
             warnings.Add(browserWarning);
-        }
-
-        if (request.ProtectionMode)
-        {
-            checks.Add("보호 모드가 켜져 있습니다.");
         }
 
         var canConnect = request.ProfileId != Guid.Empty

@@ -1023,9 +1023,9 @@ Completed implementation:
 
 Automated evidence:
 
-- `swift test` passed 25 XCTest cases plus 26 Swift Testing cases (51 focused
-  checks), including the new system-extension activation stage and eight injected
-  connection failure cases;
+- `swift test` passed 25 XCTest cases plus 30 Swift Testing cases (55 focused
+  checks), including the new system-extension activation stage, eight injected
+  connection failure cases, and four profile-rename policy cases;
 - the unsigned arm64 Debug Host App, Packet Tunnel, and DNS Proxy System Extension
   build succeeded;
 - Xcode Analyze succeeded for the complete scheme;
