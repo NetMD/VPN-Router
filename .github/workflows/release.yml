@@ -1,0 +1,218 @@
+name: Build and release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version without the v prefix"
+        required: true
+        default: "0.1.0"
+        type: string
+      publish_release:
+        description: "Create or update a GitHub Release after both builds pass"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    name: Windows portable x64
+    runs-on: windows-2022
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Resolve version
+        id: version
+        shell: pwsh
+        env:
+          DISPATCH_VERSION: ${{ inputs.version }}
+        run: |
+          if ($env:GITHUB_REF -like "refs/tags/v*") {
+            $version = $env:GITHUB_REF_NAME.Substring(1)
+          } else {
+            $version = $env:DISPATCH_VERSION
+          }
+          if ($version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$') {
+            throw "Invalid release version: $version"
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "VERSION=$version" >> $env:GITHUB_ENV
+
+      - name: Build both Windows solutions
+        shell: pwsh
+        run: |
+          dotnet build .\windows\VpnRouter.slnx --configuration Release -nr:false
+          if ($LASTEXITCODE -ne 0) { throw "VpnRouter.slnx build failed." }
+          dotnet build .\windows\VpnRouterVs.sln --configuration Release -nr:false
+          if ($LASTEXITCODE -ne 0) { throw "VpnRouterVs.sln build failed." }
+
+      - name: Run focused Windows tests
+        shell: pwsh
+        run: |
+          dotnet run --project .\windows\VpnRouter.Tests\VpnRouter.Tests.csproj --configuration Release --no-build
+          if ($LASTEXITCODE -ne 0) { throw "Windows focused tests failed." }
+
+      - name: Build and verify portable executable
+        shell: pwsh
+        run: |
+          & .\scripts\windows\verify-release.ps1 -Version $env:VERSION
+          if ($LASTEXITCODE -ne 0) { throw "Windows release verification failed." }
+
+      - name: Upload Windows release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release
+          if-no-files-found: error
+          path: |
+            artifacts/portable/VpnRouter-${{ steps.version.outputs.version }}-x64.exe
+            artifacts/portable/VpnRouter-${{ steps.version.outputs.version }}-x64.exe.sha256
+          retention-days: 14
+
+  macos:
+    name: macOS arm64 unsigned package
+    runs-on: macos-14
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22.x"
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        env:
+          DISPATCH_VERSION: ${{ inputs.version }}
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="${DISPATCH_VERSION}"
+          fi
+          if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release version: ${version}" >&2
+            exit 1
+          fi
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "VERSION=${version}" >> "${GITHUB_ENV}"
+
+      - name: Build and verify unsigned macOS app
+        shell: bash
+        env:
+          VPNROUTER_DERIVED_DATA_PATH: ${{ runner.temp }}/vpnrouter-derived
+          VPNROUTER_PRODUCT_VERSION: ${{ steps.version.outputs.version }}
+          VPNROUTER_BUILD_NUMBER: ${{ github.run_number }}
+        run: |
+          chmod +x scripts/macos/verify-release.sh scripts/macos/verify-signed-app.sh
+          ./scripts/macos/verify-release.sh
+
+      - name: Package macOS app as ZIP and DMG
+        shell: bash
+        env:
+          DERIVED_DATA_PATH: ${{ runner.temp }}/vpnrouter-derived
+        run: |
+          set -euo pipefail
+          app_path="${DERIVED_DATA_PATH}/Build/Products/Release/VPNRouter.app"
+          output_dir="artifacts/macos"
+          mkdir -p "${output_dir}"
+          test -d "${app_path}"
+
+          zip_path="${output_dir}/VPNRouter-${VERSION}-macos-arm64-unsigned.zip"
+          dmg_path="${output_dir}/VPNRouter-${VERSION}-macos-arm64-unsigned.dmg"
+          ditto -c -k --sequesterRsrc --keepParent "${app_path}" "${zip_path}"
+          hdiutil create \
+            -volname "VPN Router ${VERSION}" \
+            -srcfolder "${app_path}" \
+            -ov \
+            -format UDZO \
+            "${dmg_path}"
+
+          shasum -a 256 "${zip_path}" > "${zip_path}.sha256"
+          shasum -a 256 "${dmg_path}" > "${dmg_path}.sha256"
+          shasum -a 256 -c "${zip_path}.sha256"
+          shasum -a 256 -c "${dmg_path}.sha256"
+          printf '%s\n' \
+            "VPN Router ${VERSION} macOS arm64 package" \
+            "This package is unsigned compile/package evidence." \
+            "System Extension activation requires an owner-signed app installed in /Applications." \
+            > "${output_dir}/VPNRouter-${VERSION}-macos-arm64-unsigned.txt"
+
+      - name: Upload macOS release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-release
+          if-no-files-found: error
+          path: artifacts/macos/*
+          retention-days: 14
+
+  publish:
+    name: Publish GitHub Release
+    needs:
+      - windows
+      - macos
+    if: >-
+      startsWith(github.ref, 'refs/tags/') ||
+      (github.event_name == 'workflow_dispatch' && inputs.publish_release == true)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Resolve version and release tag
+        id: version
+        shell: bash
+        env:
+          DISPATCH_VERSION: ${{ inputs.version }}
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="${DISPATCH_VERSION}"
+          fi
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "tag=v${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Download Windows assets
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-release
+          path: release-assets
+
+      - name: Download macOS assets
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-release
+          path: release-assets
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release view "${RELEASE_TAG}" >/dev/null 2>&1 || \
+            gh release create "${RELEASE_TAG}" \
+              --title "VPN Router ${RELEASE_TAG}" \
+              --generate-notes
+          gh release upload "${RELEASE_TAG}" release-assets/* --clobber
