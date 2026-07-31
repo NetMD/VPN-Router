@@ -1,6 +1,41 @@
 # Windows MVP progress
 
-Last updated: 2026-07-28 KST
+Last updated: 2026-07-31 KST
+
+## Windows UI/UX parity pass
+
+Started on 2026-07-31 from `docs/windows-ui-ux-handoff.md` after fast-forwarding
+to `b7288a4`. This pass is presentation-only: Windows networking, WireGuard,
+DNS, route, IPC, elevation, recovery, and portable packaging behavior were not
+changed.
+
+Implemented:
+
+- moved shared WinUI colors and styles from `MainWindow.xaml` to `App.xaml`;
+- removed the window-level forced Light theme and changed page, card, text, and
+  stroke surfaces to follow WinUI theme resources;
+- removed the large circular/donut connection control and replaced it with a
+  wide labeled primary button plus the `이 PC → 선택 사이트 → VPN` flow label;
+- changed the Home profile/recent-status cards to equal columns;
+- split VPN Profiles into separate `프로필 가져오기` and `저장된 프로필` cards;
+- replaced 900-pixel page widths with stretch layouts capped at 1120 pixels;
+- added a narrow-window layout mode that stacks the Home summary cards, Home
+  connection actions, and Profile cards without changing their IPC state;
+- added an accessible name to the profile delete action and retained visible
+  text/icon state for primary actions.
+
+Verification on the Windows development machine:
+
+- `dotnet build windows\\VpnRouter.slnx -nr:false`: passed, 0 warnings, 0 errors;
+- `dotnet build windows\\VpnRouterVs.sln -nr:false`: passed, 0 warnings, 0 errors;
+- focused test executable: all 30 checks passed;
+- `git diff --check`: passed.
+
+Remaining owner-operated UI checks: run the WinUI app on Windows 11 at 1120x780
+and a narrow window, then inspect Light, Dark, High Contrast, 100/150/200%
+scaling, keyboard/Narrator traversal, long Korean text, empty lists, and
+connecting/failed/connected states. Do not claim those visual checks from XAML
+compilation alone.
 
 ## Windows Codex resume point
 

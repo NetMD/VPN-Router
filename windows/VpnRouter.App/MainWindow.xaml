@@ -8,65 +8,7 @@
     mc:Ignorable="d"
     Title="VPN Router">
 
-    <Grid RequestedTheme="Light">
-        <Grid.Resources>
-            <Color x:Key="CoralColor">#FFFF5C61</Color>
-            <Color x:Key="CoralSoftColor">#FFFFEFF0</Color>
-            <Color x:Key="PageColor">#FFF7F8FB</Color>
-            <Color x:Key="SurfaceColor">#FFFFFFFF</Color>
-            <Color x:Key="PrimaryTextColor">#FF24262B</Color>
-            <Color x:Key="SecondaryTextColor">#FF858991</Color>
-            <Color x:Key="StrokeColor">#FFE9EBF0</Color>
-
-            <SolidColorBrush x:Key="CoralBrush" Color="{StaticResource CoralColor}" />
-            <SolidColorBrush x:Key="CoralSoftBrush" Color="{StaticResource CoralSoftColor}" />
-            <SolidColorBrush x:Key="PageBrush" Color="{StaticResource PageColor}" />
-            <SolidColorBrush x:Key="SurfaceBrush" Color="{StaticResource SurfaceColor}" />
-            <SolidColorBrush x:Key="PrimaryTextBrush" Color="{StaticResource PrimaryTextColor}" />
-            <SolidColorBrush x:Key="SecondaryTextBrush" Color="{StaticResource SecondaryTextColor}" />
-            <SolidColorBrush x:Key="StrokeBrush" Color="{StaticResource StrokeColor}" />
-            <SolidColorBrush x:Key="NavigationViewSelectionIndicatorForeground" Color="{StaticResource CoralColor}" />
-
-            <Style x:Key="PageTitleStyle" TargetType="TextBlock">
-                <Setter Property="FontSize" Value="30" />
-                <Setter Property="FontWeight" Value="SemiBold" />
-                <Setter Property="Foreground" Value="{StaticResource PrimaryTextBrush}" />
-            </Style>
-            <Style x:Key="SectionTitleStyle" TargetType="TextBlock">
-                <Setter Property="FontSize" Value="20" />
-                <Setter Property="FontWeight" Value="SemiBold" />
-                <Setter Property="Foreground" Value="{StaticResource PrimaryTextBrush}" />
-            </Style>
-            <Style x:Key="CaptionStyle" TargetType="TextBlock">
-                <Setter Property="Foreground" Value="{StaticResource SecondaryTextBrush}" />
-                <Setter Property="TextWrapping" Value="Wrap" />
-                <Setter Property="LineHeight" Value="21" />
-            </Style>
-            <Style x:Key="CardStyle" TargetType="Border">
-                <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
-                <Setter Property="BorderBrush" Value="{StaticResource StrokeBrush}" />
-                <Setter Property="BorderThickness" Value="1" />
-                <Setter Property="CornerRadius" Value="18" />
-                <Setter Property="Padding" Value="22" />
-            </Style>
-            <Style x:Key="CoralButtonStyle" TargetType="Button">
-                <Setter Property="Background" Value="{StaticResource CoralBrush}" />
-                <Setter Property="Foreground" Value="White" />
-                <Setter Property="BorderThickness" Value="0" />
-                <Setter Property="CornerRadius" Value="22" />
-                <Setter Property="Padding" Value="22,11" />
-                <Setter Property="FontWeight" Value="SemiBold" />
-            </Style>
-            <Style x:Key="OutlineButtonStyle" TargetType="Button">
-                <Setter Property="Background" Value="Transparent" />
-                <Setter Property="Foreground" Value="{StaticResource CoralBrush}" />
-                <Setter Property="BorderBrush" Value="{StaticResource CoralBrush}" />
-                <Setter Property="BorderThickness" Value="1" />
-                <Setter Property="CornerRadius" Value="20" />
-                <Setter Property="Padding" Value="18,9" />
-            </Style>
-        </Grid.Resources>
-
+    <Grid x:Name="RootLayout" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}" SizeChanged="RootLayout_SizeChanged">
         <NavigationView
             x:Name="MainNavigation"
             PaneDisplayMode="LeftCompact"
@@ -75,7 +17,7 @@
             IsPaneToggleButtonVisible="False"
             IsBackButtonVisible="Collapsed"
             IsSettingsVisible="False"
-            Background="{StaticResource PageBrush}"
+            Background="{ThemeResource ApplicationPageBackgroundThemeBrush}"
             SelectionChanged="MainNavigation_SelectionChanged">
 
             <NavigationView.PaneHeader>
@@ -117,74 +59,73 @@
             </NavigationView.FooterMenuItems>
 
             <NavigationView.Content>
-                <Grid Background="{StaticResource PageBrush}">
+                <Grid Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
                     <Grid x:Name="HomePanel">
                         <ScrollViewer HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled">
-                            <StackPanel Width="900" HorizontalAlignment="Center" Padding="36,28,36,36" Spacing="22">
+                            <StackPanel MaxWidth="1120" HorizontalAlignment="Stretch" Padding="36,28,36,36" Spacing="22">
                                 <StackPanel Spacing="4">
                                     <TextBlock Text="VPN Router" Style="{StaticResource PageTitleStyle}" />
                                     <TextBlock Text="선택한 사이트만 VPN으로 연결합니다." Style="{StaticResource CaptionStyle}" />
                                 </StackPanel>
 
-                                <Border Style="{StaticResource CardStyle}" MinHeight="370" Padding="34">
-                                    <Grid ColumnSpacing="44">
+                                <Border Style="{StaticResource CardStyle}" Padding="28">
+                                    <Grid x:Name="ConnectionSummaryGrid" ColumnSpacing="28" RowSpacing="20">
                                         <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="300" />
+                                            <ColumnDefinition Width="2*" />
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
 
-                                        <Grid Width="250" Height="250" HorizontalAlignment="Center" VerticalAlignment="Center">
-                                            <Ellipse Fill="{StaticResource CoralSoftBrush}" />
-                                            <Ellipse Margin="19" Stroke="{StaticResource CoralBrush}" StrokeThickness="11" />
-                                            <Button
-                                                x:Name="ConnectButton"
-                                                Width="166"
-                                                Height="166"
-                                                Content="연결"
-                                                Background="{StaticResource SurfaceBrush}"
-                                                Foreground="{StaticResource CoralBrush}"
-                                                BorderBrush="{StaticResource StrokeBrush}"
-                                                BorderThickness="1"
-                                                CornerRadius="83"
-                                                FontSize="20"
-                                                FontWeight="SemiBold"
-                                                HorizontalAlignment="Center"
-                                                VerticalAlignment="Center"
-                                                Click="ConnectButton_Click" />
-                                        </Grid>
-
-                                        <StackPanel Grid.Column="1" Spacing="12" VerticalAlignment="Center">
-                                            <TextBlock Text="VPN 연결" Foreground="{StaticResource SecondaryTextBrush}" FontSize="16" />
+                                        <StackPanel Spacing="12" VerticalAlignment="Center">
+                                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                                <SymbolIcon Symbol="Contact" Foreground="{StaticResource CoralBrush}" />
+                                                <TextBlock Text="이 PC → 선택 사이트 → VPN" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontSize="16" />
+                                            </StackPanel>
                                             <TextBlock
                                                 x:Name="ConnectionStateText"
                                                 Text="연결 안 됨"
                                                 FontSize="36"
                                                 FontWeight="SemiBold"
-                                                Foreground="{StaticResource PrimaryTextBrush}"
+                                                Foreground="{ThemeResource TextFillColorPrimaryBrush}"
                                                 TextWrapping="Wrap" />
                                             <TextBlock
                                                 x:Name="ConnectionDetailsText"
                                                 Text="연결하면 선택한 사이트만 VPN을 사용합니다."
                                                 Style="{StaticResource CaptionStyle}"
-                                                FontSize="16"
-                                                MaxWidth="430" />
-                                            <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,12,0,0">
-                                                <Button
-                                                    x:Name="ValidateConnectionPlanButton"
-                                                    Content="연결 준비 확인"
-                                                    Style="{StaticResource OutlineButtonStyle}"
-                                                    Click="ValidateConnectionPlanButton_Click" />
-                                            </StackPanel>
+                                                FontSize="16" />
+                                        </StackPanel>
+
+                                        <StackPanel x:Name="ConnectionActionPanel" Grid.Column="1" Spacing="12" VerticalAlignment="Center" HorizontalAlignment="Stretch">
+                                            <Button
+                                                x:Name="ConnectButton"
+                                                Content="연결"
+                                                Style="{StaticResource CoralButtonStyle}"
+                                                HorizontalAlignment="Stretch"
+                                                Click="ConnectButton_Click"
+                                                AutomationProperties.Name="VPN 연결 또는 연결 해제" />
+                                            <Button
+                                                x:Name="ValidateConnectionPlanButton"
+                                                Content="연결 준비 확인"
+                                                Style="{StaticResource OutlineButtonStyle}"
+                                                HorizontalAlignment="Stretch"
+                                                Click="ValidateConnectionPlanButton_Click" />
                                         </StackPanel>
                                     </Grid>
                                 </Border>
 
-                                <Grid ColumnSpacing="16">
+                                <Grid x:Name="HomeSummaryGrid" ColumnSpacing="16" RowSpacing="16">
                                     <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="2*" />
-                                        <ColumnDefinition Width="3*" />
+                                        <ColumnDefinition Width="1*" />
+                                        <ColumnDefinition Width="1*" />
                                     </Grid.ColumnDefinitions>
-                                    <Border Style="{StaticResource CardStyle}" MinHeight="150">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    <Border x:Name="HomeProfileCard" Style="{StaticResource CardStyle}" MinHeight="150">
                                         <StackPanel Spacing="10">
                                             <Border Width="42" Height="42" HorizontalAlignment="Left" Background="{StaticResource CoralSoftBrush}" CornerRadius="12">
                                                 <SymbolIcon Symbol="ProtectedDocument" Foreground="{StaticResource CoralBrush}" />
@@ -193,7 +134,7 @@
                                             <TextBlock x:Name="ProfileDetailsText" Text="WireGuard 프로필을 선택하세요." Style="{StaticResource CaptionStyle}" />
                                         </StackPanel>
                                     </Border>
-                                    <Border Grid.Column="1" Style="{StaticResource CardStyle}" MinHeight="150">
+                                    <Border x:Name="HomeRecentStatusCard" Grid.Column="1" Style="{StaticResource CardStyle}" MinHeight="150">
                                         <StackPanel Spacing="10">
                                             <TextBlock Text="최근 상태" Style="{StaticResource SectionTitleStyle}" />
                                             <ItemsControl x:Name="RecentStatusList">
@@ -208,50 +149,62 @@
 
                     <Grid x:Name="ProfilesPanel" Visibility="Collapsed">
                         <ScrollViewer HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled">
-                            <StackPanel Width="900" HorizontalAlignment="Center" Padding="42,34,42,42" Spacing="24">
+                            <StackPanel MaxWidth="1120" HorizontalAlignment="Stretch" Padding="36,28,36,36" Spacing="22">
                                 <StackPanel Spacing="4">
                                     <TextBlock Text="VPN 프로필" Style="{StaticResource PageTitleStyle}" />
                                     <TextBlock Text="VPN 제공업체에서 받은 WireGuard 설정을 관리합니다." Style="{StaticResource CaptionStyle}" />
                                 </StackPanel>
-                                <Border Style="{StaticResource CardStyle}" Padding="28">
-                                    <StackPanel Spacing="18">
-                                        <Grid ColumnSpacing="12">
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="Auto" />
-                                            </Grid.ColumnDefinitions>
+                                <Grid x:Name="ProfilesCardsGrid" ColumnSpacing="16" RowSpacing="16">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="1*" />
+                                        <ColumnDefinition Width="1*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    <Border x:Name="ProfilesImportCard" Style="{StaticResource CardStyle}" Padding="28">
+                                        <StackPanel Spacing="16">
                                             <StackPanel Spacing="4">
-                                                <TextBlock Text="사용할 프로필" Style="{StaticResource SectionTitleStyle}" />
-                                                <TextBlock Text="연결에 사용할 국가 또는 서버 프로필을 선택하세요." Style="{StaticResource CaptionStyle}" />
+                                                <TextBlock Text="프로필 가져오기" Style="{StaticResource SectionTitleStyle}" />
+                                                <TextBlock Text="VPN 제공업체에서 받은 WireGuard 설정 파일을 선택하세요." Style="{StaticResource CaptionStyle}" />
                                             </StackPanel>
-                                            <Button Grid.Column="1" Style="{StaticResource CoralButtonStyle}" Click="ImportWireGuardButton_Click">
+                                            <Button Style="{StaticResource CoralButtonStyle}" Click="ImportWireGuardButton_Click" HorizontalAlignment="Left">
                                                 <StackPanel Orientation="Horizontal" Spacing="7">
                                                     <SymbolIcon Symbol="Import" />
-                                                    <TextBlock Text="가져오기" />
+                                                    <TextBlock Text="프로필 가져오기" />
                                                 </StackPanel>
                                             </Button>
-                                        </Grid>
-                                        <ComboBox
-                                            x:Name="ProfileComboBox"
-                                            SelectedIndex="0"
-                                            HorizontalAlignment="Stretch"
-                                            SelectionChanged="ProfileComboBox_SelectionChanged" />
-                                        <Rectangle Height="1" Fill="{StaticResource StrokeBrush}" Margin="0,4" />
-                                        <TextBlock Text="프로필 관리" FontSize="16" FontWeight="SemiBold" />
-                                        <Grid ColumnSpacing="10">
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="Auto" />
-                                                <ColumnDefinition Width="Auto" />
-                                            </Grid.ColumnDefinitions>
-                                            <TextBox x:Name="ProfileNameTextBox" PlaceholderText="프로필 이름" />
-                                            <Button Grid.Column="1" Content="이름 변경" Click="RenameProfileButton_Click" />
-                                            <Button Grid.Column="2" Click="DeleteProfileButton_Click" ToolTipService.ToolTip="프로필 삭제">
-                                                <SymbolIcon Symbol="Delete" />
-                                            </Button>
-                                        </Grid>
-                                    </StackPanel>
-                                </Border>
+                                            <TextBlock Text="설정 원문과 개인 키는 화면에 표시하지 않습니다." Style="{StaticResource CaptionStyle}" />
+                                        </StackPanel>
+                                    </Border>
+                                    <Border x:Name="ProfilesSavedCard" Grid.Column="1" Style="{StaticResource CardStyle}" Padding="28">
+                                        <StackPanel Spacing="16">
+                                            <StackPanel Spacing="4">
+                                                <TextBlock Text="저장된 프로필" Style="{StaticResource SectionTitleStyle}" />
+                                                <TextBlock Text="연결에 사용할 프로필을 선택하고 이름을 관리하세요." Style="{StaticResource CaptionStyle}" />
+                                            </StackPanel>
+                                            <ComboBox
+                                                x:Name="ProfileComboBox"
+                                                SelectedIndex="0"
+                                                HorizontalAlignment="Stretch"
+                                                SelectionChanged="ProfileComboBox_SelectionChanged" />
+                                            <Rectangle Height="1" Fill="{ThemeResource ControlStrokeColorDefaultBrush}" Margin="0,2" />
+                                            <Grid ColumnSpacing="10">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBox x:Name="ProfileNameTextBox" PlaceholderText="프로필 이름" />
+                                                <Button Grid.Column="1" Content="이름 변경" Click="RenameProfileButton_Click" />
+                                                <Button Grid.Column="2" Click="DeleteProfileButton_Click" ToolTipService.ToolTip="프로필 삭제" AutomationProperties.Name="프로필 삭제">
+                                                    <SymbolIcon Symbol="Delete" />
+                                                </Button>
+                                            </Grid>
+                                        </StackPanel>
+                                    </Border>
+                                </Grid>
                                 <Border Style="{StaticResource CardStyle}">
                                     <Grid ColumnSpacing="16">
                                         <Grid.ColumnDefinitions>
@@ -288,7 +241,7 @@
 
                     <Grid x:Name="SitesPanel" Visibility="Collapsed">
                         <ScrollViewer HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled">
-                            <StackPanel Width="900" HorizontalAlignment="Center" Padding="42,34,42,42" Spacing="24">
+                            <StackPanel MaxWidth="1120" HorizontalAlignment="Stretch" Padding="36,28,36,36" Spacing="22">
                                 <StackPanel Spacing="4">
                                     <TextBlock Text="VPN으로 열 사이트" Style="{StaticResource PageTitleStyle}" />
                                     <TextBlock Text="등록한 사이트와 필요한 하위 도메인만 VPN 경로를 사용합니다." Style="{StaticResource CaptionStyle}" />
@@ -317,7 +270,7 @@
 
                     <Grid x:Name="DiagnosticsPanel" Visibility="Collapsed">
                         <ScrollViewer HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled">
-                            <StackPanel Width="900" HorizontalAlignment="Center" Padding="42,34,42,42" Spacing="24">
+                            <StackPanel MaxWidth="1120" HorizontalAlignment="Stretch" Padding="36,28,36,36" Spacing="22">
                                 <StackPanel Spacing="4">
                                     <TextBlock Text="문제 해결" Style="{StaticResource PageTitleStyle}" />
                                     <TextBlock Text="연결 상태를 확인하고 네트워크 설정을 안전하게 복구합니다." Style="{StaticResource CaptionStyle}" />
@@ -358,7 +311,7 @@
 
                     <Grid x:Name="SettingsPanel" Visibility="Collapsed">
                         <ScrollViewer HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled">
-                            <StackPanel Width="900" HorizontalAlignment="Center" Padding="42,34,42,42" Spacing="24">
+                            <StackPanel MaxWidth="1120" HorizontalAlignment="Stretch" Padding="36,28,36,36" Spacing="22">
                                 <StackPanel Spacing="4">
                                     <TextBlock Text="설정" Style="{StaticResource PageTitleStyle}" />
                                     <TextBlock Text="VPN Router의 필수 연결 보호 동작을 확인합니다." Style="{StaticResource CaptionStyle}" />

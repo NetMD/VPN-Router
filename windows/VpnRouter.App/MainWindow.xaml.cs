@@ -31,6 +31,7 @@ public sealed partial class MainWindow : Window
         _expectedPayloadIdentity = expectedPayloadIdentity;
         InitializeComponent();
         AppWindow.Resize(new Windows.Graphics.SizeInt32(1120, 780));
+        ApplyResponsiveLayout(RootLayout.ActualWidth);
         Closed += MainWindow_Closed;
         RefreshWireGuardInstallStatus();
         _ = InitializeBackendAsync();
@@ -121,6 +122,42 @@ public sealed partial class MainWindow : Window
         SitesPanel.Visibility = selectedTag == "sites" ? Visibility.Visible : Visibility.Collapsed;
         DiagnosticsPanel.Visibility = selectedTag == "diagnostics" ? Visibility.Visible : Visibility.Collapsed;
         SettingsPanel.Visibility = selectedTag == "settings" ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void RootLayout_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        ApplyResponsiveLayout(e.NewSize.Width);
+    }
+
+    private void ApplyResponsiveLayout(double width)
+    {
+        if (width <= 0)
+        {
+            return;
+        }
+
+        var isNarrow = width < 820;
+        var full = new GridLength(1, GridUnitType.Star);
+        var hidden = new GridLength(0);
+
+        ConnectionSummaryGrid.ColumnDefinitions[0].Width = isNarrow ? full : new GridLength(2, GridUnitType.Star);
+        ConnectionSummaryGrid.ColumnDefinitions[1].Width = isNarrow ? hidden : full;
+        Grid.SetColumn(ConnectionActionPanel, isNarrow ? 0 : 1);
+        Grid.SetRow(ConnectionActionPanel, isNarrow ? 1 : 0);
+
+        HomeSummaryGrid.ColumnDefinitions[0].Width = full;
+        HomeSummaryGrid.ColumnDefinitions[1].Width = isNarrow ? hidden : full;
+        Grid.SetColumn(HomeProfileCard, 0);
+        Grid.SetRow(HomeProfileCard, 0);
+        Grid.SetColumn(HomeRecentStatusCard, isNarrow ? 0 : 1);
+        Grid.SetRow(HomeRecentStatusCard, isNarrow ? 1 : 0);
+
+        ProfilesCardsGrid.ColumnDefinitions[0].Width = full;
+        ProfilesCardsGrid.ColumnDefinitions[1].Width = isNarrow ? hidden : full;
+        Grid.SetColumn(ProfilesImportCard, 0);
+        Grid.SetRow(ProfilesImportCard, 0);
+        Grid.SetColumn(ProfilesSavedCard, isNarrow ? 0 : 1);
+        Grid.SetRow(ProfilesSavedCard, isNarrow ? 1 : 0);
     }
 
     private async void ConnectButton_Click(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
