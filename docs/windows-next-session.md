@@ -37,6 +37,12 @@ the current repository state, the completed macOS safety work, and the
 > checks require PowerShell and Windows Principal, and WinUI still requires its
 > Windows-only XAML compiler. Do not treat the cross-target pass as the native
 > Windows rerun.
+>
+> UI/UX handoff update (2026-07-31): before changing WinUI, read
+> `docs/windows-ui-ux-handoff.md` and `docs/ui-design-principles.md`. Replace the
+> large circular connection control, fixed-width/light-only layout, and uneven
+> card rows using Windows-native responsive controls. Do not port SwiftUI code or
+> change networking behavior as part of that pass.
 
 ## Safety and platform boundary
 

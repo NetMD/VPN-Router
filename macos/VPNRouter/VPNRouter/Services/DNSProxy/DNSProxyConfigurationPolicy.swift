@@ -21,6 +21,20 @@ enum DNSProxyMonitorDecision: Equatable {
     case failSafe
 }
 
+enum SystemExtensionInstallLocationPolicy {
+    static let applicationsDirectory = URL(fileURLWithPath: "/Applications", isDirectory: true)
+
+    static func allowsActivation(for appBundleURL: URL) -> Bool {
+        let standardizedBundleURL = appBundleURL.standardizedFileURL
+        return standardizedBundleURL.pathExtension == "app"
+            && standardizedBundleURL.deletingLastPathComponent()
+                == applicationsDirectory.standardizedFileURL
+    }
+
+    static let activationGuidance =
+        "시스템 확장을 활성화하려면 VPN Router.app을 응용 프로그램 폴더에 설치한 뒤, 설치된 앱을 다시 열어 주세요. 현재 앱은 응용 프로그램 폴더 밖에서 실행 중입니다."
+}
+
 enum BrowserSecureDNSMode: Equatable {
     case off
     case automatic

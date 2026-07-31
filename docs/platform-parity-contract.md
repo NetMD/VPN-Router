@@ -15,6 +15,9 @@ plain-language status, visual density, and primary actions. macOS must reproduce
 that product experience with native SwiftUI controls and macOS accessibility,
 windowing, keyboard, and appearance behavior rather than copying XAML.
 
+The shared visual boundary and the rule against pixel-copying either another
+product or the other platform are defined in `docs/ui-design-principles.md`.
+
 ## Required common behavior
 
 | Capability | Required user-visible result |

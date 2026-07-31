@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import VPNRouterDNSProxyControl
 
@@ -265,6 +266,28 @@ struct DNSProxyConfigurationPolicyTests {
         #expect(
             BrowserSecureDNSMode(rawValue: "future-mode")
                 == .unsupported("future-mode")
+        )
+    }
+
+    @Test
+    func systemExtensionActivationRequiresApplicationsFolder() {
+        #expect(
+            SystemExtensionInstallLocationPolicy.allowsActivation(
+                for: URL(fileURLWithPath: "/Applications/VPNRouter.app")
+            )
+        )
+        #expect(
+            !SystemExtensionInstallLocationPolicy.allowsActivation(
+                for: URL(
+                    fileURLWithPath:
+                        "/Users/test/Library/Developer/Xcode/DerivedData/VPNRouter/Build/Products/Debug/VPNRouter.app"
+                )
+            )
+        )
+        #expect(
+            !SystemExtensionInstallLocationPolicy.allowsActivation(
+                for: URL(fileURLWithPath: "/Applications/VPNRouter")
+            )
         )
     }
 

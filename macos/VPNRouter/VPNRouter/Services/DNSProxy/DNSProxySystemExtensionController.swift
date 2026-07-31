@@ -21,6 +21,12 @@ final class DNSProxySystemExtensionController: NSObject, ObservableObject {
     }
 
     func activateForConsumerConnection() async throws {
+        guard SystemExtensionInstallLocationPolicy.allowsActivation(
+            for: Bundle.main.bundleURL
+        ) else {
+            message = SystemExtensionInstallLocationPolicy.activationGuidance
+            throw DNSProxySystemExtensionError.unsupportedParentBundleLocation
+        }
         guard !isRequestInFlight else {
             throw DNSProxySystemExtensionError.requestAlreadyInFlight
         }
@@ -98,12 +104,15 @@ extension DNSProxySystemExtensionController: OSSystemExtensionRequestDelegate {
 }
 
 private enum DNSProxySystemExtensionError: LocalizedError {
+    case unsupportedParentBundleLocation
     case requestAlreadyInFlight
     case restartRequired
     case unknownResult
 
     var errorDescription: String? {
         switch self {
+        case .unsupportedParentBundleLocation:
+            SystemExtensionInstallLocationPolicy.activationGuidance
         case .requestAlreadyInFlight:
             "DNS Proxy System Extension 활성화 요청이 이미 진행 중입니다."
         case .restartRequired:

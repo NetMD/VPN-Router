@@ -227,39 +227,74 @@ struct ContentView: View {
     private var navigationContent: some View {
         NavigationSplitView {
             List(selection: $selectedSection) {
-                ForEach(SidebarSection.allCases) { section in
-                    NavigationLink(value: section) {
-                        Label(section.title, systemImage: section.systemImage)
+                Section {
+                    ForEach(SidebarSection.allCases) { section in
+                        NavigationLink(value: section) {
+                            Label {
+                                Text(section.title)
+                                    .fontWeight(selectedSection == section ? .semibold : .regular)
+                            } icon: {
+                                Image(systemName: section.systemImage)
+                                    .symbolVariant(selectedSection == section ? .fill : .none)
+                            }
+                        }
+                        .accessibilityLabel(section.title)
                     }
-                    .accessibilityLabel(section.title)
+                } header: {
+                    Text("선택 연결")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
                 }
             }
+            .listStyle(.sidebar)
             .navigationTitle("VPN Router")
-            .navigationSplitViewColumnWidth(min: 180, ideal: 210)
+            .navigationSplitViewColumnWidth(min: 184, ideal: 216)
+            .safeAreaInset(edge: .bottom) {
+                Label("이 Mac에서만 동작", systemImage: "laptopcomputer")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.bar)
+            }
         } detail: {
             ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 14) {
                     if let activeOperation {
                         HStack(spacing: 10) {
                             ProgressView()
                                 .controlSize(.small)
                             Text(activeOperation.progressLabel)
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
+                                .font(.callout.weight(.medium))
                         }
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(Color.accentColor.opacity(0.08), in: Capsule())
                         .accessibilityElement(children: .combine)
                         .accessibilityLabel(activeOperation.accessibilityLabel)
                     }
 
                     detailView
                 }
-                .frame(maxWidth: 960, alignment: .topLeading)
+                .frame(maxWidth: 1_040, alignment: .topLeading)
                 .frame(maxWidth: .infinity, alignment: .top)
             }
             .contentMargins(32)
             .scrollIndicators(.visible)
             .scrollBounceBehavior(.basedOnSize)
-            .background(Color(nsColor: .windowBackgroundColor))
+            .background {
+                LinearGradient(
+                    colors: [
+                        Color.accentColor.opacity(0.055),
+                        Color(nsColor: .windowBackgroundColor),
+                        Color(nsColor: .windowBackgroundColor)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            }
             .frame(minWidth: 440, minHeight: 420, alignment: .topLeading)
         }
     }
@@ -301,15 +336,10 @@ struct ContentView: View {
             connectionOverviewCard
             ipv6BypassWarning
 
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top, spacing: 16) {
-                    homeProfileCard
-                    homeRecentStatusCard
-                }
-                VStack(alignment: .leading, spacing: 16) {
-                    homeProfileCard
-                    homeRecentStatusCard
-                }
+            ProductCardPair {
+                homeProfileCard
+            } trailing: {
+                homeRecentStatusCard
             }
             Spacer()
         }
@@ -317,15 +347,22 @@ struct ContentView: View {
 
     private var connectionOverviewCard: some View {
         ProductCard {
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 32) {
-                    primaryConnectionButton
-                    connectionOverviewDetails
-                }
-                VStack(alignment: .leading, spacing: 24) {
-                    primaryConnectionButton
-                        .frame(maxWidth: .infinity)
-                    connectionOverviewDetails
+            VStack(alignment: .leading, spacing: 22) {
+                ConnectionPathView(
+                    isActive: canStop,
+                    statusColor: connectionStatusColor
+                )
+
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .center, spacing: 36) {
+                        connectionOverviewDetails
+                        primaryConnectionButton
+                    }
+                    VStack(alignment: .leading, spacing: 24) {
+                        connectionOverviewDetails
+                        primaryConnectionButton
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
             }
         }
@@ -343,21 +380,34 @@ struct ContentView: View {
                 }
             }
         } label: {
-            VStack(spacing: 10) {
+            HStack(spacing: 12) {
                 Image(systemName: connectionButtonSymbol)
-                    .font(.system(size: 38, weight: .semibold))
+                    .font(.system(size: 19, weight: .semibold))
+                    .frame(width: 24)
                 Text(connectionButtonTitle)
                     .font(.headline)
+                Image(systemName: "arrow.right")
+                    .font(.callout.weight(.semibold))
+                    .opacity(canStop ? 0 : 0.8)
             }
             .foregroundStyle(.white)
-            .frame(width: 148, height: 148)
-            .background(connectionButtonColor, in: Circle())
+            .padding(.horizontal, 22)
+            .frame(minWidth: 190, minHeight: 56)
+            .background(
+                LinearGradient(
+                    colors: [connectionButtonColor, connectionButtonColor.opacity(0.82)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                ),
+                in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+            )
             .overlay {
-                Circle()
-                    .stroke(.white.opacity(0.35), lineWidth: 1)
-                    .padding(7)
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(.white.opacity(0.28), lineWidth: 1)
+                    .padding(1)
             }
-            .contentShape(Circle())
+            .shadow(color: connectionButtonColor.opacity(0.22), radius: 12, y: 6)
+            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
         .buttonStyle(.plain)
         .disabled(!canStart && !canStop)
@@ -413,7 +463,11 @@ struct ContentView: View {
     }
 
     private var homeProfileCard: some View {
-        ProductCard(title: "선택한 VPN 프로필", systemImage: "doc.text") {
+        ProductCard(
+            title: "선택한 VPN 프로필",
+            systemImage: "doc.text",
+            matchesRowHeight: true
+        ) {
             if let selectedProfile {
                 ProfileRow(profile: selectedProfile)
                 Button("VPN 프로필 관리") {
@@ -431,7 +485,11 @@ struct ContentView: View {
     }
 
     private var homeRecentStatusCard: some View {
-        ProductCard(title: "최근 상태", systemImage: "clock.arrow.circlepath") {
+        ProductCard(
+            title: "최근 상태",
+            systemImage: "clock.arrow.circlepath",
+            matchesRowHeight: true
+        ) {
             DiagnosticMessageView(message: lastMessage)
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 12) {
@@ -452,26 +510,21 @@ struct ContentView: View {
                 subtitle: "WireGuard 프로필을 가져오고 연결 대상을 선택합니다."
             )
 
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top, spacing: 16) {
-                    ProductCard(title: "프로필 가져오기", systemImage: "square.and.arrow.down") {
-                        profileImportPanel
-                    }
-                    .frame(minWidth: 320, idealWidth: 400, maxWidth: 520)
-
-                    ProductCard(title: "저장된 프로필", systemImage: "doc.on.doc") {
-                        storedProfilesPanel
-                    }
-                    .frame(minWidth: 260, maxWidth: .infinity)
+            ProductCardPair {
+                ProductCard(
+                    title: "프로필 가져오기",
+                    systemImage: "square.and.arrow.down",
+                    matchesRowHeight: true
+                ) {
+                    profileImportPanel
                 }
-
-                VStack(alignment: .leading, spacing: 16) {
-                    ProductCard(title: "프로필 가져오기", systemImage: "square.and.arrow.down") {
-                        profileImportPanel
-                    }
-                    ProductCard(title: "저장된 프로필", systemImage: "doc.on.doc") {
-                        storedProfilesPanel
-                    }
+            } trailing: {
+                ProductCard(
+                    title: "저장된 프로필",
+                    systemImage: "doc.on.doc",
+                    matchesRowHeight: true
+                ) {
+                    storedProfilesPanel
                 }
             }
         }
@@ -671,26 +724,21 @@ struct ContentView: View {
                     ?? "연결할 프로필에 공통으로 적용되는 사이트를 관리합니다."
             )
 
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top, spacing: 16) {
-                    ProductCard(title: "사이트 목록", systemImage: "globe") {
-                        siteEditorPanel
-                    }
-                    .frame(minWidth: 320, idealWidth: 400, maxWidth: 520)
-
-                    ProductCard(title: "경로 계획", systemImage: "point.3.connected.trianglepath.dotted") {
-                        routePlanPanel
-                    }
-                    .frame(minWidth: 260, maxWidth: .infinity)
+            ProductCardPair {
+                ProductCard(
+                    title: "사이트 목록",
+                    systemImage: "globe",
+                    matchesRowHeight: true
+                ) {
+                    siteEditorPanel
                 }
-
-                VStack(alignment: .leading, spacing: 16) {
-                    ProductCard(title: "사이트 목록", systemImage: "globe") {
-                        siteEditorPanel
-                    }
-                    ProductCard(title: "경로 계획", systemImage: "point.3.connected.trianglepath.dotted") {
-                        routePlanPanel
-                    }
+            } trailing: {
+                ProductCard(
+                    title: "경로 계획",
+                    systemImage: "point.3.connected.trianglepath.dotted",
+                    matchesRowHeight: true
+                ) {
+                    routePlanPanel
                 }
             }
         }
@@ -1155,12 +1203,23 @@ struct ContentView: View {
     }
 
     private func header(title: String, subtitle: String) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 8) {
+                Capsule()
+                    .fill(Color.accentColor)
+                    .frame(width: 28, height: 4)
+                Text("선택 연결")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .accessibilityHidden(true)
+
             Text(title)
-                .font(.largeTitle)
-                .fontWeight(.semibold)
+                .font(.system(.largeTitle, design: .rounded, weight: .semibold))
             Text(subtitle)
+                .font(.callout)
                 .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -1781,6 +1840,14 @@ struct ContentView: View {
                         throw ConsumerConnectionStepError(
                             code: "sites-empty",
                             message: TunnelConfigurationError.noRouteRules.localizedDescription
+                        )
+                    }
+                    guard SystemExtensionInstallLocationPolicy.allowsActivation(
+                        for: Bundle.main.bundleURL
+                    ) else {
+                        throw ConsumerConnectionStepError(
+                            code: "app-not-installed-in-applications",
+                            message: SystemExtensionInstallLocationPolicy.activationGuidance
                         )
                     }
 
@@ -3001,42 +3068,170 @@ private struct ProfileRow: View {
     }
 }
 
+private struct ConnectionPathView: View {
+    let isActive: Bool
+    let statusColor: Color
+
+    var body: some View {
+        HStack(spacing: 0) {
+            pathStop(title: "이 Mac", systemImage: "laptopcomputer")
+            connector
+            pathStop(title: "선택 사이트", systemImage: "globe")
+            connector
+            pathStop(title: "VPN", systemImage: "lock.shield.fill")
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .background(Color.accentColor.opacity(0.065), in: RoundedRectangle(cornerRadius: 14))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(
+            isActive
+                ? "이 Mac에서 선택 사이트를 VPN으로 보내는 연결 경로가 활성화되어 있습니다."
+                : "이 Mac에서 선택 사이트를 VPN으로 보내는 연결 경로입니다. 현재 비활성화되어 있습니다."
+        )
+    }
+
+    private var connector: some View {
+        Capsule()
+            .fill(
+                isActive
+                    ? statusColor.opacity(0.72)
+                    : Color(nsColor: .secondaryLabelColor).opacity(0.24)
+            )
+            .frame(maxWidth: .infinity, minHeight: 3, maxHeight: 3)
+            .padding(.horizontal, 8)
+            .accessibilityHidden(true)
+    }
+
+    private func pathStop(title: String, systemImage: String) -> some View {
+        VStack(spacing: 7) {
+            Image(systemName: systemImage)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(
+                    isActive ? statusColor : Color(nsColor: .secondaryLabelColor)
+                )
+                .frame(width: 32, height: 32)
+                .background(
+                    Color(nsColor: .controlBackgroundColor),
+                    in: RoundedRectangle(cornerRadius: 9, style: .continuous)
+                )
+                .overlay {
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .stroke(
+                            isActive
+                                ? statusColor.opacity(0.5)
+                                : Color(nsColor: .secondaryLabelColor).opacity(0.18),
+                            lineWidth: 1
+                        )
+                }
+            Text(title)
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .frame(minWidth: 72)
+    }
+}
+
+private struct ProductCardPair<Leading: View, Trailing: View>: View {
+    @ViewBuilder private let leading: Leading
+    @ViewBuilder private let trailing: Trailing
+
+    init(
+        @ViewBuilder leading: () -> Leading,
+        @ViewBuilder trailing: () -> Trailing
+    ) {
+        self.leading = leading()
+        self.trailing = trailing()
+    }
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: 16) {
+                leading
+                    .frame(
+                        minWidth: 300,
+                        maxWidth: .infinity,
+                        maxHeight: .infinity,
+                        alignment: .topLeading
+                    )
+                trailing
+                    .frame(
+                        minWidth: 300,
+                        maxWidth: .infinity,
+                        maxHeight: .infinity,
+                        alignment: .topLeading
+                    )
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+
+            VStack(alignment: .leading, spacing: 16) {
+                leading
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                trailing
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+    }
+}
+
 private struct ProductCard<Content: View>: View {
     private let title: String?
     private let systemImage: String?
+    private let matchesRowHeight: Bool
     @ViewBuilder private let content: Content
 
     init(
         title: String? = nil,
         systemImage: String? = nil,
+        matchesRowHeight: Bool = false,
         @ViewBuilder content: () -> Content
     ) {
         self.title = title
         self.systemImage = systemImage
+        self.matchesRowHeight = matchesRowHeight
         self.content = content()
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 17) {
             if let title {
-                if let systemImage {
-                    Label(title, systemImage: systemImage)
-                        .font(.headline)
-                } else {
-                    Text(title)
-                        .font(.headline)
+                HStack(spacing: 10) {
+                    RoundedRectangle(cornerRadius: 2, style: .continuous)
+                        .fill(Color.accentColor)
+                        .frame(width: 4, height: 22)
+                        .accessibilityHidden(true)
+
+                    if let systemImage {
+                        Label(title, systemImage: systemImage)
+                            .font(.headline)
+                    } else {
+                        Text(title)
+                            .font(.headline)
+                    }
                 }
             }
 
             content
         }
-        .padding(20)
-        .frame(maxWidth: .infinity, alignment: .topLeading)
-        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
+        .padding(22)
+        .frame(
+            maxWidth: .infinity,
+            maxHeight: matchesRowHeight ? .infinity : nil,
+            alignment: .topLeading
+        )
+        .background(
+            Color(nsColor: .controlBackgroundColor).opacity(0.94),
+            in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Color(nsColor: .separatorColor).opacity(0.55), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(Color(nsColor: .separatorColor).opacity(0.42), lineWidth: 1)
         }
+        .shadow(color: .black.opacity(0.045), radius: 16, y: 7)
     }
 }
 

@@ -1225,3 +1225,38 @@ A remained available while target AAAA was empty and unrelated AAAA remained
 available, a selected route used `utun`, connected Quit preserved all three
 processes and native state for the checked interval, `open` restored the main
 window, and normal Disconnect removed the Packet Tunnel process.
+
+## 2026-07-31 macOS UI/UX 독립성 개선
+
+macOS 화면은 Windows와 같은 다섯 영역과 작업 순서를 유지하면서도 다른
+제품이나 Windows 화면을 그대로 복사한 것처럼 보이지 않도록 다듬었습니다.
+
+- 큰 원형 연결 버튼을 글자와 아이콘이 함께 있는 넓은 직사각형 버튼으로
+  바꿨습니다.
+- 홈에 `이 Mac → 선택 사이트 → VPN` 흐름을 보여주는 연결 경로 띠를
+  추가했습니다.
+- 사이드바, 화면 제목, 작업 진행 표시와 카드의 여백·모서리·코랄 표식을
+  하나의 macOS 시각 규칙으로 정리했습니다.
+- 홈·VPN 프로필·VPN 사이트의 두 카드 영역은 넓은 창에서 같은 폭과
+  높이, 같은 상단 기준선으로 정렬하고 좁은 창에서는 전체 폭 한 열로
+  전환하도록 공통 배치를 적용했습니다.
+- 공통 작업 순서와 플랫폼별 표현 경계를
+  `docs/ui-design-principles.md`에 기록했습니다. Windows 소스는 수정하지
+  않았습니다.
+- macOS 26.5.2 arm64, Xcode 26.6, Swift 6.3.3 환경에서 `swift test`의
+  25개 XCTest와 35개 Swift Testing 검사, 모두 60개가 통과했습니다.
+- 기존에 검증해 둔 Debug `libwg-go.a`를 새 임시 DerivedData에 준비한 뒤
+  Host App, Packet Tunnel, DNS Proxy System Extension의 unsigned arm64
+  Debug 빌드가 통과했습니다. 첫 시도는 새 임시 폴더에 해당 라이브러리가
+  없어 링크 전에 멈췄으며, UI 컴파일 오류는 아니었습니다.
+
+System Extension을 포함한 앱이 Xcode DerivedData에서 실행될 때 운영체제가
+`unsupportedParentBundleLocation`으로 활성화를 거부하는 조건도 연결 전
+검사에 추가했습니다. 이제 연결은 `preflighting` 단계에서
+`app-not-installed-in-applications` 코드와 함께 응용 프로그램 폴더에
+설치한 앱을 다시 열라는 안내를 표시합니다. 개발자용 직접 활성화 경로에도
+같은 검사를 두어 운영체제의 원문 파일 경로가 화면에 노출되지 않게 했습니다.
+
+이 결과는 SwiftUI 컴파일과 자동 검사 근거입니다. 서명 앱의 실제 화면,
+VoiceOver, 작은 창·넓은 창, 연결·DNS·경로 동작을 새로 검증한 결과는
+아닙니다.
