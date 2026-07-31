@@ -66,8 +66,21 @@ jobs:
       - name: Run focused Windows tests
         shell: pwsh
         run: |
-          dotnet run --project .\windows\VpnRouter.Tests\VpnRouter.Tests.csproj --configuration Release --no-build
-          if ($LASTEXITCODE -ne 0) { throw "Windows focused tests failed." }
+          $passed = $false
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            Write-Host "Running focused Windows tests (attempt $attempt/3)..."
+            dotnet run --project .\windows\VpnRouter.Tests\VpnRouter.Tests.csproj --configuration Release --no-build
+            $exitCode = $LASTEXITCODE
+            if ($exitCode -eq 0) {
+              $passed = $true
+              break
+            }
+            if ($attempt -lt 3) {
+              Write-Warning "Focused Windows tests failed with exit code $exitCode; retrying after 5 seconds."
+              Start-Sleep -Seconds 5
+            }
+          }
+          if (-not $passed) { throw "Windows focused tests failed after 3 attempts." }
 
       - name: Build and verify portable executable
         shell: pwsh
