@@ -31,7 +31,7 @@ VPN Router는 다음 원칙을 중심으로 동작합니다.
 | 플랫폼 | 앱 | 네트워크 계층 | 배포 상태 |
 |---|---|---|---|
 | Windows 11 x64 | WinUI 3 / .NET 10 | Windows 서비스, WireGuard, DNS, 경로, IPC | portable EXE 검증 및 GitHub Actions 준비 |
-| macOS 15+ Apple Silicon | SwiftUI | Packet Tunnel + DNS Proxy System Extension, Keychain | unsigned 패키지 검증 완료; 서명·공증·실제 연결 검증 진행 중 |
+| macOS 15+ Apple Silicon | SwiftUI | Packet Tunnel + DNS Proxy System Extension, Keychain | Actions에서 Secret 완비 시 서명·공증 패키지, 미완비 시 unsigned 검증 패키지 |
 
 두 플랫폼은 홈, VPN 프로필, VPN 사이트, 문제 해결, 설정의 다섯 영역과
 사용자에게 보이는 작업 의미를 공유합니다. 저수준 VPN·DNS·경로·권한·저장소
@@ -96,14 +96,14 @@ Xcode에서 실행한 앱은 System Extension 활성화를 위해 `/Applications
 2. GitHub Actions에서 수동 실행하고 버전을 입력합니다.
 
 Windows 작업은 두 솔루션과 focused test를 실행한 뒤 portable EXE와 SHA-256을
-만듭니다. macOS 작업은 Apple Silicon arm64 앱과 내장 확장을 검증한 뒤 unsigned
-ZIP, DMG와 체크섬을 만듭니다. 두 작업이 성공하면 태그 실행은 GitHub Release를
-자동으로 만들고 산출물을 올립니다.
+만듭니다. macOS 작업은 Apple Silicon arm64 앱과 내장 확장을 검증합니다. 다음
+Secret이 모두 있으면 Developer ID 서명, 공증, stapling을 거쳐 signed ZIP·DMG를
+만들고, 하나라도 없으면 명확한 unsigned ZIP·DMG로 자동 대체합니다.
 
-현재 macOS Actions 산출물은 unsigned compile/package evidence입니다. 실제
-System Extension 배포에는 Developer ID 서명, 공증, stapling, Gatekeeper와
-실제 Mac 설치 검증이 추가로 필요합니다. GitHub Actions에 인증서나 개인 키를
-커밋하지 말고, 서명 단계를 추가할 때는 GitHub Secrets와 최소 권한을 사용합니다.
+`APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_API_KEY`,
+`APPLE_API_KEY_ID`, `APPLE_ISSUER_ID`, `APPLE_TEAM_ID`는 GitHub Actions Secret으로
+등록합니다. 인증서나 개인 키를 저장소에 커밋하지 말고, 최종 배포 전에는 실제 Mac의
+`/Applications` 설치와 Gatekeeper 및 System Extension 동작도 확인해야 합니다.
 
 ## 구조
 

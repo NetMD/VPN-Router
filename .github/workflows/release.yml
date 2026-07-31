@@ -86,7 +86,7 @@ jobs:
           retention-days: 14
 
   macos:
-    name: macOS arm64 unsigned package
+    name: macOS arm64 package
     runs-on: macos-14
 
     steps:
@@ -126,6 +126,114 @@ jobs:
           chmod +x scripts/macos/verify-release.sh scripts/macos/verify-signed-app.sh
           ./scripts/macos/verify-release.sh
 
+      - name: Determine macOS signing mode
+        id: signing
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_ISSUER_ID: ${{ secrets.APPLE_ISSUER_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${APPLE_CERTIFICATE}" &&
+                -n "${APPLE_CERTIFICATE_PASSWORD}" &&
+                -n "${APPLE_API_KEY}" &&
+                -n "${APPLE_API_KEY_ID}" &&
+                -n "${APPLE_ISSUER_ID}" &&
+                -n "${APPLE_TEAM_ID}" ]]; then
+            echo "mode=signed" >> "${GITHUB_OUTPUT}"
+            echo "PACKAGE_SUFFIX=signed" >> "${GITHUB_ENV}"
+          else
+            echo "mode=unsigned" >> "${GITHUB_OUTPUT}"
+            echo "PACKAGE_SUFFIX=unsigned" >> "${GITHUB_ENV}"
+            echo "Apple signing/notarization secrets are incomplete; keeping unsigned package mode."
+          fi
+
+      - name: Import Developer ID certificate
+        if: steps.signing.outputs.mode == 'signed'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          keychain_path="${RUNNER_TEMP}/vpnrouter-signing.keychain-db"
+          keychain_password="$(openssl rand -hex 24)"
+          certificate_path="${RUNNER_TEMP}/vpnrouter-certificate.p12"
+          printf '%s' "${APPLE_CERTIFICATE}" | base64 -D > "${certificate_path}"
+          security create-keychain -p "${keychain_password}" "${keychain_path}"
+          security set-keychain-settings -lut 21600 "${keychain_path}"
+          security unlock-keychain -p "${keychain_password}" "${keychain_path}"
+          security import "${certificate_path}" \
+            -P "${APPLE_CERTIFICATE_PASSWORD}" \
+            -k "${keychain_path}" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security
+          security list-keychains -d user -s "${keychain_path}"
+          security default-keychain -s "${keychain_path}"
+          signing_identity="$(security find-identity -v -p codesigning "${keychain_path}" |
+            sed -n 's/.*"\(Developer ID Application:.*\)"/\1/p' | head -n 1)"
+          if [[ -z "${signing_identity}" ]]; then
+            echo "Developer ID Application identity was not found in the imported certificate." >&2
+            exit 1
+          fi
+          {
+            echo "SIGNING_KEYCHAIN=${keychain_path}"
+            echo "SIGNING_IDENTITY=${signing_identity}"
+          } >> "${GITHUB_ENV}"
+
+      - name: Sign macOS app and embedded extensions
+        if: steps.signing.outputs.mode == 'signed'
+        shell: bash
+        env:
+          DERIVED_DATA_PATH: ${{ runner.temp }}/vpnrouter-derived
+        run: |
+          set -euo pipefail
+          app_path="${DERIVED_DATA_PATH}/Build/Products/Release/VPNRouter.app"
+          packet_path="${app_path}/Contents/PlugIns/PacketTunnel.appex"
+          dns_path="${app_path}/Contents/Library/SystemExtensions/com.simple.VPNRouter.DNSProxyExtension.systemextension"
+          codesign_args=(--force --options runtime --timestamp --keychain "${SIGNING_KEYCHAIN}" --sign "${SIGNING_IDENTITY}")
+          codesign "${codesign_args[@]}" \
+            --entitlements macos/VPNRouter/PacketTunnel/PacketTunnel.entitlements \
+            "${packet_path}"
+          codesign "${codesign_args[@]}" \
+            --entitlements macos/VPNRouter/DNSProxyExtension/DNSProxyExtension.entitlements \
+            "${dns_path}"
+          codesign "${codesign_args[@]}" \
+            --entitlements macos/VPNRouter/VPNRouter/VPNRouter.entitlements \
+            "${app_path}"
+          VPNROUTER_PRODUCT_VERSION="${VERSION}" \
+            VPNROUTER_BUILD_NUMBER="${GITHUB_RUN_NUMBER}" \
+            VPNROUTER_MINIMUM_MACOS_VERSION="15.0" \
+            scripts/macos/verify-signed-app.sh --mode distribution "${app_path}"
+
+      - name: Notarize and staple macOS app
+        if: steps.signing.outputs.mode == 'signed'
+        shell: bash
+        env:
+          DERIVED_DATA_PATH: ${{ runner.temp }}/vpnrouter-derived
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_ISSUER_ID: ${{ secrets.APPLE_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          app_path="${DERIVED_DATA_PATH}/Build/Products/Release/VPNRouter.app"
+          submit_zip="${RUNNER_TEMP}/VPNRouter-${VERSION}-notarization.zip"
+          api_key_path="${RUNNER_TEMP}/AuthKey_${APPLE_API_KEY_ID}.p8"
+          printf '%s' "${APPLE_API_KEY}" | base64 -D > "${api_key_path}"
+          ditto -c -k --sequesterRsrc --keepParent "${app_path}" "${submit_zip}"
+          xcrun notarytool submit "${submit_zip}" \
+            --key "${api_key_path}" \
+            --key-id "${APPLE_API_KEY_ID}" \
+            --issuer "${APPLE_ISSUER_ID}" \
+            --wait
+          xcrun stapler staple "${app_path}"
+          xcrun stapler validate "${app_path}"
+          spctl --assess --type execute "${app_path}"
+
       - name: Package macOS app as ZIP and DMG
         shell: bash
         env:
@@ -137,8 +245,8 @@ jobs:
           mkdir -p "${output_dir}"
           test -d "${app_path}"
 
-          zip_path="${output_dir}/VPNRouter-${VERSION}-macos-arm64-unsigned.zip"
-          dmg_path="${output_dir}/VPNRouter-${VERSION}-macos-arm64-unsigned.dmg"
+          zip_path="${output_dir}/VPNRouter-${VERSION}-macos-arm64-${PACKAGE_SUFFIX}.zip"
+          dmg_path="${output_dir}/VPNRouter-${VERSION}-macos-arm64-${PACKAGE_SUFFIX}.dmg"
           ditto -c -k --sequesterRsrc --keepParent "${app_path}" "${zip_path}"
           hdiutil create \
             -volname "VPN Router ${VERSION}" \
@@ -151,11 +259,13 @@ jobs:
           shasum -a 256 "${dmg_path}" > "${dmg_path}.sha256"
           shasum -a 256 -c "${zip_path}.sha256"
           shasum -a 256 -c "${dmg_path}.sha256"
-          printf '%s\n' \
-            "VPN Router ${VERSION} macOS arm64 package" \
-            "This package is unsigned compile/package evidence." \
-            "System Extension activation requires an owner-signed app installed in /Applications." \
-            > "${output_dir}/VPNRouter-${VERSION}-macos-arm64-unsigned.txt"
+          if [[ "${PACKAGE_SUFFIX}" == "unsigned" ]]; then
+            printf '%s\n' \
+              "VPN Router ${VERSION} macOS arm64 package" \
+              "This package is unsigned compile/package evidence." \
+              "System Extension activation requires an owner-signed app installed in /Applications." \
+              > "${output_dir}/VPNRouter-${VERSION}-macos-arm64-unsigned.txt"
+          fi
 
       - name: Upload macOS release assets
         uses: actions/upload-artifact@v4
