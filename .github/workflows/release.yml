@@ -87,7 +87,8 @@ jobs:
 
   macos:
     name: macOS arm64 package
-    runs-on: macos-14
+    # The project uses Xcode 16 project format (objectVersion 77).
+    runs-on: macos-15
 
     steps:
       - name: Check out source
