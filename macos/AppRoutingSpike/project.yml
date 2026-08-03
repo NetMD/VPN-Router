@@ -1,0 +1,100 @@
+name: AppRoutingSpike
+options:
+  minimumXcodeGenVersion: 2.40.0
+  deploymentTarget:
+    macOS: "15.0"
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    DEVELOPMENT_TEAM: "$(SPIKE_DEVELOPMENT_TEAM)"
+    CODE_SIGN_STYLE: Automatic
+    SWIFT_STRICT_CONCURRENCY: complete
+    SPIKE_HOST_BUNDLE_IDENTIFIER: com.example.vpnrouter.approutingspike
+    SPIKE_PROXY_BUNDLE_IDENTIFIER: com.example.vpnrouter.approutingspike.proxy
+    SPIKE_APP_GROUP_IDENTIFIER: group.com.example.vpnrouter.approutingspike
+    SPIKE_MACH_SERVICE_NAME: group.com.example.vpnrouter.approutingspike.proxy
+    SPIKE_EXPECTED_TEAM_IDENTIFIER: ""
+targets:
+  AppRoutingSpikeHost:
+    type: application
+    platform: macOS
+    sources:
+      - path: HostHarness
+      - path: Shared
+      - path: Networking/SpikeLimits.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: "$(SPIKE_HOST_BUNDLE_IDENTIFIER)"
+        CODE_SIGN_ENTITLEMENTS: Entitlements/HostHarness.entitlements
+    info:
+      path: Config/HostHarness-Info.plist
+      properties:
+        CFBundleDisplayName: App Routing Spike
+        CFBundleIdentifier: "$(PRODUCT_BUNDLE_IDENTIFIER)"
+        CFBundleExecutable: "$(EXECUTABLE_NAME)"
+        CFBundlePackageType: APPL
+        CFBundleInfoDictionaryVersion: "6.0"
+        AppRoutingSpikeExtensionIdentifier: "$(SPIKE_PROXY_BUNDLE_IDENTIFIER)"
+        AppRoutingSpikeMachServiceName: "$(SPIKE_MACH_SERVICE_NAME)"
+        NSSystemExtensionUsageDescription: 앱 라우팅 기술 시험용 Transparent Proxy를 사용합니다.
+    dependencies:
+      - target: AppRoutingSpikeTransparentProxy
+        embed: true
+  AppRoutingSpikeTransparentProxy:
+    type: system-extension
+    platform: macOS
+    sources:
+      - path: TransparentProxyExtension
+        excludes:
+          - Info.plist
+      - path: Networking
+      - path: Shared/SpikeContracts.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: "$(SPIKE_PROXY_BUNDLE_IDENTIFIER)"
+        CODE_SIGN_ENTITLEMENTS: Entitlements/TransparentProxyExtension.entitlements
+    info:
+      path: TransparentProxyExtension/Info.plist
+      properties:
+        CFBundleDisplayName: App Routing Spike Proxy
+        CFBundleIdentifier: "$(PRODUCT_BUNDLE_IDENTIFIER)"
+        CFBundleExecutable: "$(EXECUTABLE_NAME)"
+        CFBundlePackageType: SYSX
+        CFBundleInfoDictionaryVersion: "6.0"
+        SpikeHostBundleIdentifier: "$(SPIKE_HOST_BUNDLE_IDENTIFIER)"
+        SpikeExpectedTeamIdentifier: "$(SPIKE_EXPECTED_TEAM_IDENTIFIER)"
+        SpikeMachServiceName: "$(SPIKE_MACH_SERVICE_NAME)"
+        NetworkExtension:
+          NEProviderClasses:
+            com.apple.networkextension.app-proxy: "$(PRODUCT_MODULE_NAME).TransparentProxyProvider"
+          NEMachServiceName: "$(SPIKE_MACH_SERVICE_NAME)"
+        NSSystemExtensionUsageDescription: 선택한 시험 흐름의 앱 신원을 확인하는 기술 시험에 사용합니다.
+  HostHarnessTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests/HostHarnessTests
+    dependencies:
+      - target: AppRoutingSpikeHost
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+  NetworkingTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests/NetworkingTests
+      - path: Networking
+      - path: Shared/SpikeContracts.swift
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  AppRoutingSpikeHost:
+    build:
+      targets:
+        AppRoutingSpikeHost: all
+    test:
+      targets:
+        - HostHarnessTests
+        - NetworkingTests

@@ -21,3 +21,10 @@ artifacts/
 *.dmp
 *.wg.conf
 *.ovpn
+
+# Serena local project data
+.serena/
+
+# Local-only release setup (인증서 파일 경로·토큰 출처를 담음)
+/scripts/setup-github-secrets.sh
+/scripts/verify-github-secrets.sh

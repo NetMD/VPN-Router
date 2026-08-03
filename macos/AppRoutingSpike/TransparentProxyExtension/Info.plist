@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleDisplayName</key>
+	<string>App Routing Spike Proxy</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>SYSX</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>NSSystemExtensionUsageDescription</key>
+	<string>선택한 시험 흐름의 앱 신원을 확인하는 기술 시험에 사용합니다.</string>
+	<key>NetworkExtension</key>
+	<dict>
+		<key>NEMachServiceName</key>
+		<string>$(SPIKE_MACH_SERVICE_NAME)</string>
+		<key>NEProviderClasses</key>
+		<dict>
+			<key>com.apple.networkextension.app-proxy</key>
+			<string>$(PRODUCT_MODULE_NAME).TransparentProxyProvider</string>
+		</dict>
+	</dict>
+	<key>SpikeExpectedTeamIdentifier</key>
+	<string>$(SPIKE_EXPECTED_TEAM_IDENTIFIER)</string>
+	<key>SpikeHostBundleIdentifier</key>
+	<string>$(SPIKE_HOST_BUNDLE_IDENTIFIER)</string>
+	<key>SpikeMachServiceName</key>
+	<string>$(SPIKE_MACH_SERVICE_NAME)</string>
+</dict>
+</plist>

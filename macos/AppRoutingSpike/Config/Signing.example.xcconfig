@@ -1,0 +1,7 @@
+// 실제 Team ID, 인증서 이름, 프로비저닝 값은 이 파일에 기록하지 않습니다.
+SPIKE_DEVELOPMENT_TEAM =
+SPIKE_HOST_BUNDLE_IDENTIFIER = com.example.vpnrouter.approutingspike
+SPIKE_PROXY_BUNDLE_IDENTIFIER = com.example.vpnrouter.approutingspike.proxy
+SPIKE_APP_GROUP_IDENTIFIER = group.com.example.vpnrouter.approutingspike
+SPIKE_MACH_SERVICE_NAME = group.com.example.vpnrouter.approutingspike.proxy
+SPIKE_EXPECTED_TEAM_IDENTIFIER =

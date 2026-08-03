@@ -1,0 +1,5 @@
+AppRoutingSpike.xcodeproj/
+/DerivedData/
+/DerivedData-test/
+Config/Signing.xcconfig
+Config/Signing.local.xcconfig
