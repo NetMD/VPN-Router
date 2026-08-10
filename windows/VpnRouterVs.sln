@@ -19,6 +19,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VpnRouter.Tests", "VpnRoute
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VpnRouter.Launcher", "VpnRouter.Launcher\VpnRouter.Launcher.csproj", "{1E4A9A00-9F01-44C6-B2F4-2AE7B9ACE67E}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VpnRouter.WfpSpike", "VpnRouter.WfpSpike\VpnRouter.WfpSpike.csproj", "{B25BCE24-F0FC-4FE4-A776-CECF37BBA1A1}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VpnRouter.WfpSpike.Harness", "VpnRouter.WfpSpike.Harness\VpnRouter.WfpSpike.Harness.csproj", "{05A937DF-93E3-4A35-A82C-B3AA2501E34A}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -29,6 +33,30 @@ Global
 		Release|x86 = Release|x86
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{B25BCE24-F0FC-4FE4-A776-CECF37BBA1A1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B25BCE24-F0FC-4FE4-A776-CECF37BBA1A1}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B25BCE24-F0FC-4FE4-A776-CECF37BBA1A1}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{B25BCE24-F0FC-4FE4-A776-CECF37BBA1A1}.Debug|x64.Build.0 = Debug|Any CPU
+		{B25BCE24-F0FC-4FE4-A776-CECF37BBA1A1}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{B25BCE24-F0FC-4FE4-A776-CECF37BBA1A1}.Debug|x86.Build.0 = Debug|Any CPU
+		{B25BCE24-F0FC-4FE4-A776-CECF37BBA1A1}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B25BCE24-F0FC-4FE4-A776-CECF37BBA1A1}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B25BCE24-F0FC-4FE4-A776-CECF37BBA1A1}.Release|x64.ActiveCfg = Release|Any CPU
+		{B25BCE24-F0FC-4FE4-A776-CECF37BBA1A1}.Release|x64.Build.0 = Release|Any CPU
+		{B25BCE24-F0FC-4FE4-A776-CECF37BBA1A1}.Release|x86.ActiveCfg = Release|Any CPU
+		{B25BCE24-F0FC-4FE4-A776-CECF37BBA1A1}.Release|x86.Build.0 = Release|Any CPU
+		{05A937DF-93E3-4A35-A82C-B3AA2501E34A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{05A937DF-93E3-4A35-A82C-B3AA2501E34A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{05A937DF-93E3-4A35-A82C-B3AA2501E34A}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{05A937DF-93E3-4A35-A82C-B3AA2501E34A}.Debug|x64.Build.0 = Debug|Any CPU
+		{05A937DF-93E3-4A35-A82C-B3AA2501E34A}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{05A937DF-93E3-4A35-A82C-B3AA2501E34A}.Debug|x86.Build.0 = Debug|Any CPU
+		{05A937DF-93E3-4A35-A82C-B3AA2501E34A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{05A937DF-93E3-4A35-A82C-B3AA2501E34A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{05A937DF-93E3-4A35-A82C-B3AA2501E34A}.Release|x64.ActiveCfg = Release|Any CPU
+		{05A937DF-93E3-4A35-A82C-B3AA2501E34A}.Release|x64.Build.0 = Release|Any CPU
+		{05A937DF-93E3-4A35-A82C-B3AA2501E34A}.Release|x86.ActiveCfg = Release|Any CPU
+		{05A937DF-93E3-4A35-A82C-B3AA2501E34A}.Release|x86.Build.0 = Release|Any CPU
 		{9D61BC31-BB89-4148-842F-17252A48969A}.Debug|Any CPU.ActiveCfg = Debug|x86
 		{9D61BC31-BB89-4148-842F-17252A48969A}.Debug|Any CPU.Build.0 = Debug|x86
 		{9D61BC31-BB89-4148-842F-17252A48969A}.Debug|x64.ActiveCfg = Debug|x64

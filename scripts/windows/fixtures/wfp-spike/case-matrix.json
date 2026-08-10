@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "caseIdFormat": "M-{0:D3}",
+  "caseIdMinimum": 1,
+  "caseIdMaximum": 64,
+  "transportsInOrder": ["TCP", "UDP", "QUIC", "DNS"],
+  "rowsInOrder": [
+    { "identity": "SELECTED_DESKTOP", "ipVersion": "IPv4", "matchingHostRoute": false, "expectedPath": "VPN" },
+    { "identity": "SELECTED_DESKTOP", "ipVersion": "IPv4", "matchingHostRoute": true, "expectedPath": "VPN" },
+    { "identity": "SELECTED_DESKTOP", "ipVersion": "IPv6", "matchingHostRoute": false, "expectedPath": "VPN" },
+    { "identity": "SELECTED_DESKTOP", "ipVersion": "IPv6", "matchingHostRoute": true, "expectedPath": "VPN" },
+    { "identity": "UNSELECTED_DESKTOP", "ipVersion": "IPv4", "matchingHostRoute": false, "expectedPath": "BASELINE" },
+    { "identity": "UNSELECTED_DESKTOP", "ipVersion": "IPv4", "matchingHostRoute": true, "expectedPath": "BASELINE" },
+    { "identity": "UNSELECTED_DESKTOP", "ipVersion": "IPv6", "matchingHostRoute": false, "expectedPath": "BASELINE" },
+    { "identity": "UNSELECTED_DESKTOP", "ipVersion": "IPv6", "matchingHostRoute": true, "expectedPath": "BASELINE" },
+    { "identity": "SELECTED_PACKAGE", "ipVersion": "IPv4", "matchingHostRoute": false, "expectedPath": "VPN" },
+    { "identity": "SELECTED_PACKAGE", "ipVersion": "IPv4", "matchingHostRoute": true, "expectedPath": "VPN" },
+    { "identity": "SELECTED_PACKAGE", "ipVersion": "IPv6", "matchingHostRoute": false, "expectedPath": "VPN" },
+    { "identity": "SELECTED_PACKAGE", "ipVersion": "IPv6", "matchingHostRoute": true, "expectedPath": "VPN" },
+    { "identity": "UNSELECTED_PACKAGE", "ipVersion": "IPv4", "matchingHostRoute": false, "expectedPath": "BASELINE" },
+    { "identity": "UNSELECTED_PACKAGE", "ipVersion": "IPv4", "matchingHostRoute": true, "expectedPath": "BASELINE" },
+    { "identity": "UNSELECTED_PACKAGE", "ipVersion": "IPv6", "matchingHostRoute": false, "expectedPath": "BASELINE" },
+    { "identity": "UNSELECTED_PACKAGE", "ipVersion": "IPv6", "matchingHostRoute": true, "expectedPath": "BASELINE" }
+  ]
+}

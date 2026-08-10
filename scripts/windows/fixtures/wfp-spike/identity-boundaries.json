@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "fixtures": [
+    { "id": "MISSING_DESKTOP_FILE", "kind": "DesktopAppId", "relativeExecutable": "missing-test-app.exe", "expectedCode": "APP_PATH_INVALID" },
+    { "id": "DIRECTORY_INSTEAD_OF_FILE", "kind": "DesktopAppId", "relativeExecutable": ".", "expectedCode": "APP_PATH_INVALID" },
+    { "id": "ZERO_INTERFACE", "kind": "DesktopAppId", "relativeExecutable": "missing-test-app.exe", "interfaceIndex": 0, "expectedCode": "INTERFACE_NOT_FOUND" },
+    { "id": "PACKAGE_ENVIRONMENT_ABSENT", "kind": "PackageId", "packageValue": null, "expectedCode": "PACKAGE_IDENTITY_UNAVAILABLE" }
+  ]
+}

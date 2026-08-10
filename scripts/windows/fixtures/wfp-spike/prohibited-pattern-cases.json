@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    { "id": "WINDOWS_PATH", "pieces": ["C", ":", "\\", "sample", "\\", "tool.exe"] },
+    { "id": "PACKAGE_NAME", "pieces": ["Package", "Family", "Name"] },
+    { "id": "IPV4_VALUE", "pieces": ["203", ".", "0", ".", "113", ".", "9"] },
+    { "id": "IPV6_VALUE", "pieces": ["2001", ":", "db8", "::", "1"] },
+    { "id": "HOST_VALUE", "pieces": ["host", "name"] },
+    { "id": "WG_SECRET_LABEL", "pieces": ["Private", "Key"] },
+    { "id": "UNBOUNDED_ERROR_FIELD", "pieces": ["exception", "Message"] }
+  ]
+}

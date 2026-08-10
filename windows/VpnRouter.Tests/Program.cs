@@ -20,6 +20,11 @@ using VpnRouter.Networking.Abstractions;
 using VpnRouter.Vpn.Abstractions;
 using VpnRouter.Core.Profiles;
 using System.Collections.Concurrent;
+using VpnRouter.WfpSpike;
+using VpnRouter.WfpSpike.Contracts;
+using VpnRouter.WfpSpike.Native;
+using VpnRouter.WfpSpike.Harness;
+using System.Text.Json;
 
 var tests = new (string Name, Action Body)[]
 {
@@ -52,7 +57,55 @@ var tests = new (string Name, Action Body)[]
     ("Expire only eligible managed routes", ExpiresOnlyEligibleManagedRoutes),
     ("Force WireGuard runtime routing table off", ForcesRuntimeRoutingTableOff),
     ("Split WireGuard default allowed IPs", SplitsRuntimeDefaultAllowedIps),
-    ("Keep WireGuard endpoint when DNS pre-resolution fails", KeepsEndpointWhenDnsPreResolutionFails)
+    ("Keep WireGuard endpoint when DNS pre-resolution fails", KeepsEndpointWhenDnsPreResolutionFails),
+    ("Plan desktop WFP IPv4 and IPv6 policies", PlansDesktopWfpPolicies),
+    ("Plan package WFP identity policies", PlansPackageWfpPolicies),
+    ("Reject invalid WFP interface before engine open", RejectsInvalidWfpInterface),
+    ("Reject mismatched WFP interface identity", RejectsMismatchedWfpInterface),
+    ("Roll back partial WFP policy failure", RollsBackPartialWfpPolicyFailure),
+    ("Clean WFP policy session only once", CleansWfpPolicySessionOnlyOnce),
+    ("Reapply WFP policy after cleanup", ReappliesWfpPolicyAfterCleanup),
+    ("Keep live WFP ABI validation fail closed", KeepsLiveWfpAbiValidationFailClosed),
+    ("Redact prohibited WFP result content", RedactsProhibitedWfpResultContent),
+    ("Require all live WFP gate conditions", RequiresAllLiveWfpGateConditions),
+    ("Reject missing WFP executable", RejectsMissingWfpExecutable),
+    ("Reject directory WFP executable", RejectsDirectoryWfpExecutable),
+    ("Reject non-executable WFP file", RejectsNonExecutableWfpFile),
+    ("Report WFP engine access denial", ReportsWfpEngineAccessDenial),
+    ("Stop after IPv4 WFP add failure", StopsAfterIpv4WfpAddFailure),
+    ("Clean WFP session after cancellation", CleansWfpSessionAfterCancellation),
+    ("Reject changed WFP interface", RejectsChangedWfpInterface),
+    ("Retry WFP engine close failure", RetriesWfpEngineCloseFailure),
+    ("Accept complete WFP case observations", AcceptsCompleteWfpCaseObservations),
+    ("Reject missing WFP case observations", RejectsMissingWfpCaseObservations),
+    ("Reject duplicate WFP case observations", RejectsDuplicateWfpCaseObservations),
+    ("Reject invalid WFP case outcome code", RejectsInvalidWfpCaseOutcomeCode),
+    ("Reject arbitrary WFP result argument", RejectsArbitraryWfpResultArgument),
+    ("Reject missing WFP marker", RejectsMissingWfpMarker),
+    ("Reject marker path traversal", RejectsWfpMarkerPathTraversal),
+    ("Reject unprotected marker spool", RejectsUnprotectedMarkerSpool),
+    ("Reject expired WFP marker", RejectsExpiredWfpMarker),
+    ("Reject malformed WFP marker hash", RejectsMalformedWfpMarkerHash),
+    ("Consume WFP marker only once", ConsumesWfpMarkerOnlyOnce),
+    ("Keep package WFP identity evidence explicit", KeepsPackageWfpIdentityEvidenceExplicit),
+    ("Report WFP app ID lookup failure", ReportsWfpAppIdLookupFailure),
+    ("Reject duplicate owned WFP policy key", RejectsDuplicateOwnedWfpPolicyKey),
+    ("Reject WFP case before READY", RejectsWfpCaseBeforeReady),
+    ("Reject FAIL with NONE code", RejectsFailWithNoneCode),
+    ("Make cleanup failure verdict FAIL", MakesCleanupFailureVerdictFail),
+    ("Detect untracked feature content mutation", DetectsUntrackedFeatureContentMutation),
+    ("Detect staged feature identity mutation", DetectsStagedFeatureIdentityMutation),
+    ("Discover recursive Directory.Build imports", DiscoversRecursiveDirectoryBuildImports),
+    ("Detect discovered import content mutation", DetectsDiscoveredImportContentMutation),
+    ("Detect discovered import staged identity mutation", DetectsDiscoveredImportStagedIdentityMutation),
+    ("Reject dynamic Directory.Build import", RejectsDynamicDirectoryBuildImport),
+    ("Reject glob Directory.Build import", RejectsGlobDirectoryBuildImport),
+    ("Reject missing Directory.Build import", RejectsMissingDirectoryBuildImport),
+    ("Reject outside Directory.Build import", RejectsOutsideDirectoryBuildImport),
+    ("Reject non-MSBuild import before reading", RejectsNonMsBuildImportBeforeReading),
+    ("Reject reparse Directory.Build import", RejectsReparseDirectoryBuildImport),
+    ("Reject cyclic Directory.Build imports", RejectsCyclicDirectoryBuildImports),
+    ("Block payload mutation while execution lease held", BlocksPayloadMutationWhileExecutionLeaseHeld)
 };
 
 var failures = 0;
@@ -815,6 +868,323 @@ static byte[] DnsAResponsePacket(string domain, byte[] address)
     return bytes.ToArray();
 }
 
+static void PlansDesktopWfpPolicies()
+{
+    var fake = new FakeWfpNativeApi();
+    using var session = WfpPolicySession.Apply(fake, fake.DesktopIdentity(), 42);
+
+    AssertEqual(2, fake.Plans.Count);
+    AssertEqual(WfpIpVersion.IPv4, fake.Plans[0].IpVersion);
+    AssertEqual(WfpIpVersion.IPv6, fake.Plans[1].IpVersion);
+    Assert(fake.Plans.All(p => p.IdentityKind == WfpAppIdentityKind.DesktopAppId), "desktop condition kind mismatch");
+    Assert(fake.Plans.All(p => p.Weight == WfpPolicyPlanner.WfpSpikePolicyWeight), "policy weight mismatch");
+}
+
+static void PlansPackageWfpPolicies()
+{
+    var fake = new FakeWfpNativeApi();
+    using var session = WfpPolicySession.Apply(fake, fake.PackageIdentity(), 42);
+    Assert(fake.Plans.All(p => p.IdentityKind == WfpAppIdentityKind.PackageId), "package condition kind mismatch");
+}
+
+static void RejectsInvalidWfpInterface()
+{
+    var fake = new FakeWfpNativeApi();
+    var ex = AssertThrowsAndReturn<WfpSpikeException>(() => WfpPolicySession.Apply(fake, fake.DesktopIdentity(), 0));
+    AssertEqual(WfpSpikeResultCode.INTERFACE_NOT_FOUND, ex.Code);
+    AssertEqual(0, fake.OpenCount);
+}
+
+static void RejectsMismatchedWfpInterface()
+{
+    var fake = new FakeWfpNativeApi { RoundTripIndex = 41 };
+    var ex = AssertThrowsAndReturn<WfpSpikeException>(() => WfpPolicySession.Apply(fake, fake.DesktopIdentity(), 42));
+    AssertEqual(WfpSpikeResultCode.INTERFACE_IDENTITY_MISMATCH, ex.Code);
+    AssertEqual(0, fake.OpenCount);
+}
+
+static void RollsBackPartialWfpPolicyFailure()
+{
+    var fake = new FakeWfpNativeApi { FailVersion = WfpIpVersion.IPv6 };
+    var ex = AssertThrowsAndReturn<WfpSpikeException>(() => WfpPolicySession.Apply(fake, fake.DesktopIdentity(), 42));
+    AssertEqual(WfpSpikeResultCode.IPV6_POLICY_ADD_FAILED, ex.Code);
+    AssertEqual(1, fake.DeleteCount);
+    AssertEqual(1, fake.CloseCount);
+    AssertEqual(0, fake.ActiveKeys.Count);
+    AssertEqual(WfpOwnedPolicyKeys.DesktopIpv4, fake.DeletedKeys.Single());
+}
+
+static void CleansWfpPolicySessionOnlyOnce()
+{
+    var fake = new FakeWfpNativeApi();
+    var session = WfpPolicySession.Apply(fake, fake.DesktopIdentity(), 42);
+    session.CleanupOnce();
+    session.CleanupOnce();
+    AssertEqual(2, fake.DeleteCount);
+    AssertEqual(1, fake.CloseCount);
+    AssertEqual(WfpOwnedPolicyKeys.DesktopIpv6, fake.DeletedKeys[0]);
+    AssertEqual(WfpOwnedPolicyKeys.DesktopIpv4, fake.DeletedKeys[1]);
+}
+
+static void ReappliesWfpPolicyAfterCleanup()
+{
+    var fake = new FakeWfpNativeApi();
+    WfpPolicySession.Apply(fake, fake.DesktopIdentity(), 42).Dispose();
+    WfpPolicySession.Apply(fake, fake.DesktopIdentity(), 42).Dispose();
+    AssertEqual(4, fake.Plans.Count);
+    AssertEqual(0, fake.ActiveKeys.Count);
+    AssertEqual(2, fake.CloseCount);
+}
+
+static void KeepsLiveWfpAbiValidationFailClosed()
+{
+    var ex = AssertThrowsAndReturn<WfpSpikeException>(() => WfpSdkAbiValidator.ValidateOrThrow());
+    AssertEqual(WfpSpikeResultCode.ENVIRONMENT_UNAVAILABLE, ex.Code);
+}
+
+static void RedactsProhibitedWfpResultContent()
+{
+    Assert(WfpResultRedactor.ContainsProhibitedContent("C:\\sensitive\\app.exe"), "path was not detected");
+    Assert(WfpResultRedactor.ContainsProhibitedContent("PrivateKey"), "secret name was not detected");
+    Assert(!WfpResultRedactor.ContainsProhibitedContent("{\"verdict\":\"PARTIAL\"}"), "bounded result was rejected");
+}
+
+static void RequiresAllLiveWfpGateConditions()
+{
+    AssertEqual(WfpSpikeResultCode.EXPLICIT_OPTION_REQUIRED, LiveApplyGate.Evaluate(false, true, true).ResultCode);
+    AssertEqual(WfpSpikeResultCode.ADMIN_REQUIRED, LiveApplyGate.Evaluate(true, false, true).ResultCode);
+    AssertEqual(WfpSpikeResultCode.AUTOMATED_GATE_FAILED, LiveApplyGate.Evaluate(true, true, false).ResultCode);
+    Assert(LiveApplyGate.Evaluate(true, true, true).ApplyLiveWfp, "complete live gate must allow entry");
+}
+
+static void RejectsMissingWfpExecutable()
+{
+    var ex = AssertThrowsAndReturn<WfpSpikeException>(() => WfpInputValidator.OpenExecutable(Path.Combine(Path.GetTempPath(), $"missing-{Guid.NewGuid():N}.exe")));
+    AssertEqual(WfpSpikeResultCode.APP_PATH_INVALID, ex.Code);
+}
+
+static void RejectsDirectoryWfpExecutable()
+{
+    var directory = Directory.CreateTempSubdirectory("wfp-dir-");
+    try { AssertEqual(WfpSpikeResultCode.APP_PATH_INVALID, AssertThrowsAndReturn<WfpSpikeException>(() => WfpInputValidator.OpenExecutable(directory.FullName)).Code); }
+    finally { directory.Delete(true); }
+}
+
+static void RejectsNonExecutableWfpFile()
+{
+    var path = Path.GetTempFileName();
+    try { AssertEqual(WfpSpikeResultCode.APP_PATH_INVALID, AssertThrowsAndReturn<WfpSpikeException>(() => WfpInputValidator.OpenExecutable(path)).Code); }
+    finally { File.Delete(path); }
+}
+
+static void ReportsWfpEngineAccessDenial()
+{
+    var fake = new FakeWfpNativeApi { OpenFailureCode = WfpSpikeResultCode.BFE_ACCESS_DENIED };
+    AssertEqual(WfpSpikeResultCode.BFE_ACCESS_DENIED, AssertThrowsAndReturn<WfpSpikeException>(() => WfpPolicySession.Apply(fake, fake.DesktopIdentity(), 42)).Code);
+}
+
+static void StopsAfterIpv4WfpAddFailure()
+{
+    var fake = new FakeWfpNativeApi { FailVersion = WfpIpVersion.IPv4 };
+    AssertEqual(WfpSpikeResultCode.IPV4_POLICY_ADD_FAILED, AssertThrowsAndReturn<WfpSpikeException>(() => WfpPolicySession.Apply(fake, fake.DesktopIdentity(), 42)).Code);
+    AssertEqual(1, fake.Plans.Count); AssertEqual(0, fake.DeleteCount); AssertEqual(1, fake.CloseCount);
+}
+
+static void CleansWfpSessionAfterCancellation()
+{
+    var fake = new FakeWfpNativeApi(); using var cancellation = new CancellationTokenSource(); cancellation.Cancel();
+    AssertThrowsAndReturn<OperationCanceledException>(() => WfpPolicySession.Apply(fake, fake.DesktopIdentity(), 42, cancellation.Token));
+    AssertEqual(1, fake.CloseCount); AssertEqual(0, fake.Plans.Count);
+}
+
+static void RejectsChangedWfpInterface()
+{
+    var fake = new FakeWfpNativeApi { ChangeInterfaceAfterConversion = true };
+    AssertEqual(WfpSpikeResultCode.INTERFACE_CHANGED, AssertThrowsAndReturn<WfpSpikeException>(() => WfpPolicySession.Apply(fake, fake.DesktopIdentity(), 42)).Code);
+    AssertEqual(1, fake.CloseCount);
+}
+
+static void RetriesWfpEngineCloseFailure()
+{
+    var fake = new FakeWfpNativeApi { CloseFailuresRemaining = 1 }; var session = WfpPolicySession.Apply(fake, fake.DesktopIdentity(), 42);
+    AssertEqual(WfpSpikeResultCode.SESSION_CLOSE_FAILED, session.CleanupOnce());
+    AssertEqual(WfpSpikeResultCode.NONE, session.CleanupOnce());
+    AssertEqual(2, fake.CloseAttempts); AssertEqual(2, fake.DeleteCount);
+}
+
+static void AcceptsCompleteWfpCaseObservations() => Assert(OwnerHarnessRunner.ValidateCases(ValidWfpCases()), "complete case set rejected");
+static void RejectsMissingWfpCaseObservations() => Assert(!OwnerHarnessRunner.ValidateCases(ValidWfpCases()[..63]), "missing case accepted");
+static void RejectsDuplicateWfpCaseObservations()
+{
+    var cases = ValidWfpCases(); cases[63] = cases[0]; Assert(!OwnerHarnessRunner.ValidateCases(cases), "duplicate case accepted");
+}
+static void RejectsInvalidWfpCaseOutcomeCode()
+{
+    var cases = ValidWfpCases(); cases[0] = cases[0] with { FailureCode = WfpSpikeResultCode.OWNER_ABORTED }; Assert(!OwnerHarnessRunner.ValidateCases(cases), "PASS with failure accepted");
+}
+static void RejectsArbitraryWfpResultArgument()
+{
+    var result = OwnerHarnessRunner.RunAsync(["--result", "outside.json"], CancellationToken.None).GetAwaiter().GetResult();
+    AssertEqual(WfpSpikeResultCode.AUTOMATED_GATE_FAILED, result.CleanupFailureCode);
+}
+static void RejectsMissingWfpMarker() => AssertThrows<Exception>(() => OwnerHarnessRunner.TrustedGateEvidence.ConsumeAndValidate(["--automated-marker", "missing.json", "--expected-commit", new string('a', 40)]));
+static void RejectsWfpMarkerPathTraversal() => AssertThrows<Exception>(() => OwnerHarnessRunner.TrustedGateEvidence.ConsumeAndValidate(["--automated-marker", "..\\outside.json", "--expected-commit", new string('a', 40)]));
+static void RejectsUnprotectedMarkerSpool()
+{
+    var directory = Directory.CreateTempSubdirectory("wfp-spool-");
+    try { AssertThrows<Exception>(() => OwnerHarnessRunner.TrustedGateEvidence.ValidateSpool(directory)); }
+    finally { directory.Delete(true); }
+}
+static void RejectsExpiredWfpMarker()
+{
+    using var spool = CreateProtectedSpool(); var marker = ValidMarker(DateTimeOffset.UtcNow.AddMinutes(-16)); var path = WriteMarker(spool.Directory.FullName, marker);
+    AssertThrows<Exception>(() => OwnerHarnessRunner.TrustedGateEvidence.ConsumeAndValidate(["--automated-marker", path, "--expected-commit", marker.Commit]));
+}
+static void RejectsMalformedWfpMarkerHash()
+{
+    using var spool = CreateProtectedSpool(); var marker = ValidMarker(DateTimeOffset.UtcNow) with { HarnessSha256 = "bad" }; var path = WriteMarker(spool.Directory.FullName, marker);
+    AssertThrows<Exception>(() => OwnerHarnessRunner.TrustedGateEvidence.ConsumeAndValidate(["--automated-marker", path, "--expected-commit", marker.Commit]));
+}
+static void ConsumesWfpMarkerOnlyOnce()
+{
+    using var spool = CreateProtectedSpool(); var marker = ValidMarker(DateTimeOffset.UtcNow); var path = WriteMarker(spool.Directory.FullName, marker);
+    AssertThrows<Exception>(() => OwnerHarnessRunner.TrustedGateEvidence.ConsumeAndValidate(["--automated-marker", path, "--expected-commit", marker.Commit]));
+    Assert(!File.Exists(path), "marker must be consumed before live evidence validation");
+}
+static void KeepsPackageWfpIdentityEvidenceExplicit()
+{
+    var evidence = new PackageIdentityEvidence("family", "container", Convert.ToBase64String(new byte[8]));
+    AssertEqual("container", evidence.AppContainerName); AssertEqual("family", evidence.PackageFamilyName);
+}
+static void ReportsWfpAppIdLookupFailure()
+{
+    var fake = new FakeWfpNativeApi { AppIdFailureCode = WfpSpikeResultCode.APP_ID_LOOKUP_FAILED };
+    AssertEqual(WfpSpikeResultCode.APP_ID_LOOKUP_FAILED, AssertThrowsAndReturn<WfpSpikeException>(() => fake.GetAppId("test.exe")).Code);
+}
+static void RejectsDuplicateOwnedWfpPolicyKey()
+{
+    var fake = new FakeWfpNativeApi(); fake.ActiveKeys.Add(WfpOwnedPolicyKeys.DesktopIpv4);
+    AssertEqual(WfpSpikeResultCode.POLICY_ALREADY_EXISTS, AssertThrowsAndReturn<WfpSpikeException>(() => WfpPolicySession.Apply(fake, fake.DesktopIdentity(), 42)).Code);
+    AssertEqual(1, fake.CloseCount);
+}
+static void RejectsWfpCaseBeforeReady()
+{
+    var collector = new WfpObservationCollector(1, 32);
+    AssertEqual(WfpSpikeResultCode.OWNER_ABORTED, AssertThrowsAndReturn<WfpSpikeException>(() => collector.Accept("{\"caseId\":\"M-001\",\"outcome\":\"PASS\",\"failureCode\":\"NONE\"}")).Code);
+}
+static void RejectsFailWithNoneCode() => Assert(!WfpObservationCollector.IsValidCombination(WfpSpikeOutcome.FAIL, WfpSpikeResultCode.NONE), "FAIL/NONE accepted");
+static void MakesCleanupFailureVerdictFail()
+{
+    var result = OwnerHarnessRunner.BuildResultForValidation("LIVE", WfpSpikeResultCode.SESSION_CLOSE_FAILED, WfpSpikeOutcome.FAIL, ValidWfpCases());
+    AssertEqual(WfpSpikeVerdict.FAIL, result.Verdict);
+}
+static void DetectsUntrackedFeatureContentMutation()
+{
+    var first = new FeatureManifest(1, [new("windows/VpnRouter.WfpSpike/new.cs", 1, new string('a', 64), null)]);
+    var second = new FeatureManifest(1, [new("windows/VpnRouter.WfpSpike/new.cs", 1, new string('b', 64), null)]);
+    Assert(FeatureManifestFingerprint.Compute(first) != FeatureManifestFingerprint.Compute(second), "untracked content mutation missed");
+}
+static void DetectsStagedFeatureIdentityMutation()
+{
+    var first = new FeatureManifest(1, [new("windows/VpnRouter.Tests/Program.cs", 1, new string('a', 64), new string('1', 40))]);
+    var second = new FeatureManifest(1, [new("windows/VpnRouter.Tests/Program.cs", 1, new string('a', 64), new string('2', 40))]);
+    Assert(FeatureManifestFingerprint.Compute(first) != FeatureManifestFingerprint.Compute(second), "staged identity mutation missed");
+}
+static void DiscoversRecursiveDirectoryBuildImports()
+{
+    using var fixture = BuildInputFixture.Create("<Project><Import Project=\"build/nested.props\" /></Project>",
+        new() { ["windows/build/nested.props"] = "<Project><Import Project=\"nested.targets\" /></Project>", ["windows/build/nested.targets"] = "<Project />" });
+    var manifest = fixture.Discover();
+    Assert(manifest.Files.Select(x => x.RelativePath).SequenceEqual(new[] { "windows/Directory.Build.props", "windows/build/nested.props", "windows/build/nested.targets" }), "recursive imports missing");
+}
+static void DetectsDiscoveredImportContentMutation()
+{
+    using var fixture = BuildInputFixture.Create("<Project><Import Project=\"nested.props\" /></Project>", new() { ["windows/nested.props"] = "<Project><PropertyGroup><Value>A</Value></PropertyGroup></Project>" });
+    var before = FeatureManifestFingerprint.Compute(fixture.Discover());
+    File.AppendAllText(fixture.PathOf("windows/nested.props"), " ");
+    var after = FeatureManifestFingerprint.Compute(fixture.Discover());
+    Assert(before != after, "discovered import content mutation missed");
+}
+static void DetectsDiscoveredImportStagedIdentityMutation()
+{
+    using var fixture = BuildInputFixture.Create("<Project><Import Project=\"nested.props\" /></Project>", new() { ["windows/nested.props"] = "<Project><PropertyGroup><Value>A</Value></PropertyGroup></Project>" });
+    var before = FeatureManifestFingerprint.Compute(fixture.Discover());
+    File.WriteAllText(fixture.PathOf("windows/nested.props"), "<Project><PropertyGroup><Value>B</Value></PropertyGroup></Project>");
+    fixture.Git("add", "windows/nested.props");
+    File.WriteAllText(fixture.PathOf("windows/nested.props"), "<Project><PropertyGroup><Value>A</Value></PropertyGroup></Project>");
+    var after = FeatureManifestFingerprint.Compute(fixture.Discover());
+    Assert(before != after, "discovered import staged identity mutation missed");
+}
+static void RejectsDynamicDirectoryBuildImport() => AssertDiscoveryRejected("<Project><Import Project=\"$(BuildRoot)/nested.props\" /></Project>");
+static void RejectsGlobDirectoryBuildImport() => AssertDiscoveryRejected("<Project><Import Project=\"build/*.props\" /></Project>");
+static void RejectsMissingDirectoryBuildImport() => AssertDiscoveryRejected("<Project><Import Project=\"missing.props\" /></Project>");
+static void RejectsOutsideDirectoryBuildImport() => AssertDiscoveryRejected("<Project><Import Project=\"../../outside.props\" /></Project>");
+static void RejectsNonMsBuildImportBeforeReading()
+{
+    using var fixture = BuildInputFixture.Create("<Project><Import Project=\"secret.conf\" /></Project>", new() { ["windows/secret.conf"] = "must-not-be-read" });
+    AssertThrows<InvalidOperationException>(() => fixture.Discover());
+}
+static void RejectsCyclicDirectoryBuildImports()
+{
+    using var fixture = BuildInputFixture.Create("<Project><Import Project=\"nested.props\" /></Project>", new() { ["windows/nested.props"] = "<Project><Import Project=\"Directory.Build.props\" /></Project>" });
+    AssertThrows<InvalidOperationException>(() => fixture.Discover());
+}
+static void RejectsReparseDirectoryBuildImport()
+{
+    using var fixture = BuildInputFixture.Create("<Project><Import Project=\"linked/nested.props\" /></Project>");
+    var target = Directory.CreateDirectory(fixture.PathOf("target"));
+    File.WriteAllText(Path.Combine(target.FullName, "nested.props"), "<Project />");
+    fixture.CreateJunction("linked", "target");
+    AssertThrows<InvalidOperationException>(() => fixture.Discover());
+}
+static void AssertDiscoveryRejected(string directoryBuildProps)
+{
+    using var fixture = BuildInputFixture.Create(directoryBuildProps);
+    AssertThrows<InvalidOperationException>(() => fixture.Discover());
+}
+
+static void BlocksPayloadMutationWhileExecutionLeaseHeld()
+{
+    var directory = Directory.CreateTempSubdirectory("wfp-payload-");
+    try
+    {
+        var payload = Path.Combine(directory.FullName, "harness.exe"); File.WriteAllText(payload, "safe");
+        var entry = new PublishedFileEntry("harness.exe", Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(payload))), new FileInfo(payload).Length);
+        var manifestPath = Path.Combine(directory.FullName, "manifest.json");
+        File.WriteAllText(manifestPath, JsonSerializer.Serialize(new WfpPublishManifest(1, [entry]), new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }));
+        using var lease = new PayloadIntegrityLease(directory.FullName, manifestPath);
+        AssertThrows<IOException>(() => File.WriteAllText(payload, "changed"));
+        lease.Revalidate();
+    }
+    finally { directory.Delete(true); }
+}
+
+static WfpSpikeCaseResult[] ValidWfpCases() => Enumerable.Range(1, 64)
+    .Select(i => new WfpSpikeCaseResult($"M-{i:000}", WfpSpikeOutcome.PASS, WfpSpikeResultCode.NONE, DateTimeOffset.UtcNow)).ToArray();
+
+static AutomatedMarker ValidMarker(DateTimeOffset createdAt) => new(1, createdAt, new string('a', 40), new string('b', 32), 0, 0, 0, 0, 0, 0, "MATCH",
+    new string('1', 64), new string('2', 64), new string('3', 64), new string('4', 64), new string('5', 64), new string('6', 64), new string('7', 64), new string('8', 64), new string('9', 64));
+static string WriteMarker(string directory, AutomatedMarker marker)
+{
+    var path = Path.Combine(directory, "automated-marker.json");
+    File.WriteAllText(path, JsonSerializer.Serialize(marker, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }));
+    return path;
+}
+static TemporarySpool CreateProtectedSpool()
+{
+    var directory = Directory.CreateTempSubdirectory("wfp-private-"); var current = WindowsIdentity.GetCurrent().User!;
+    var security = new DirectorySecurity(); security.SetAccessRuleProtection(true, false); security.SetOwner(current);
+    security.AddAccessRule(new FileSystemAccessRule(current, FileSystemRights.FullControl, InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
+    directory.SetAccessControl(security); return new TemporarySpool(directory);
+}
+
+static TException AssertThrowsAndReturn<TException>(Action action) where TException : Exception
+{
+    try { action(); }
+    catch (TException ex) { return ex; }
+    throw new InvalidOperationException($"Expected {typeof(TException).Name} was not thrown.");
+}
+
 static void Assert(bool condition, string message)
 {
     if (!condition)
@@ -844,6 +1214,126 @@ static void AssertThrows<TException>(Action action)
     }
 
     throw new InvalidOperationException($"Expected exception {typeof(TException).Name}.");
+}
+
+sealed class BuildInputFixture : IDisposable
+{
+    private readonly DirectoryInfo _root;
+    private BuildInputFixture(DirectoryInfo root) => _root = root;
+    public static BuildInputFixture Create(string directoryBuildProps, Dictionary<string, string>? extraFiles = null)
+    {
+        var root = Directory.CreateTempSubdirectory("wfp-feature-");
+        var fixture = new BuildInputFixture(root);
+        fixture.Write("windows/Test.csproj", "<Project />");
+        fixture.Write("windows/Directory.Build.props", directoryBuildProps);
+        foreach (var pair in extraFiles ?? []) fixture.Write(pair.Key, pair.Value);
+        fixture.Git("init", "--quiet"); fixture.Git("add", ".");
+        return fixture;
+    }
+    public string PathOf(string relativePath) => Path.Combine(_root.FullName, relativePath.Replace('/', Path.DirectorySeparatorChar));
+    private void Write(string relativePath, string content)
+    {
+        var path = PathOf(relativePath); Directory.CreateDirectory(Path.GetDirectoryName(path)!); File.WriteAllText(path, content);
+    }
+    public FeatureManifest Discover()
+    {
+        var script = Path.GetFullPath("scripts/windows/build-portable.ps1");
+        var start = new System.Diagnostics.ProcessStartInfo("pwsh") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true };
+        foreach (var argument in new[] { "-NoProfile", "-File", script, "-DiscoverWfpBuildInputs", "-FeatureRepositoryRoot", _root.FullName, "-FeatureProjectRelativePaths", "windows/Test.csproj" }) start.ArgumentList.Add(argument);
+        using var process = System.Diagnostics.Process.Start(start) ?? throw new InvalidOperationException("PowerShell unavailable");
+        var output = process.StandardOutput.ReadToEnd(); var error = process.StandardError.ReadToEnd(); process.WaitForExit();
+        if (process.ExitCode != 0) throw new InvalidOperationException(string.IsNullOrWhiteSpace(error) ? "discovery rejected" : error);
+        return JsonSerializer.Deserialize<FeatureManifest>(output, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? throw new InvalidOperationException("invalid discovery result");
+    }
+    public void Git(params string[] arguments)
+    {
+        var start = new System.Diagnostics.ProcessStartInfo("git") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true };
+        start.ArgumentList.Add("-C"); start.ArgumentList.Add(_root.FullName); foreach (var argument in arguments) start.ArgumentList.Add(argument);
+        using var process = System.Diagnostics.Process.Start(start) ?? throw new InvalidOperationException("git unavailable"); process.WaitForExit();
+        if (process.ExitCode != 0) throw new InvalidOperationException(process.StandardError.ReadToEnd());
+    }
+    public void CreateJunction(string link, string target)
+    {
+        var start = new System.Diagnostics.ProcessStartInfo("pwsh") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true };
+        var linkPath = PathOf(link).Replace("'", "''"); var targetPath = PathOf(target).Replace("'", "''");
+        foreach (var argument in new[] { "-NoProfile", "-Command", $"New-Item -ItemType Junction -Path '{linkPath}' -Target '{targetPath}' | Out-Null" }) start.ArgumentList.Add(argument);
+        using var process = System.Diagnostics.Process.Start(start) ?? throw new InvalidOperationException("PowerShell unavailable"); process.WaitForExit();
+        if (process.ExitCode != 0) throw new InvalidOperationException(process.StandardError.ReadToEnd());
+    }
+    public void Dispose() { try { _root.Delete(true); } catch { } }
+}
+
+sealed class FakeWfpNativeApi : IWfpNativeApi
+{
+    public uint RoundTripIndex { get; set; } = 42;
+    public WfpIpVersion? FailVersion { get; set; }
+    public WfpSpikeResultCode? OpenFailureCode { get; set; }
+    public WfpSpikeResultCode? AppIdFailureCode { get; set; }
+    public bool ChangeInterfaceAfterConversion { get; set; }
+    public int CloseFailuresRemaining { get; set; }
+    private int _conversionCount;
+    public int OpenCount { get; private set; }
+    public int CloseCount { get; private set; }
+    public int CloseAttempts { get; private set; }
+    public int DeleteCount { get; private set; }
+    public List<WfpPolicyPlan> Plans { get; } = [];
+    public List<Guid> DeletedKeys { get; } = [];
+    public HashSet<Guid> ActiveKeys { get; } = [];
+
+    public IWfpIdentityLease DesktopIdentity() => new FakeIdentityLease(WfpAppIdentityKind.DesktopAppId);
+    public IWfpIdentityLease PackageIdentity() => new FakeIdentityLease(WfpAppIdentityKind.PackageId);
+    public IWfpIdentityLease GetAppId(string normalizedExecutablePath)
+    {
+        if (AppIdFailureCode is { } code) throw new WfpSpikeException(code);
+        return DesktopIdentity();
+    }
+    public IWfpIdentityLease ResolvePackageIdentity(PackageIdentityEvidence evidence) => PackageIdentity();
+    public WfpInterfaceIdentity ConvertIndexToLuidAndBack(uint interfaceIndex)
+    {
+        _conversionCount++;
+        return ChangeInterfaceAfterConversion && _conversionCount > 1 ? new(RoundTripIndex, 0x9999UL) : new(RoundTripIndex, 0x1234UL);
+    }
+    public IWfpEngineLease OpenDynamicEngine() { OpenCount++; if (OpenFailureCode is { } code) throw new WfpSpikeException(code); return new FakeEngineLease(); }
+    public void AddConnectionPolicy(IWfpEngineLease engine, WfpPolicyPlan plan, IWfpIdentityLease identity, Guid policyKey)
+    {
+        Plans.Add(plan);
+        if (FailVersion == plan.IpVersion)
+            throw new WfpSpikeException(plan.IpVersion == WfpIpVersion.IPv4
+                ? WfpSpikeResultCode.IPV4_POLICY_ADD_FAILED : WfpSpikeResultCode.IPV6_POLICY_ADD_FAILED);
+        if (!ActiveKeys.Add(policyKey)) throw new WfpSpikeException(WfpSpikeResultCode.POLICY_ALREADY_EXISTS);
+    }
+    public void DeleteConnectionPolicyByKey(IWfpEngineLease engine, Guid policyKey)
+    {
+        DeleteCount++;
+        DeletedKeys.Add(policyKey);
+        ActiveKeys.Remove(policyKey);
+    }
+    public void CloseEngine(IWfpEngineLease engine)
+    {
+        CloseAttempts++;
+        if (CloseFailuresRemaining-- > 0) throw new WfpSpikeException(WfpSpikeResultCode.SESSION_CLOSE_FAILED);
+        CloseCount++; ((FakeEngineLease)engine).Close();
+    }
+}
+
+sealed class TemporarySpool(DirectoryInfo directory) : IDisposable
+{
+    public DirectoryInfo Directory { get; } = directory;
+    public void Dispose() { if (Directory.Exists) Directory.Delete(true); }
+}
+
+sealed class FakeIdentityLease(WfpAppIdentityKind kind) : IWfpIdentityLease
+{
+    public WfpAppIdentityKind Kind { get; } = kind;
+    public nint Value => 1;
+    public void Dispose() { }
+}
+
+sealed class FakeEngineLease : IWfpEngineLease
+{
+    public bool IsClosed { get; private set; }
+    public void Close() => IsClosed = true;
+    public void Dispose() { }
 }
 
 sealed class OwnershipTestVpnAdapter(ConcurrentQueue<string> calls) : IVpnAdapter

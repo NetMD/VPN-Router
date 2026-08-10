@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "VPN Router WFP spike limited result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "startedAtUtc",
+    "completedAtUtc",
+    "mode",
+    "verdict",
+    "beforeAfterFingerprint",
+    "caseTotal",
+    "passCount",
+    "failCount",
+    "notRunCount",
+    "cleanupOutcome",
+    "cleanupFailureCode",
+    "cases"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "startedAtUtc": { "type": "string", "format": "date-time" },
+    "completedAtUtc": { "type": "string", "format": "date-time" },
+    "mode": { "enum": ["DRY_RUN", "LIVE"] },
+    "verdict": { "enum": ["PASS", "FAIL", "PARTIAL"] },
+    "beforeAfterFingerprint": { "enum": ["MATCH", "MISMATCH"] },
+    "caseTotal": { "type": "integer", "minimum": 0, "maximum": 64 },
+    "passCount": { "type": "integer", "minimum": 0, "maximum": 64 },
+    "failCount": { "type": "integer", "minimum": 0, "maximum": 64 },
+    "notRunCount": { "type": "integer", "minimum": 0, "maximum": 64 },
+    "cleanupOutcome": { "enum": ["PASS", "FAIL", "NOT_RUN"] },
+    "cleanupFailureCode": { "type": "string" },
+    "cases": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["caseId", "outcome", "failureCode", "observedAtUtc"],
+        "properties": {
+          "caseId": { "type": "string", "pattern": "^M-(00[1-9]|0[1-5][0-9]|06[0-4])$" },
+          "outcome": { "enum": ["PASS", "FAIL", "NOT_RUN"] },
+          "failureCode": { "type": "string" },
+          "observedAtUtc": { "type": "string", "format": "date-time" }
+        }
+      }
+    }
+  }
+}
