@@ -14,6 +14,9 @@ settings:
     SPIKE_APP_GROUP_IDENTIFIER: group.com.example.vpnrouter.approutingspike
     SPIKE_MACH_SERVICE_NAME: group.com.example.vpnrouter.approutingspike.proxy
     SPIKE_EXPECTED_TEAM_IDENTIFIER: ""
+    SPIKE_NETWORK_EXTENSION_ENTITLEMENT: app-proxy-provider-systemextension
+    SPIKE_SELECTED_HARNESS_BUNDLE_IDENTIFIER: com.example.vpnrouter.approutingspike.selected-harness
+    SPIKE_CONTROL_HARNESS_BUNDLE_IDENTIFIER: com.example.vpnrouter.approutingspike.control-harness
 targets:
   AppRoutingSpikeHost:
     type: application
@@ -22,6 +25,8 @@ targets:
       - path: HostHarness
       - path: Shared
       - path: Networking/SpikeLimits.swift
+      # 제어 경로 directPass 확인용 흐름 1건을 Host가 직접 만듭니다.
+      - path: TrafficHarnessSupport/LocalFlowTrigger.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: "$(SPIKE_HOST_BUNDLE_IDENTIFIER)"
@@ -34,6 +39,7 @@ targets:
         CFBundleExecutable: "$(EXECUTABLE_NAME)"
         CFBundlePackageType: APPL
         CFBundleInfoDictionaryVersion: "6.0"
+        CFBundleVersion: 5
         AppRoutingSpikeExtensionIdentifier: "$(SPIKE_PROXY_BUNDLE_IDENTIFIER)"
         AppRoutingSpikeMachServiceName: "$(SPIKE_MACH_SERVICE_NAME)"
         NSSystemExtensionUsageDescription: 앱 라우팅 기술 시험용 Transparent Proxy를 사용합니다.
@@ -42,6 +48,7 @@ targets:
         embed: true
   AppRoutingSpikeTransparentProxy:
     type: system-extension
+    productName: com.example.vpnrouter.approutingspike.proxy
     platform: macOS
     sources:
       - path: TransparentProxyExtension
@@ -52,6 +59,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: "$(SPIKE_PROXY_BUNDLE_IDENTIFIER)"
+        PRODUCT_NAME: com.example.vpnrouter.approutingspike.proxy
+        PRODUCT_MODULE_NAME: AppRoutingSpikeTransparentProxy
         CODE_SIGN_ENTITLEMENTS: Entitlements/TransparentProxyExtension.entitlements
     info:
       path: TransparentProxyExtension/Info.plist
@@ -61,6 +70,7 @@ targets:
         CFBundleExecutable: "$(EXECUTABLE_NAME)"
         CFBundlePackageType: SYSX
         CFBundleInfoDictionaryVersion: "6.0"
+        CFBundleVersion: 5
         SpikeHostBundleIdentifier: "$(SPIKE_HOST_BUNDLE_IDENTIFIER)"
         SpikeExpectedTeamIdentifier: "$(SPIKE_EXPECTED_TEAM_IDENTIFIER)"
         SpikeMachServiceName: "$(SPIKE_MACH_SERVICE_NAME)"
@@ -69,6 +79,40 @@ targets:
             com.apple.networkextension.app-proxy: "$(PRODUCT_MODULE_NAME).TransparentProxyProvider"
           NEMachServiceName: "$(SPIKE_MACH_SERVICE_NAME)"
         NSSystemExtensionUsageDescription: 선택한 시험 흐름의 앱 신원을 확인하는 기술 시험에 사용합니다.
+  AppRoutingSpikeSelectedTrafficHarness:
+    type: application
+    platform: macOS
+    sources:
+      - path: TrafficHarness
+      - path: TrafficHarnessSupport
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: "$(SPIKE_SELECTED_HARNESS_BUNDLE_IDENTIFIER)"
+    info:
+      path: Config/SelectedTrafficHarness-Info.plist
+      properties:
+        CFBundleDisplayName: Selected Traffic Harness
+        CFBundleIdentifier: "$(PRODUCT_BUNDLE_IDENTIFIER)"
+        CFBundleExecutable: "$(EXECUTABLE_NAME)"
+        CFBundlePackageType: APPL
+        SpikeHarnessRole: selectedApp
+  AppRoutingSpikeControlTrafficHarness:
+    type: application
+    platform: macOS
+    sources:
+      - path: TrafficHarness
+      - path: TrafficHarnessSupport
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: "$(SPIKE_CONTROL_HARNESS_BUNDLE_IDENTIFIER)"
+    info:
+      path: Config/ControlTrafficHarness-Info.plist
+      properties:
+        CFBundleDisplayName: Control Traffic Harness
+        CFBundleIdentifier: "$(PRODUCT_BUNDLE_IDENTIFIER)"
+        CFBundleExecutable: "$(EXECUTABLE_NAME)"
+        CFBundlePackageType: APPL
+        SpikeHarnessRole: controlApp
   HostHarnessTests:
     type: bundle.unit-test
     platform: macOS
@@ -86,6 +130,7 @@ targets:
       - path: Tests/NetworkingTests
       - path: Networking
       - path: Shared/SpikeContracts.swift
+      - path: TransparentProxyExtension/ProviderFlowBridge.swift
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
@@ -98,3 +143,11 @@ schemes:
       targets:
         - HostHarnessTests
         - NetworkingTests
+  AppRoutingSpikeSelectedTrafficHarness:
+    build:
+      targets:
+        AppRoutingSpikeSelectedTrafficHarness: all
+  AppRoutingSpikeControlTrafficHarness:
+    build:
+      targets:
+        AppRoutingSpikeControlTrafficHarness: all

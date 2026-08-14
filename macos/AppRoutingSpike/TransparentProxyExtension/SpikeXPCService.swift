@@ -1,5 +1,6 @@
 import Foundation
 import Security
+import SystemConfiguration
 
 final class SpikeXPCService: NSObject, SpikeXPCProtocol, NSXPCListenerDelegate {
     private struct RunIdentifierRequest: Codable {
@@ -43,7 +44,7 @@ final class SpikeXPCService: NSObject, SpikeXPCProtocol, NSXPCListenerDelegate {
         shouldAcceptNewConnection connection: NSXPCConnection
     ) -> Bool {
         let authorizer = ProcessCodeSigningAuthorizer()
-        guard connection.effectiveUserIdentifier == geteuid(),
+        guard Self.isAcceptableClientUser(connection.effectiveUserIdentifier),
               let requirement = authorizer.requirement(
                   expectedSigningIdentifier: expectedHostIdentifier,
                   expectedTeamIdentifier: expectedHostTeamIdentifier
@@ -60,6 +61,20 @@ final class SpikeXPCService: NSObject, SpikeXPCProtocol, NSXPCListenerDelegate {
         connection.exportedObject = self
         connection.activate()
         return true
+    }
+
+    /// 시스템 확장은 root로 실행되고 Host Harness는 로그인한 사용자로 실행됩니다.
+    /// 그래서 "확장과 같은 사용자"가 아니라 "지금 로그인한 사용자"인지 확인합니다.
+    /// 로그인 사용자를 확인하지 못하면 받지 않습니다.
+    static func isAcceptableClientUser(_ clientUserIdentifier: uid_t) -> Bool {
+        if clientUserIdentifier == geteuid() {
+            return true
+        }
+        var consoleUserIdentifier = uid_t(0)
+        guard SCDynamicStoreCopyConsoleUser(nil, &consoleUserIdentifier, nil) != nil else {
+            return false
+        }
+        return clientUserIdentifier == consoleUserIdentifier
     }
 
     func beginRun(_ request: Data, withReply reply: @escaping (Data) -> Void) {

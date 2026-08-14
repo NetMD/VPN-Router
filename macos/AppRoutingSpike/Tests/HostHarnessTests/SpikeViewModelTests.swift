@@ -11,8 +11,9 @@ final class SpikeViewModelTests: XCTestCase {
     private struct FakeActivator: SystemExtensionActivating {
         let recorder: EventRecorder
 
-        func activate() async throws {
+        func activate() async throws -> SystemExtensionActivationOutcome {
             recorder.events.append("activate")
+            return .completed
         }
     }
 
@@ -115,6 +116,9 @@ final class SpikeViewModelTests: XCTestCase {
 
         await model.selectTestApp()
         model.setSanitizedFixtureReady(true)
+        model.setEntitlementEvidenceState(.confirmed)
+        model.setProvisioningEvidenceState(.confirmed)
+        model.captureBaseline(dnsAvailable: true, ipv4Available: true, ipv6Available: true)
         await model.requestInstallation()
         XCTAssertTrue(model.displayState.canStart)
 
@@ -142,8 +146,166 @@ final class SpikeViewModelTests: XCTestCase {
             ipv6Available: true
         )
         XCTAssertEqual(model.displayState.lifecycle, .stopped)
-        XCTAssertEqual(model.displayState.spikeResult, .stopped)
+        XCTAssertEqual(model.displayState.spikeResult, .inconclusive)
         XCTAssertTrue(model.displayState.canExport)
+        XCTAssertEqual(model.displayState.signedMacSummary.validationVerdict, .inconclusive)
+        XCTAssertNotNil(model.redactedValidationReport().cleanupSummary)
+    }
+
+    func testCompleteLiveObservationsProduceSignedMacPassAndCleanupReport() async {
+        let recorder = EventRecorder()
+        let xpc = FakeXPCClient(recorder: recorder)
+        xpc.results = makeCompleteLiveResults()
+        let model = SpikeViewModel(
+            systemExtensionActivator: FakeActivator(recorder: recorder),
+            proxyController: FakeProxy(recorder: recorder),
+            xpcClient: xpc,
+            selectedTestAppSelector: FakeSelector(),
+            controlConnectivityVerifier: FakeConnectivityVerifier(recorder: recorder)
+        )
+
+        await completeRun(model)
+
+        XCTAssertEqual(model.displayState.signedMacSummary.validationVerdict, .pass)
+        XCTAssertEqual(model.displayState.spikeResult, .pass)
+        let report = model.redactedValidationReport()
+        XCTAssertEqual(report.cleanupSummary?.managerCountAfterCleanup, 0)
+        XCTAssertEqual(
+            report.validationSummaries.first { $0.validationAxis == .signedMac }?.validationVerdict,
+            .pass
+        )
+    }
+
+    func testObservedUnsafeControlFlowProducesSignedMacFail() async {
+        let recorder = EventRecorder()
+        let xpc = FakeXPCClient(recorder: recorder)
+        xpc.results = makeCompleteLiveResults(controlUDPOutcome: .ownedAndClosed)
+        let model = SpikeViewModel(
+            systemExtensionActivator: FakeActivator(recorder: recorder),
+            proxyController: FakeProxy(recorder: recorder),
+            xpcClient: xpc,
+            selectedTestAppSelector: FakeSelector(),
+            controlConnectivityVerifier: FakeConnectivityVerifier(recorder: recorder)
+        )
+
+        await completeRun(model)
+
+        XCTAssertEqual(model.displayState.signedMacSummary.validationVerdict, .fail)
+        XCTAssertEqual(model.displayState.spikeResult, .fail)
+    }
+
+    func testMissingControlInternetObservationKeepsSignedMacInconclusive() async {
+        let recorder = EventRecorder()
+        let xpc = FakeXPCClient(recorder: recorder)
+        xpc.results = makeCompleteLiveResults()
+        let model = SpikeViewModel(
+            systemExtensionActivator: FakeActivator(recorder: recorder),
+            proxyController: FakeProxy(recorder: recorder),
+            xpcClient: xpc,
+            selectedTestAppSelector: FakeSelector(),
+            controlConnectivityVerifier: FakeConnectivityVerifier(recorder: recorder)
+        )
+
+        await completeRun(model, controlInternetReachable: nil, controlPlaneRecursionCount: 0)
+
+        XCTAssertEqual(model.displayState.signedMacSummary.validationVerdict, .inconclusive)
+    }
+
+    func testObservedControlPlaneRecursionProducesSignedMacFail() async {
+        let recorder = EventRecorder()
+        let xpc = FakeXPCClient(recorder: recorder)
+        xpc.results = makeCompleteLiveResults()
+        let model = SpikeViewModel(
+            systemExtensionActivator: FakeActivator(recorder: recorder),
+            proxyController: FakeProxy(recorder: recorder),
+            xpcClient: xpc,
+            selectedTestAppSelector: FakeSelector(),
+            controlConnectivityVerifier: FakeConnectivityVerifier(recorder: recorder)
+        )
+
+        await completeRun(model, controlInternetReachable: true, controlPlaneRecursionCount: 1)
+
+        XCTAssertEqual(model.displayState.signedMacSummary.validationVerdict, .fail)
+    }
+
+    func testInvalidSelectedEvidenceCombinationsProduceSignedMacFail() async {
+        let invalid: [(SpikeResult, String?)] = [
+            (.pass, nil),
+            (.notRun, nil),
+            (.stopped, nil),
+            (.inconclusive, SpikeFailureCode.identityMetadataMissing.rawValue),
+            (.inconclusive, nil),
+        ]
+        for (result, failureCode) in invalid {
+            let recorder = EventRecorder()
+            let xpc = FakeXPCClient(recorder: recorder)
+            xpc.results = makeCompleteLiveResults().filter {
+                !($0.appRole == .selectedApp && $0.flowKind == .tcpIPv4)
+            } + [
+                makeExactLiveResult(role: .selectedApp, kind: .tcpIPv4,
+                                    outcome: .ownedAndClosed, result: result,
+                                    failureCode: failureCode),
+            ]
+            let model = SpikeViewModel(
+                systemExtensionActivator: FakeActivator(recorder: recorder),
+                proxyController: FakeProxy(recorder: recorder),
+                xpcClient: xpc,
+                selectedTestAppSelector: FakeSelector(),
+                controlConnectivityVerifier: FakeConnectivityVerifier(recorder: recorder)
+            )
+
+            await completeRun(model)
+
+            XCTAssertEqual(model.displayState.signedMacSummary.validationVerdict, .fail)
+        }
+    }
+
+    func testControlPassWithFailureCodeProducesSignedMacFail() async {
+        let recorder = EventRecorder()
+        let xpc = FakeXPCClient(recorder: recorder)
+        xpc.results = makeCompleteLiveResults().filter {
+            !($0.appRole == .controlApp && $0.flowKind == .tcpIPv4)
+        } + [
+            makeExactLiveResult(role: .controlApp, kind: .tcpIPv4,
+                                outcome: .directPass, result: .pass,
+                                failureCode: SpikeFailureCode.invalidRequest.rawValue),
+        ]
+        let model = SpikeViewModel(
+            systemExtensionActivator: FakeActivator(recorder: recorder),
+            proxyController: FakeProxy(recorder: recorder),
+            xpcClient: xpc,
+            selectedTestAppSelector: FakeSelector(),
+            controlConnectivityVerifier: FakeConnectivityVerifier(recorder: recorder)
+        )
+
+        await completeRun(model)
+
+        XCTAssertEqual(model.displayState.signedMacSummary.validationVerdict, .fail)
+    }
+
+    func testConflictingLiveObservationsProduceSignedMacFail() async {
+        let recorder = EventRecorder()
+        let xpc = FakeXPCClient(recorder: recorder)
+        xpc.results = makeCompleteLiveResults() + [
+            makeLiveResult(
+                role: .selectedApp,
+                kind: .tcpIPv4,
+                outcome: .directPass,
+                result: .pass
+            ),
+        ]
+        let model = SpikeViewModel(
+            systemExtensionActivator: FakeActivator(recorder: recorder),
+            proxyController: FakeProxy(recorder: recorder),
+            xpcClient: xpc,
+            selectedTestAppSelector: FakeSelector(),
+            controlConnectivityVerifier: FakeConnectivityVerifier(recorder: recorder)
+        )
+
+        await completeRun(model)
+
+        XCTAssertEqual(model.displayState.signedMacSummary.validationVerdict, .fail)
+        XCTAssertEqual(model.displayState.spikeResult, .fail)
     }
 
     func testXPCStopFailureDoesNotSkipOwnedCleanup() async {
@@ -160,6 +322,9 @@ final class SpikeViewModelTests: XCTestCase {
 
         await model.selectTestApp()
         model.setSanitizedFixtureReady(true)
+        model.setEntitlementEvidenceState(.confirmed)
+        model.setProvisioningEvidenceState(.confirmed)
+        model.captureBaseline(dnsAvailable: true, ipv4Available: true, ipv6Available: true)
         await model.requestInstallation()
         await model.start()
         await model.stop()
@@ -223,6 +388,80 @@ final class SpikeViewModelTests: XCTestCase {
             flowAge: .newFlow,
             spikeResult: .inconclusive,
             failureCode: "wireguard-transport-unavailable",
+            observedAt: Date(),
+            durationMs: 1
+        )
+    }
+
+    private func completeRun(
+        _ model: SpikeViewModel,
+        controlInternetReachable: Bool? = true,
+        controlPlaneRecursionCount: Int? = 0
+    ) async {
+        await model.selectTestApp()
+        model.setSanitizedFixtureReady(true)
+        model.setEntitlementEvidenceState(.confirmed)
+        model.setProvisioningEvidenceState(.confirmed)
+        model.captureBaseline(dnsAvailable: true, ipv4Available: true, ipv6Available: true)
+        await model.requestInstallation()
+        await model.start()
+        await model.stop()
+        model.completeCleanupComparison(
+            dnsAvailable: true,
+            ipv4Available: true,
+            ipv6Available: true,
+            controlInternetReachable: controlInternetReachable,
+            controlPlaneRecursionCount: controlPlaneRecursionCount
+        )
+    }
+
+    private func makeCompleteLiveResults(
+        controlUDPOutcome: HandlingOutcome = .directPass
+    ) -> [RedactedFlowResult] {
+        [
+            makeLiveResult(role: .selectedApp, kind: .tcpIPv4, outcome: .ownedAndClosed, result: .inconclusive),
+            makeLiveResult(role: .selectedApp, kind: .udpIPv4, outcome: .ownedAndClosed, result: .inconclusive),
+            makeLiveResult(role: .controlApp, kind: .tcpIPv4, outcome: .directPass, result: .pass),
+            makeLiveResult(role: .controlApp, kind: .udpIPv4, outcome: controlUDPOutcome,
+                           result: controlUDPOutcome == .directPass ? .pass : .fail),
+            makeLiveResult(role: .controlPlane, kind: .tcpIPv4, outcome: .directPass, result: .pass),
+        ]
+    }
+
+    private func makeLiveResult(
+        role: AppRole,
+        kind: FlowKind,
+        outcome: HandlingOutcome,
+        result: SpikeResult
+    ) -> RedactedFlowResult {
+        makeExactLiveResult(
+            role: role,
+            kind: kind,
+            outcome: outcome,
+            result: result,
+            failureCode: result == .inconclusive
+                ? SpikeFailureCode.wireGuardTransportUnavailable.rawValue
+                : nil
+        )
+    }
+
+    private func makeExactLiveResult(
+        role: AppRole,
+        kind: FlowKind,
+        outcome: HandlingOutcome,
+        result: SpikeResult,
+        failureCode: String?
+    ) -> RedactedFlowResult {
+        RedactedFlowResult(
+            runId: UUID(),
+            candidateKind: .transparentProxy,
+            evidenceTier: .signedMac,
+            flowKind: kind,
+            appRole: role,
+            flowAge: .newFlow,
+            handlingOutcome: outcome,
+            spikeResult: result,
+            failureCode: failureCode,
             observedAt: Date(),
             durationMs: 1
         )

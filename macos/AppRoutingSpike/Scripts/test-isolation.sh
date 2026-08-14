@@ -28,7 +28,7 @@ if [ -n "$generated_status" ]; then
   exit 1
 fi
 
-sed '/^\/DerivedData-test\/$/d' \
+sed '/^\/DerivedData\*\/$/d' \
   "$TEST_ROOT/macos/AppRoutingSpike/.gitignore" \
   > "$TEST_ROOT/macos/AppRoutingSpike/.gitignore.without-test-output"
 mv \

@@ -8,6 +8,11 @@ public enum SpikeRunStateError: Error, Equatable {
 
 /// 실행 요청의 멱등성과 선택 식별자의 메모리 수명을 한 곳에서 관리합니다.
 public final class SpikeRunState: @unchecked Sendable {
+    public struct RedactedRunContext: Equatable, Sendable {
+        public let runId: UUID
+        public let candidateKind: CandidateKind
+        public let evidenceTier: EvidenceTier
+    }
     private struct BeginRecord {
         let requestFingerprint: Data
         let response: SpikeCommandResponse
@@ -20,6 +25,7 @@ public final class SpikeRunState: @unchecked Sendable {
     private var stopResponses: [UUID: SpikeCommandResponse] = [:]
     private var terminalFailures: [UUID: String] = [:]
     private var failedRunID: UUID?
+    private var rejectingContext: RedactedRunContext?
 
     public init() {}
 
@@ -43,6 +49,7 @@ public final class SpikeRunState: @unchecked Sendable {
         )
         insertBeginRecord(BeginRecord(requestFingerprint: fingerprint, response: response), runId: request.runId)
         activeRequest = request
+        rejectingContext = nil
         return response
     }
 
@@ -55,6 +62,9 @@ public final class SpikeRunState: @unchecked Sendable {
         }
         let response = SpikeCommandResponse(runId: runId, command: .stopRun, acceptedAt: acceptedAt)
         stopResponses[runId] = response
+        if let activeRequest {
+            rejectingContext = RedactedRunContext(runId: activeRequest.runId, candidateKind: activeRequest.candidateKind, evidenceTier: activeRequest.evidenceTier)
+        }
         activeRequest = nil
         if failedRunID == runId { failedRunID = nil }
         trimStopResponses()
@@ -77,6 +87,9 @@ public final class SpikeRunState: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         guard activeRequest?.runId == runId else { return }
+        if let activeRequest {
+            rejectingContext = RedactedRunContext(runId: activeRequest.runId, candidateKind: activeRequest.candidateKind, evidenceTier: activeRequest.evidenceTier)
+        }
         activeRequest = nil
         terminalFailures[runId] = failureCode
         failedRunID = runId
@@ -91,7 +104,13 @@ public final class SpikeRunState: @unchecked Sendable {
     public func shouldRejectNewFlows() -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        return failedRunID != nil
+        return failedRunID != nil || rejectingContext != nil
+    }
+
+    public func rejectingRunContext() -> RedactedRunContext? {
+        lock.lock()
+        defer { lock.unlock() }
+        return rejectingContext
     }
 
     public func retainedRecordCount() -> Int {
@@ -109,6 +128,7 @@ public final class SpikeRunState: @unchecked Sendable {
         stopResponses.removeAll(keepingCapacity: false)
         terminalFailures.removeAll(keepingCapacity: false)
         failedRunID = nil
+        rejectingContext = nil
     }
 
     private func requestFingerprint(_ request: SpikeRunRequest) -> Data {

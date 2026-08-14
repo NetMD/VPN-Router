@@ -6,7 +6,7 @@ REPOSITORY_ROOT=${SPIKE_REPOSITORY_ROOT:-$(CDPATH= cd -- "$SCRIPT_DIR/../../.." 
 cd "$REPOSITORY_ROOT"
 
 protected_paths="macos/VPNRouter windows docs/v0.1.0-release-plan.md docs/platform-parity-contract.md docs/platform-parity-audit.md"
-generated_paths="macos/AppRoutingSpike/DerivedData macos/AppRoutingSpike/DerivedData-test"
+generated_paths="macos/AppRoutingSpike/DerivedData macos/AppRoutingSpike/DerivedData-test macos/AppRoutingSpike/DerivedData-r3 macos/AppRoutingSpike/DerivedData-fe-host macos/AppRoutingSpike/DerivedData-fe-selected macos/AppRoutingSpike/DerivedData-fe-control"
 
 collect_protected_changes() {
   for path in $protected_paths; do

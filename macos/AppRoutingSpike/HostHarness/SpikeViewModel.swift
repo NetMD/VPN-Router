@@ -11,9 +11,16 @@ public final class SpikeViewModel: ObservableObject {
     private let xpcClient: SpikeXPCClientProtocol
     private let selectedTestAppSelector: SelectedTestAppSelecting
     private let controlConnectivityVerifier: ControlConnectivityVerifying
+    private let controlPlaneFlowProbe: ControlPlaneFlowProbing
     private let exporter: RedactedResultExporter
     private var currentRunId: UUID?
     private var pendingStopHadXPCError = false
+    private var baseline: (dns: Bool, ipv4: Bool, ipv6: Bool)?
+    private var providerStopObserved = false
+    private var managerCountAfterCleanup: Int?
+    private var cleanupSummary: CleanupSummary?
+    private var controlInternetReachable: Bool?
+    private var controlPlaneRecursionCount: Int?
 
     public init(
         displayState: SpikeDisplayState = SpikeDisplayState(),
@@ -23,6 +30,7 @@ public final class SpikeViewModel: ObservableObject {
         xpcClient: SpikeXPCClientProtocol,
         selectedTestAppSelector: SelectedTestAppSelecting,
         controlConnectivityVerifier: ControlConnectivityVerifying = ManualControlConnectivityVerifier(),
+        controlPlaneFlowProbe: ControlPlaneFlowProbing = LocalFlowControlPlaneProbe(),
         configurationError: String? = nil,
         exporter: RedactedResultExporter = RedactedResultExporter()
     ) {
@@ -33,6 +41,7 @@ public final class SpikeViewModel: ObservableObject {
         self.xpcClient = xpcClient
         self.selectedTestAppSelector = selectedTestAppSelector
         self.controlConnectivityVerifier = controlConnectivityVerifier
+        self.controlPlaneFlowProbe = controlPlaneFlowProbe
         self.exporter = exporter
         self.displayState.redactedResultCount = redactedResults.count
         if let configurationError {
@@ -47,6 +56,31 @@ public final class SpikeViewModel: ObservableObject {
             return
         }
         displayState.hasSanitizedFixture = isReady
+        updateReadiness()
+    }
+
+    public func setEntitlementEvidenceState(_ state: EntitlementEvidenceState) {
+        displayState.entitlementEvidenceState = state
+        if state != .confirmed { displayState.activationEvidenceState = .notObserved }
+        updateReadiness()
+    }
+
+    public func setProvisioningEvidenceState(_ state: ProvisioningEvidenceState) {
+        displayState.provisioningEvidenceState = state
+        if state != .confirmed { displayState.activationEvidenceState = .notObserved }
+        updateReadiness()
+    }
+
+    public func captureBaseline(dnsAvailable: Bool, ipv4Available: Bool, ipv6Available: Bool) {
+        guard dnsAvailable, ipv4Available else {
+            baseline = nil
+            displayState.baselineState = .notCaptured
+            displayState.signedMacSummary = ValidationAxisSummary(validationAxis: .signedMac,
+                validationVerdict: .inconclusive, executedCount: 0, passedCount: 0, failedCount: 0, observedAt: Date())
+            return
+        }
+        baseline = (dnsAvailable, ipv4Available, ipv6Available)
+        displayState.baselineState = .captured
         updateReadiness()
     }
 
@@ -73,11 +107,11 @@ public final class SpikeViewModel: ObservableObject {
         displayState.lifecycle = .awaitingApproval
         displayState.userFacingError = nil
         do {
-            try await systemExtensionActivator.activate()
-            displayState.hasSignedEntitlement = true
+            let outcome = try await systemExtensionActivator.activate()
+            displayState.activationEvidenceState = outcome == .completed ? .confirmed : .rebootRequired
             updateReadiness()
         } catch {
-            displayState.hasSignedEntitlement = false
+            displayState.activationEvidenceState = .failed
             displayState.lifecycle = .stopped
             displayState.spikeResult = .inconclusive
             displayState.userFacingError = message(for: error)
@@ -115,19 +149,36 @@ public final class SpikeViewModel: ObservableObject {
         )
 
         do {
-            try await proxyController.start()
+            try await proxyController.startAndWaitUntilConnected(timeout: .seconds(10))
             try await xpcClient.beginRun(request)
+            providerStopObserved = false
+            managerCountAfterCleanup = nil
+            cleanupSummary = nil
+            controlInternetReachable = nil
+            controlPlaneRecursionCount = nil
             currentRunId = runId
             displayState.lifecycle = .running
             displayState.evidenceTier = .signedMac
             displayState.spikeResult = .notRun
+            // 설계대로 Host가 새 흐름을 한 번 만들어 Provider의 제어 경로 directPass를 확인합니다.
+            await controlPlaneFlowProbe.probeControlPlaneFlow()
         } catch {
+            let startError = error
             try? await proxyController.stopProvider()
-            try? await proxyController.removeOwnedConfiguration()
+            var cleanupFailed = false
+            do {
+                _ = try await proxyController.removeAllOwnedConfigurations()
+                cleanupFailed = try await proxyController.ownedConfigurationCount() != 0
+            } catch {
+                cleanupFailed = true
+            }
             currentRunId = nil
-            displayState.lifecycle = .stoppedWithError
+            displayState.lifecycle = cleanupFailed ? .cleanupFailed : .stoppedWithError
+            displayState.cleanupPhase = cleanupFailed ? .failed : .managerCountVerifiedZero
             displayState.spikeResult = .fail
-            displayState.userFacingError = message(for: error)
+            displayState.userFacingError = cleanupFailed
+                ? message(for: SpikeHostServiceError.proxyCleanupFailed)
+                : message(for: startError)
         }
     }
 
@@ -136,6 +187,7 @@ public final class SpikeViewModel: ObservableObject {
             return
         }
         displayState.lifecycle = .stopping
+        displayState.cleanupPhase = .rejectingNewFlows
         displayState.userFacingError = nil
         selectedTestAppSelector.clear()
 
@@ -150,12 +202,22 @@ public final class SpikeViewModel: ObservableObject {
 
         var cleanupError: Error?
         do {
-            try await proxyController.stopProvider()
+            displayState.cleanupPhase = .providerStopRequested
+            try await proxyController.stopAndWaitUntilDisconnected(timeout: .seconds(10))
+            providerStopObserved = true
+            displayState.cleanupPhase = .providerStopped
         } catch {
             cleanupError = error
         }
         do {
-            try await proxyController.removeOwnedConfiguration()
+            _ = try await proxyController.removeAllOwnedConfigurations()
+            displayState.cleanupPhase = .ownedManagersRemoved
+            let remainingManagerCount = try await proxyController.ownedConfigurationCount()
+            managerCountAfterCleanup = remainingManagerCount
+            guard remainingManagerCount == 0 else {
+                throw SpikeHostServiceError.proxyCleanupFailed
+            }
+            displayState.cleanupPhase = .managerCountVerifiedZero
         } catch {
             cleanupError = cleanupError ?? error
         }
@@ -163,6 +225,7 @@ public final class SpikeViewModel: ObservableObject {
         currentRunId = nil
         if let cleanupError {
             displayState.lifecycle = .cleanupFailed
+            displayState.cleanupPhase = .failed
             displayState.spikeResult = .fail
             displayState.userFacingError = message(for: cleanupError)
             return
@@ -177,16 +240,42 @@ public final class SpikeViewModel: ObservableObject {
         }
     }
 
-    public func completeControlConnectivityVerification(
+    public func completeCleanupComparison(
         dnsAvailable: Bool,
         ipv4Available: Bool,
-        ipv6Available: Bool
+        ipv6Available: Bool,
+        controlInternetReachable: Bool? = nil,
+        controlPlaneRecursionCount: Int? = nil
     ) {
         guard displayState.lifecycle == .awaitingControlVerification else {
             return
         }
-        guard dnsAvailable, ipv4Available, ipv6Available else {
+        guard let baseline else {
             displayState.lifecycle = .cleanupFailed
+            displayState.cleanupPhase = .failed
+            displayState.userFacingError = "DNS·IPv4·IPv6 회복 확인이 필요합니다."
+            return
+        }
+        displayState.cleanupPhase = .dnsCompared
+        let dnsMatched = dnsAvailable == baseline.dns
+        displayState.cleanupPhase = .ipv4Compared
+        let ipv4Matched = ipv4Available == baseline.ipv4
+        displayState.cleanupPhase = .ipv6Compared
+        let ipv6Matched = ipv6Available == baseline.ipv6
+        self.controlInternetReachable = controlInternetReachable
+        self.controlPlaneRecursionCount = controlPlaneRecursionCount
+        let summary = CleanupSummary(
+            providerStopObserved: providerStopObserved,
+            managerCountAfterCleanup: managerCountAfterCleanup,
+            dnsMatchedBaseline: dnsMatched,
+            ipv4MatchedBaseline: ipv4Matched,
+            ipv6MatchedBaseline: ipv6Matched
+        )
+        cleanupSummary = summary
+        updateSignedMacVerdict(cleanup: summary)
+        guard dnsMatched, ipv4Matched, ipv6Matched else {
+            displayState.lifecycle = .cleanupFailed
+            displayState.cleanupPhase = .failed
             displayState.spikeResult = .fail
             displayState.userFacingError = "일반 인터넷 보존 검사에 실패했습니다."
             return
@@ -197,10 +286,22 @@ public final class SpikeViewModel: ObservableObject {
             displayState.spikeResult = .fail
         } else {
             displayState.lifecycle = .stopped
-            displayState.spikeResult = .stopped
+            displayState.cleanupPhase = .complete
+            switch displayState.signedMacSummary.validationVerdict {
+            case .pass:
+                displayState.spikeResult = .pass
+            case .fail:
+                displayState.spikeResult = .fail
+            default:
+                displayState.spikeResult = .inconclusive
+            }
             displayState.userFacingError = nil
         }
         pendingStopHadXPCError = false
+    }
+
+    public func completeControlConnectivityVerification(dnsAvailable: Bool, ipv4Available: Bool, ipv6Available: Bool) {
+        completeCleanupComparison(dnsAvailable: dnsAvailable, ipv4Available: ipv4Available, ipv6Available: ipv6Available)
     }
 
     public func export(to destination: URL) {
@@ -208,7 +309,7 @@ public final class SpikeViewModel: ObservableObject {
             return
         }
         do {
-            try exporter.export(redactedResults, to: destination)
+            try exporter.export(redactedValidationReport(), to: destination)
             displayState.userFacingError = nil
         } catch {
             displayState.userFacingError = message(for: error)
@@ -227,6 +328,98 @@ public final class SpikeViewModel: ObservableObject {
         displayState.lifecycle = displayState.hasAllReadinessConditions
             ? .ready
             : .notReady
+    }
+
+    private func updateSignedMacVerdict(cleanup: CleanupSummary) {
+        let observations: [Bool?] = [
+            displayState.activationEvidenceState == .confirmed,
+            flowObservation(role: .selectedApp, kind: .tcpIPv4, outcome: .ownedAndClosed,
+                            result: .inconclusive,
+                            failureCode: SpikeFailureCode.wireGuardTransportUnavailable.rawValue),
+            flowObservation(role: .selectedApp, kind: .udpIPv4, outcome: .ownedAndClosed,
+                            result: .inconclusive,
+                            failureCode: SpikeFailureCode.wireGuardTransportUnavailable.rawValue),
+            flowObservation(role: .controlApp, kind: .tcpIPv4, outcome: .directPass,
+                            result: .pass, failureCode: nil),
+            flowObservation(role: .controlApp, kind: .udpIPv4, outcome: .directPass,
+                            result: .pass, failureCode: nil),
+            roleObservation(role: .controlPlane, outcome: .directPass,
+                            result: .pass, failureCode: nil),
+            controlInternetReachable,
+            controlPlaneRecursionCount.map { $0 == 0 },
+            cleanup.providerStopObserved && cleanup.managerCountAfterCleanup == 0,
+            cleanupNetworkObservation(cleanup),
+            pendingStopHadXPCError ? false : true,
+        ]
+        let executed = observations.compactMap { $0 }
+        let verdict: ValidationVerdict
+        if executed.contains(false) {
+            verdict = .fail
+        } else if executed.count == observations.count {
+            verdict = .pass
+        } else {
+            verdict = .inconclusive
+        }
+        displayState.signedMacSummary = ValidationAxisSummary(
+            validationAxis: .signedMac,
+            validationVerdict: verdict,
+            executedCount: executed.count,
+            passedCount: executed.filter { $0 }.count,
+            failedCount: executed.filter { !$0 }.count,
+            observedAt: Date()
+        )
+    }
+
+    private func flowObservation(
+        role: AppRole,
+        kind: FlowKind,
+        outcome: HandlingOutcome,
+        result: SpikeResult,
+        failureCode: String?
+    ) -> Bool? {
+        let matches = redactedResults.filter {
+            $0.appRole == role && $0.flowKind == kind && $0.flowAge == .newFlow
+        }
+        guard !matches.isEmpty else { return nil }
+        return matches.allSatisfy {
+            $0.handlingOutcome == outcome
+                && $0.spikeResult == result
+                && $0.failureCode == failureCode
+        }
+    }
+
+    private func roleObservation(
+        role: AppRole,
+        outcome: HandlingOutcome,
+        result: SpikeResult,
+        failureCode: String?
+    ) -> Bool? {
+        let matches = redactedResults.filter { $0.appRole == role && $0.flowAge == .newFlow }
+        guard !matches.isEmpty else { return nil }
+        return matches.allSatisfy {
+            $0.handlingOutcome == outcome
+                && $0.spikeResult == result
+                && $0.failureCode == failureCode
+        }
+    }
+
+    private func cleanupNetworkObservation(_ cleanup: CleanupSummary) -> Bool? {
+        guard let dns = cleanup.dnsMatchedBaseline,
+              let ipv4 = cleanup.ipv4MatchedBaseline,
+              let ipv6 = cleanup.ipv6MatchedBaseline else { return nil }
+        return dns && ipv4 && ipv6
+    }
+
+    func redactedValidationReport() -> RedactedValidationReport {
+        RedactedValidationReport(
+            validationSummaries: [
+                displayState.automatedSummary,
+                displayState.signedMacSummary,
+                displayState.p3ProductIntegrationSummary,
+            ],
+            cleanupSummary: cleanupSummary,
+            results: redactedResults
+        )
     }
 
     private func message(for error: Error) -> String {

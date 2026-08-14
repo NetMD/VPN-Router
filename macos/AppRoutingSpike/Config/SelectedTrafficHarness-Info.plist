@@ -2,14 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>AppRoutingSpikeExtensionIdentifier</key>
-	<string>$(SPIKE_PROXY_BUNDLE_IDENTIFIER)</string>
-	<key>AppRoutingSpikeMachServiceName</key>
-	<string>$(SPIKE_MACH_SERVICE_NAME)</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>App Routing Spike</string>
+	<string>Selected Traffic Harness</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -23,8 +19,8 @@
 	<key>CFBundleShortVersionString</key>
 	<string>1.0</string>
 	<key>CFBundleVersion</key>
-	<integer>5</integer>
-	<key>NSSystemExtensionUsageDescription</key>
-	<string>앱 라우팅 기술 시험용 Transparent Proxy를 사용합니다.</string>
+	<string>1</string>
+	<key>SpikeHarnessRole</key>
+	<string>selectedApp</string>
 </dict>
 </plist>

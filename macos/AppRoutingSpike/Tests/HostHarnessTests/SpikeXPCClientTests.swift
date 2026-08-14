@@ -217,3 +217,130 @@ final class SpikeXPCClientTests: XCTestCase {
         return decoder
     }
 }
+
+/// Provider가 Mach 서비스를 늦게 등록해도 호스트가 붙을 수 있어야 합니다.
+/// 실기에서 앱 실행 때 만든 연결이 이름 조회 실패로 영구 무효가 되어
+/// 시험 시작이 계속 실패했던 결함의 회귀 시험입니다.
+final class XPCConnectionSlotTests: XCTestCase {
+    private final class FakeConnection {
+        let serial: Int
+        var isTornDown = false
+
+        init(serial: Int) {
+            self.serial = serial
+        }
+    }
+
+    private final class Recorder: @unchecked Sendable {
+        private let lock = NSLock()
+        private var madeCount = 0
+        private(set) var lostHandlers: [@Sendable () -> Void] = []
+        private(set) var tornDown: [Int] = []
+
+        func nextSerial() -> Int {
+            lock.lock()
+            defer { lock.unlock() }
+            madeCount += 1
+            return madeCount
+        }
+
+        var count: Int {
+            lock.lock()
+            defer { lock.unlock() }
+            return madeCount
+        }
+
+        func remember(_ handler: @escaping @Sendable () -> Void) {
+            lock.lock()
+            lostHandlers.append(handler)
+            lock.unlock()
+        }
+
+        func rememberTearDown(_ serial: Int) {
+            lock.lock()
+            tornDown.append(serial)
+            lock.unlock()
+        }
+    }
+
+    private func makeSlot() -> (XPCConnectionSlot<FakeConnection>, Recorder) {
+        let recorder = Recorder()
+        let slot = XPCConnectionSlot<FakeConnection>(
+            make: { _, onLost in
+                recorder.remember(onLost)
+                return FakeConnection(serial: recorder.nextSerial())
+            },
+            tearDown: { connection in
+                connection.isTornDown = true
+                recorder.rememberTearDown(connection.serial)
+            }
+        )
+        return (slot, recorder)
+    }
+
+    func testDoesNotCreateAConnectionBeforeTheFirstRequest() {
+        let (slot, recorder) = makeSlot()
+        _ = slot
+        XCTAssertEqual(recorder.count, 0, "요청 전에 연결을 미리 만들면 안 됩니다.")
+    }
+
+    func testReusesTheSameConnectionAcrossRequests() {
+        let (slot, recorder) = makeSlot()
+
+        let first = slot.acquire()
+        let second = slot.acquire()
+
+        XCTAssertEqual(recorder.count, 1)
+        XCTAssertTrue(first.connection === second.connection)
+        XCTAssertEqual(first.token, second.token)
+    }
+
+    func testCreatesANewConnectionAfterTheCurrentOneIsLost() {
+        let (slot, recorder) = makeSlot()
+
+        let first = slot.acquire()
+        slot.discard(first.token)
+        let second = slot.acquire()
+
+        XCTAssertEqual(recorder.count, 2)
+        XCTAssertFalse(first.connection === second.connection)
+        XCTAssertNotEqual(first.token, second.token)
+        XCTAssertEqual(recorder.tornDown, [first.connection.serial])
+    }
+
+    func testInvalidationHandlerFromTheConnectionTriggersReconnect() {
+        let (slot, recorder) = makeSlot()
+
+        let first = slot.acquire()
+        recorder.lostHandlers.last?()
+        let second = slot.acquire()
+
+        XCTAssertEqual(recorder.count, 2)
+        XCTAssertFalse(first.connection === second.connection)
+    }
+
+    func testStaleTokenDoesNotDiscardTheCurrentConnection() {
+        let (slot, recorder) = makeSlot()
+
+        let first = slot.acquire()
+        slot.discard(first.token)
+        let second = slot.acquire()
+        slot.discard(first.token)
+        let third = slot.acquire()
+
+        XCTAssertEqual(recorder.count, 2, "지난 연결의 token으로 현재 연결을 버리면 안 됩니다.")
+        XCTAssertTrue(second.connection === third.connection)
+    }
+
+    func testResetAllowsAFreshConnectionForTheNextRequest() {
+        let (slot, recorder) = makeSlot()
+
+        let first = slot.acquire()
+        slot.reset()
+        let second = slot.acquire()
+
+        XCTAssertEqual(recorder.count, 2)
+        XCTAssertTrue(first.connection.isTornDown)
+        XCTAssertFalse(second.connection.isTornDown)
+    }
+}

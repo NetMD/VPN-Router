@@ -10,7 +10,7 @@ if rg -n 'NWConnection[[:space:]]*\(' \
   exit 1
 fi
 
-if rg -n '(^|[[:space:]])(route|networksetup)([[:space:]]|$)' \
+if rg -n '(^|[[:space:]])(route|networksetup|killall|launchctl)([[:space:]]|$)' \
   "$SPIKE_ROOT/Networking" "$SPIKE_ROOT/TransparentProxyExtension" "$SPIKE_ROOT/Scripts" \
   --glob '*.swift' --glob '*.sh'; then
   echo "안전 검사 실패: 수동 경로 또는 DNS 변경 명령을 찾았습니다." >&2
@@ -18,12 +18,18 @@ if rg -n '(^|[[:space:]])(route|networksetup)([[:space:]]|$)' \
 fi
 
 duplicate_contracts=$(rg -l \
-  'enum (CandidateKind|EvidenceTier|SpikeResult|FlowKind|AppRole|FlowAge)' \
+  'enum (CandidateKind|EvidenceTier|SpikeResult|FlowKind|AppRole|FlowAge|ValidationAxis|ValidationVerdict|HandlingOutcome)' \
   "$SPIKE_ROOT" --glob '*.swift' | wc -l | tr -d ' ')
 if [ "$duplicate_contracts" -ne 1 ]; then
   echo "안전 검사 실패: enum 계약은 SpikeContracts.swift 한 곳에만 있어야 합니다." >&2
   exit 1
 fi
+
+nw_files=$(rg -l 'NWConnection[[:space:]]*\(' "$SPIKE_ROOT" --glob '*.swift' || true)
+[ "$nw_files" = "$SPIKE_ROOT/TrafficHarnessSupport/LocalFlowTrigger.swift" ] || {
+  echo "안전 검사 실패: NWConnection은 LocalFlowTrigger 한 곳에서만 허용됩니다." >&2
+  exit 1
+}
 
 inline_limits=$(rg -n '262144|5242880|65535|65536|2000' \
   "$SPIKE_ROOT/Networking" "$SPIKE_ROOT/TransparentProxyExtension" \

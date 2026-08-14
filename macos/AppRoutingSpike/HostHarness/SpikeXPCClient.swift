@@ -58,12 +58,20 @@ public final class NSXPCSpikeTransport: SpikeXPCTransport, @unchecked Sendable {
         }
     }
 
-    private let connection: NSXPCConnection
+    private let slot: XPCConnectionSlot<NSXPCConnection>
 
     public init(machServiceName: String) {
-        connection = NSXPCConnection(machServiceName: machServiceName, options: [])
-        connection.remoteObjectInterface = NSXPCInterface(with: SpikeXPCProtocol.self)
-        connection.resume()
+        slot = XPCConnectionSlot(
+            make: { _, onLost in
+                let connection = NSXPCConnection(machServiceName: machServiceName, options: [])
+                connection.remoteObjectInterface = NSXPCInterface(with: SpikeXPCProtocol.self)
+                connection.invalidationHandler = onLost
+                connection.interruptionHandler = onLost
+                connection.resume()
+                return connection
+            },
+            tearDown: { $0.invalidate() }
+        )
     }
 
     public func send(_ operation: SpikeXPCOperation, data: Data) async throws -> Data {
@@ -80,7 +88,7 @@ public final class NSXPCSpikeTransport: SpikeXPCTransport, @unchecked Sendable {
     }
 
     public func invalidate() {
-        connection.invalidate()
+        slot.reset()
     }
 
     private func invoke(
@@ -88,16 +96,91 @@ public final class NSXPCSpikeTransport: SpikeXPCTransport, @unchecked Sendable {
     ) async throws -> Data {
         try await withCheckedThrowingContinuation { continuation in
             let gate = ReplyGate(continuation: continuation)
-            let proxy = connection.remoteObjectProxyWithErrorHandler { _ in
+            let lease = slot.acquire()
+            let proxy = lease.connection.remoteObjectProxyWithErrorHandler { [slot] _ in
+                slot.discard(lease.token)
                 gate.resume(with: .failure(SpikeXPCClientError.connectionUnavailable))
             }
             guard let remote = proxy as? SpikeXPCProtocol else {
+                slot.discard(lease.token)
                 gate.resume(with: .failure(SpikeXPCClientError.connectionUnavailable))
                 return
             }
             operation(remote) { data in
                 gate.resume(with: .success(data))
             }
+        }
+    }
+}
+
+/// Provider는 시험을 시작한 뒤에야 Mach 서비스를 등록합니다. 연결을 앱 실행 시점에 미리 만들면
+/// 이름 조회가 실패해 그 연결이 영구히 무효가 되고, Provider가 뒤늦게 떠도 되살아나지 않습니다.
+/// 그래서 연결은 첫 요청 때 만들고, 끊기거나 무효가 되면 다음 요청에서 새로 만듭니다.
+final class XPCConnectionSlot<Connection: AnyObject>: @unchecked Sendable {
+    struct Lease {
+        let connection: Connection
+        let token: UInt64
+    }
+
+    private let make: (UInt64, @escaping @Sendable () -> Void) -> Connection
+    private let tearDown: (Connection) -> Void
+    private let lock = NSRecursiveLock()
+    private var current: Connection?
+    private var currentToken: UInt64 = 0
+
+    init(
+        make: @escaping (UInt64, @escaping @Sendable () -> Void) -> Connection,
+        tearDown: @escaping (Connection) -> Void
+    ) {
+        self.make = make
+        self.tearDown = tearDown
+    }
+
+    func acquire() -> Lease {
+        lock.lock()
+        defer { lock.unlock() }
+        if let current {
+            return Lease(connection: current, token: currentToken)
+        }
+        currentToken &+= 1
+        let issued = currentToken
+        let created = make(issued) { [weak self] in
+            self?.discard(issued)
+        }
+        // make 도중에 이미 끊겼다면 보관하지 않습니다. 이 요청은 실패하고
+        // 다음 요청이 새 연결을 만듭니다.
+        guard currentToken == issued else {
+            tearDown(created)
+            return Lease(connection: created, token: issued)
+        }
+        current = created
+        return Lease(connection: created, token: issued)
+    }
+
+    /// 이 token으로 빌려준 연결만 버립니다. 이미 새 연결로 바뀐 뒤라면 아무것도 하지 않습니다.
+    func discard(_ token: UInt64) {
+        lock.lock()
+        guard currentToken == token else {
+            lock.unlock()
+            return
+        }
+        let lost = current
+        current = nil
+        currentToken &+= 1
+        lock.unlock()
+        if let lost {
+            tearDown(lost)
+        }
+    }
+
+    func reset() {
+        lock.lock()
+        let lost = current
+        current = nil
+        currentToken &+= 1
+        lock.unlock()
+        if let lost {
+            tearDown(lost)
         }
     }
 }

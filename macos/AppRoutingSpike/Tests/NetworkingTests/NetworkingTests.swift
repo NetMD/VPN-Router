@@ -349,7 +349,7 @@ final class NetworkingTests: XCTestCase {
         state.markFailed(runId: runId, failureCode: "evidence-buffer-full")
         _ = try state.stop(runId: runId, acceptedAt: policyDate)
         XCTAssertEqual(state.failureCode(runId: runId), "evidence-buffer-full")
-        XCTAssertFalse(state.shouldRejectNewFlows())
+        XCTAssertTrue(state.shouldRejectNewFlows())
 
         let nextRequest = SpikeRunRequest(
             runId: UUID(),

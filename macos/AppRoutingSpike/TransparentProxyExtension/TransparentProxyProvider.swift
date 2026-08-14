@@ -78,6 +78,22 @@ final class TransparentProxyProvider: NETransparentProxyProvider, NEAppProxyUDPF
         guard acceptingNewFlows else { return false }
         if runState.shouldRejectNewFlows() {
             close(flow)
+            if let context = runState.rejectingRunContext() {
+                let result = RedactedFlowResult(
+                    runId: context.runId,
+                    candidateKind: context.candidateKind,
+                    evidenceTier: context.evidenceTier,
+                    flowKind: kind,
+                    appRole: .selectedApp,
+                    flowAge: .newFlow,
+                    handlingOutcome: .ownedAndClosed,
+                    spikeResult: .fail,
+                    failureCode: SpikeFailureCode.stoppingNewFlowRejected.rawValue,
+                    observedAt: Date(),
+                    durationMs: 0
+                )
+                _ = SpikeEvidenceCoordinator(recorder: evidenceRecorder, runState: runState).record(result)
+            }
             return true
         }
         guard let request = runState.currentRequest() else { return false }
@@ -88,24 +104,29 @@ final class TransparentProxyProvider: NETransparentProxyProvider, NEAppProxyUDPF
             signingIdentifiers: Set([hostIdentifier, Bundle.main.bundleIdentifier].compactMap { $0 })
         )
         let hostTeamIdentifier = Bundle.main.object(forInfoDictionaryKey: "SpikeExpectedTeamIdentifier") as? String ?? ""
-        let decision = FlowIdentityPolicyAdapter(
-            identityVerifier: FlowIdentityVerifier(
-                auditTokenValidator: SecurityAuditTokenValidator()
-            )
+        let plan = ProviderFlowBridge(
+            identityVerifier: FlowIdentityVerifier(auditTokenValidator: SecurityAuditTokenValidator())
         ).evaluate(
-            sourceSigningIdentifier: sourceSigningIdentifier,
-            sourceAppAuditToken: flow.metaData.sourceAppAuditToken,
+            ProviderFlowProjection(
+                sourceSigningIdentifier: sourceSigningIdentifier,
+                sourceAppAuditToken: flow.metaData.sourceAppAuditToken,
+                flowKind: kind,
+                observedAt: observedAt
+            ),
+            request: request,
             isControlPlane: controlPlanePolicy.contains(signingIdentifier: sourceSigningIdentifier),
             isKnownHelper: false,
-            observedAt: observedAt,
-            request: request,
             controlPlaneTeamIdentifier: hostTeamIdentifier
         )
-
-        switch decision {
-        case .directPass:
-            return false
-        case let .handledAndClosed(appRole, flowAge, failureCode):
+        if let result = plan.redactedResult {
+            _ = SpikeEvidenceCoordinator(recorder: evidenceRecorder, runState: runState).record(result)
+            if let failureCode = result.failureCode,
+               failureCode == SpikeFailureCode.identityMetadataMissing.rawValue
+                || failureCode == SpikeFailureCode.identityVerificationFailed.rawValue {
+                runState.markFailed(runId: request.runId, failureCode: failureCode)
+            }
+        }
+        if plan.shouldClose {
             guard selectedFlowCapacity.acquire() else {
                 close(flow)
                 runState.markFailed(
@@ -117,27 +138,8 @@ final class TransparentProxyProvider: NETransparentProxyProvider, NEAppProxyUDPF
             defer { selectedFlowCapacity.release() }
             guard transport.forward() == .unsupported else { return true }
             close(flow)
-            let result =
-                RedactedFlowResult(
-                    runId: request.runId,
-                    candidateKind: request.candidateKind,
-                    evidenceTier: request.evidenceTier,
-                    flowKind: kind,
-                    appRole: appRole,
-                    flowAge: flowAge,
-                    spikeResult: failureCode == SpikeFailureCode.wireGuardTransportUnavailable.rawValue
-                        ? .inconclusive : .fail,
-                    failureCode: failureCode,
-                    observedAt: observedAt,
-                    durationMs: 0
-                )
-            _ = SpikeEvidenceCoordinator(recorder: evidenceRecorder, runState: runState).record(result)
-            if failureCode == SpikeFailureCode.identityMetadataMissing.rawValue
-                || failureCode == SpikeFailureCode.identityVerificationFailed.rawValue {
-                runState.markFailed(runId: request.runId, failureCode: failureCode)
-            }
-            return true
         }
+        return plan.providerReturnValue
     }
 
     private func close(_ flow: NEAppProxyFlow) {

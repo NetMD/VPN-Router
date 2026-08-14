@@ -83,15 +83,3 @@ public struct FlowPolicyEvaluator: Sendable {
         )
     }
 }
-
-public enum SpikeFailureCode: String, Codable, Sendable {
-    case identityVerificationFailed = "identity-verification-failed"
-    case identityMetadataMissing = "identity-metadata-missing"
-    case wireGuardTransportUnavailable = "wireguard-transport-unavailable"
-    case selectedFlowLimitExceeded = "selected-flow-limit-exceeded"
-    case evidenceBufferFull = "evidence-buffer-full"
-    case xpcPayloadTooLarge = "xpc-payload-too-large"
-    case invalidRequest = "invalid-request"
-    case runMismatch = "run-mismatch"
-    case runIDConflict = "run-id-conflict"
-}

@@ -43,7 +43,7 @@ public struct SpikeHostConfiguration: Equatable, Sendable {
 public struct UnavailableSystemExtensionActivator: SystemExtensionActivating {
     public init() {}
 
-    public func activate() async throws {
+    public func activate() async throws -> SystemExtensionActivationOutcome {
         throw SpikeHostServiceError.missingHostConfiguration
     }
 }

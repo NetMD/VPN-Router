@@ -13,8 +13,25 @@ public enum SpikeLifecycleState: Equatable, Sendable {
     case cleanupFailed
 }
 
+public enum EntitlementEvidenceState: String, Codable, Sendable { case notProvided, confirmed, declined }
+public enum ProvisioningEvidenceState: String, Codable, Sendable { case notProvided, confirmed, declined }
+public enum ActivationEvidenceState: String, Codable, Sendable { case notObserved, confirmed, rebootRequired, failed }
+public enum BaselineState: String, Codable, Sendable { case notCaptured, captured }
+public enum CleanupPhase: String, Codable, Sendable {
+    case idle, running, rejectingNewFlows, providerStopRequested, providerStopped
+    case ownedManagersRemoved, managerCountVerifiedZero, dnsCompared, ipv4Compared, ipv6Compared
+    case complete, failed
+}
+
 public struct SpikeDisplayState: Equatable, Sendable {
-    public var hasSignedEntitlement: Bool
+    public var entitlementEvidenceState: EntitlementEvidenceState
+    public var provisioningEvidenceState: ProvisioningEvidenceState
+    public var activationEvidenceState: ActivationEvidenceState
+    public var baselineState: BaselineState
+    public var cleanupPhase: CleanupPhase
+    public var automatedSummary: ValidationAxisSummary
+    public var signedMacSummary: ValidationAxisSummary
+    public var p3ProductIntegrationSummary: ValidationAxisSummary
     public var hasValidHostConfiguration: Bool
     public var hasSelectedTestApp: Bool
     public var hasSanitizedFixture: Bool
@@ -25,7 +42,11 @@ public struct SpikeDisplayState: Equatable, Sendable {
     public var userFacingError: String?
 
     public init(
-        hasSignedEntitlement: Bool = false,
+        entitlementEvidenceState: EntitlementEvidenceState = .notProvided,
+        provisioningEvidenceState: ProvisioningEvidenceState = .notProvided,
+        activationEvidenceState: ActivationEvidenceState = .notObserved,
+        baselineState: BaselineState = .notCaptured,
+        cleanupPhase: CleanupPhase = .idle,
         hasValidHostConfiguration: Bool = true,
         hasSelectedTestApp: Bool = false,
         hasSanitizedFixture: Bool = false,
@@ -35,7 +56,15 @@ public struct SpikeDisplayState: Equatable, Sendable {
         redactedResultCount: Int = 0,
         userFacingError: String? = nil
     ) {
-        self.hasSignedEntitlement = hasSignedEntitlement
+        self.entitlementEvidenceState = entitlementEvidenceState
+        self.provisioningEvidenceState = provisioningEvidenceState
+        self.activationEvidenceState = activationEvidenceState
+        self.baselineState = baselineState
+        self.cleanupPhase = cleanupPhase
+        let now = Date(timeIntervalSince1970: 0)
+        automatedSummary = ValidationAxisSummary(validationAxis: .automated, validationVerdict: .notRun, executedCount: 0, passedCount: 0, failedCount: 0, observedAt: now)
+        signedMacSummary = ValidationAxisSummary(validationAxis: .signedMac, validationVerdict: .inconclusive, executedCount: 0, passedCount: 0, failedCount: 0, observedAt: now)
+        p3ProductIntegrationSummary = ValidationAxisSummary(validationAxis: .p3ProductIntegration, validationVerdict: .noGo, executedCount: 0, passedCount: 0, failedCount: 0, observedAt: now)
         self.hasValidHostConfiguration = hasValidHostConfiguration
         self.hasSelectedTestApp = hasSelectedTestApp
         self.hasSanitizedFixture = hasSanitizedFixture
@@ -62,18 +91,25 @@ public struct SpikeDisplayState: Equatable, Sendable {
     }
 
     public var canRequestInstallation: Bool {
-        canSelectTestApp
+        entitlementEvidenceState == .confirmed
+            && provisioningEvidenceState == .confirmed
+            && !isBusy
     }
 
     public var hasAllReadinessConditions: Bool {
         hasValidHostConfiguration
-            && hasSignedEntitlement
+            && activationEvidenceState == .confirmed
             && hasSelectedTestApp
             && hasSanitizedFixture
+            && baselineState == .captured
     }
 
     public var canStart: Bool {
         hasAllReadinessConditions && !isRunning && !isStopping
+    }
+
+    public var isBusy: Bool {
+        isRunning || isStopping || lifecycle == .awaitingApproval
     }
 
     public var canStop: Bool {

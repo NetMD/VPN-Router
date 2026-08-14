@@ -14,7 +14,10 @@ final class SpikeDisplayStateTests: XCTestCase {
 
         for (entitlement, selectedApp, fixture, lifecycle, expected) in cases {
             let state = SpikeDisplayState(
-                hasSignedEntitlement: entitlement,
+                entitlementEvidenceState: entitlement ? .confirmed : .notProvided,
+                provisioningEvidenceState: entitlement ? .confirmed : .notProvided,
+                activationEvidenceState: entitlement ? .confirmed : .notObserved,
+                baselineState: entitlement ? .captured : .notCaptured,
                 hasSelectedTestApp: selectedApp,
                 hasSanitizedFixture: fixture,
                 lifecycle: lifecycle

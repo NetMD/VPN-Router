@@ -21,7 +21,7 @@ public struct SpikeCommandResponse: Codable, Equatable, Sendable {
     public let acceptedAt: Date
 
     public init(
-        schemaVersion: Int = 1,
+        schemaVersion: Int = 2,
         runId: UUID,
         command: SpikeCommandKind,
         accepted: Bool = true,
@@ -41,7 +41,7 @@ public struct SpikeSnapshotRequest: Codable, Equatable, Sendable {
     public let cursor: UInt64?
     public let limit: Int
 
-    public init(schemaVersion: Int = 1, runId: UUID, cursor: UInt64?, limit: Int) {
+    public init(schemaVersion: Int = 2, runId: UUID, cursor: UInt64?, limit: Int) {
         self.schemaVersion = schemaVersion
         self.runId = runId
         self.cursor = cursor
@@ -67,7 +67,7 @@ public struct SpikeSnapshotPage: Codable, Equatable, Sendable {
     public let hasMore: Bool
 
     public init(
-        schemaVersion: Int = 1,
+        schemaVersion: Int = 2,
         runId: UUID,
         items: [SpikeSnapshotItem],
         nextCursor: UInt64?,
@@ -112,6 +112,76 @@ public enum CandidateKind: String, Codable, CaseIterable, Sendable {
 public enum EvidenceTier: String, Codable, CaseIterable, Sendable {
     case automated
     case signedMac
+}
+
+public enum ValidationAxis: String, Codable, CaseIterable, Sendable {
+    case automated
+    case signedMac
+    case p3ProductIntegration
+}
+
+public enum ValidationVerdict: String, Codable, CaseIterable, Sendable {
+    case notRun, pass, fail, inconclusive, noGo
+}
+
+public enum HandlingOutcome: String, Codable, CaseIterable, Sendable {
+    case directPass
+    case ownedAndClosed
+}
+
+public enum SpikeFailureCode: String, Codable, CaseIterable, Sendable {
+    case identityVerificationFailed = "identity-verification-failed"
+    case identityMetadataMissing = "identity-metadata-missing"
+    case wireGuardTransportUnavailable = "wireguard-transport-unavailable"
+    case selectedFlowLimitExceeded = "selected-flow-limit-exceeded"
+    case evidenceBufferFull = "evidence-buffer-full"
+    case xpcPayloadTooLarge = "xpc-payload-too-large"
+    case invalidRequest = "invalid-request"
+    case runMismatch = "run-mismatch"
+    case runIDConflict = "run-id-conflict"
+    case stoppingNewFlowRejected = "stopping-new-flow-rejected"
+}
+
+public struct ValidationAxisSummary: Codable, Equatable, Sendable {
+    public let validationAxis: ValidationAxis
+    public let validationVerdict: ValidationVerdict
+    public let executedCount: Int
+    public let passedCount: Int
+    public let failedCount: Int
+    public let observedAt: Date
+
+    public init(validationAxis: ValidationAxis, validationVerdict: ValidationVerdict,
+                executedCount: Int, passedCount: Int, failedCount: Int, observedAt: Date) {
+        self.validationAxis = validationAxis
+        self.validationVerdict = validationVerdict
+        self.executedCount = executedCount
+        self.passedCount = passedCount
+        self.failedCount = failedCount
+        self.observedAt = observedAt
+    }
+}
+
+public struct CleanupSummary: Codable, Equatable, Sendable {
+    public let providerStopObserved: Bool
+    public let managerCountAfterCleanup: Int?
+    public let dnsMatchedBaseline: Bool?
+    public let ipv4MatchedBaseline: Bool?
+    public let ipv6MatchedBaseline: Bool?
+}
+
+public struct RedactedValidationReport: Codable, Equatable, Sendable {
+    public let schemaVersion: Int
+    public let validationSummaries: [ValidationAxisSummary]
+    public let cleanupSummary: CleanupSummary?
+    public let results: [RedactedFlowResult]
+
+    public init(schemaVersion: Int = 2, validationSummaries: [ValidationAxisSummary],
+                cleanupSummary: CleanupSummary?, results: [RedactedFlowResult]) {
+        self.schemaVersion = schemaVersion
+        self.validationSummaries = validationSummaries
+        self.cleanupSummary = cleanupSummary
+        self.results = results
+    }
 }
 
 /// 서로 섞어 해석하면 안 되는 스파이크 판정입니다.
@@ -159,7 +229,7 @@ public struct SpikeRunRequest: Codable, Equatable, Sendable {
     public let policyAppliedAt: Date
 
     public init(
-        schemaVersion: Int = 1,
+        schemaVersion: Int = 2,
         runId: UUID,
         candidateKind: CandidateKind,
         evidenceTier: EvidenceTier,
@@ -186,19 +256,21 @@ public struct RedactedFlowResult: Codable, Equatable, Sendable {
     public let flowKind: FlowKind
     public let appRole: AppRole
     public let flowAge: FlowAge
+    public let handlingOutcome: HandlingOutcome
     public let spikeResult: SpikeResult
     public let failureCode: String?
     public let observedAt: Date
     public let durationMs: Int
 
     public init(
-        schemaVersion: Int = 1,
+        schemaVersion: Int = 2,
         runId: UUID,
         candidateKind: CandidateKind,
         evidenceTier: EvidenceTier,
         flowKind: FlowKind,
         appRole: AppRole,
         flowAge: FlowAge,
+        handlingOutcome: HandlingOutcome = .ownedAndClosed,
         spikeResult: SpikeResult,
         failureCode: String?,
         observedAt: Date,
@@ -211,6 +283,7 @@ public struct RedactedFlowResult: Codable, Equatable, Sendable {
         self.flowKind = flowKind
         self.appRole = appRole
         self.flowAge = flowAge
+        self.handlingOutcome = handlingOutcome
         self.spikeResult = spikeResult
         self.failureCode = failureCode
         self.observedAt = observedAt

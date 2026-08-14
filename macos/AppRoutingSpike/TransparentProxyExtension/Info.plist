@@ -19,7 +19,7 @@
 	<key>CFBundleShortVersionString</key>
 	<string>1.0</string>
 	<key>CFBundleVersion</key>
-	<string>1</string>
+	<integer>5</integer>
 	<key>NSSystemExtensionUsageDescription</key>
 	<string>선택한 시험 흐름의 앱 신원을 확인하는 기술 시험에 사용합니다.</string>
 	<key>NetworkExtension</key>

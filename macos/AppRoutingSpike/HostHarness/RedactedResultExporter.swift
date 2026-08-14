@@ -1,11 +1,14 @@
 import Foundation
+import Darwin
 
 public enum RedactedResultExportError: Error, Equatable, LocalizedError {
     case emptyResults
     case pathTooLong
     case fileTooLarge
     case invalidFailureCode
+    case invalidReport
     case writeFailed
+    case unsafeDestination
 
     public var errorDescription: String? {
         switch self {
@@ -17,8 +20,12 @@ public enum RedactedResultExportError: Error, Equatable, LocalizedError {
             return "가려진 결과가 내보내기 크기 제한을 넘었습니다."
         case .invalidFailureCode:
             return "가려진 실패 코드를 확인하지 못했습니다."
+        case .invalidReport:
+            return "가려진 검증 보고서 구성을 확인하지 못했습니다."
         case .writeFailed:
             return "가려진 결과를 저장하지 못했습니다."
+        case .unsafeDestination:
+            return "안전한 내보내기 위치를 확인하지 못했습니다."
         }
     }
 }
@@ -32,42 +39,96 @@ public struct RedactedResultExporter: Sendable {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
     }
 
-    public func encodedData(for results: [RedactedFlowResult]) throws -> Data {
-        guard !results.isEmpty else {
+    public func encodedData(for report: RedactedValidationReport) throws -> Data {
+        guard !report.results.isEmpty else {
             throw RedactedResultExportError.emptyResults
         }
-        guard results.allSatisfy({ result in
+        guard report.results.allSatisfy({ result in
             result.failureCode.map(isAllowedFailureCode) ?? true
         }) else {
             throw RedactedResultExportError.invalidFailureCode
         }
-        let data = try encoder.encode(results)
+        guard report.schemaVersion == SpikeLimits.schemaVersion,
+              report.validationSummaries.count == ValidationAxis.allCases.count,
+              Set(report.validationSummaries.map(\.validationAxis)) == Set(ValidationAxis.allCases)
+        else {
+            throw RedactedResultExportError.invalidReport
+        }
+        let data = try encoder.encode(report)
         guard data.count <= SpikeLimits.maximumExportBytes else {
             throw RedactedResultExportError.fileTooLarge
         }
         return data
     }
 
-    public func export(_ results: [RedactedFlowResult], to destination: URL) throws {
+    public func export(_ report: RedactedValidationReport, to destination: URL) throws {
         guard destination.path.utf8.count <= SpikeLimits.maximumExportPathBytes else {
             throw RedactedResultExportError.pathTooLong
         }
-        let data = try encodedData(for: results)
+        let parent = destination.deletingLastPathComponent()
+        let parentValues = try? parent.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+        let destinationValues = try? destination.resourceValues(forKeys: [.isSymbolicLinkKey])
+        guard parentValues?.isDirectory == true,
+              parentValues?.isSymbolicLink != true,
+              destinationValues?.isSymbolicLink != true else {
+            throw RedactedResultExportError.unsafeDestination
+        }
+        let data = try encodedData(for: report)
+        try writeAtomicallyWithoutFollowingLinks(data, to: destination, parent: parent)
+    }
+
+    private func writeAtomicallyWithoutFollowingLinks(
+        _ data: Data,
+        to destination: URL,
+        parent: URL
+    ) throws {
+        var template = Array(
+            parent.appendingPathComponent(".vpn-router-export.XXXXXX").path.utf8CString
+        )
+        let descriptor = mkstemp(&template)
+        guard descriptor >= 0 else { throw RedactedResultExportError.writeFailed }
+        let temporary = URL(fileURLWithPath: String(cString: template))
+        var shouldRemoveTemporary = true
+        defer {
+            if shouldRemoveTemporary {
+                try? FileManager.default.removeItem(at: temporary)
+            }
+        }
+        defer { close(descriptor) }
+
         do {
-            try data.write(to: destination, options: .atomic)
+            guard fchmod(descriptor, S_IRUSR | S_IWUSR) == 0 else {
+                throw RedactedResultExportError.writeFailed
+            }
+            try data.withUnsafeBytes { buffer in
+                guard let baseAddress = buffer.baseAddress else { return }
+                var offset = 0
+                while offset < buffer.count {
+                    let written = Darwin.write(
+                        descriptor,
+                        baseAddress.advanced(by: offset),
+                        buffer.count - offset
+                    )
+                    guard written > 0 else { throw RedactedResultExportError.writeFailed }
+                    offset += written
+                }
+            }
+            guard fsync(descriptor) == 0 else { throw RedactedResultExportError.writeFailed }
+            let renameResult = temporary.withUnsafeFileSystemRepresentation { source in
+                destination.withUnsafeFileSystemRepresentation { target in
+                    rename(source, target)
+                }
+            }
+            guard renameResult == 0 else { throw RedactedResultExportError.writeFailed }
+            shouldRemoveTemporary = false
+        } catch let error as RedactedResultExportError {
+            throw error
         } catch {
             throw RedactedResultExportError.writeFailed
         }
     }
 
     private func isAllowedFailureCode(_ value: String) -> Bool {
-        guard !value.isEmpty, value.utf8.count <= SpikeLimits.maximumJSONStringBytes else {
-            return false
-        }
-        return value.unicodeScalars.allSatisfy { scalar in
-            (97...122).contains(Int(scalar.value))
-                || (48...57).contains(Int(scalar.value))
-                || scalar.value == 45
-        } && !value.hasPrefix("-") && !value.hasSuffix("-")
+        SpikeFailureCode(rawValue: value) != nil
     }
 }

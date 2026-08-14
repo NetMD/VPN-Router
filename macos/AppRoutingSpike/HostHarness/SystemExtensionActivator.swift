@@ -4,9 +4,9 @@ import Foundation
 public actor SystemExtensionActivator: SystemExtensionActivating {
     private final class RequestDelegate: NSObject, OSSystemExtensionRequestDelegate {
         private let lock = NSLock()
-        private var continuation: CheckedContinuation<Void, Error>?
+        private var continuation: CheckedContinuation<SystemExtensionActivationOutcome, Error>?
 
-        init(continuation: CheckedContinuation<Void, Error>) {
+        init(continuation: CheckedContinuation<SystemExtensionActivationOutcome, Error>) {
             self.continuation = continuation
         }
 
@@ -26,14 +26,18 @@ public actor SystemExtensionActivator: SystemExtensionActivating {
             _ request: OSSystemExtensionRequest,
             didFinishWithResult result: OSSystemExtensionRequest.Result
         ) {
-            finish(with: .success(()))
+            switch result {
+            case .completed: finish(with: .success(.completed))
+            case .willCompleteAfterReboot: finish(with: .success(.willCompleteAfterReboot))
+            @unknown default: finish(with: .failure(SpikeHostServiceError.extensionActivationFailed))
+            }
         }
 
         func request(_ request: OSSystemExtensionRequest, didFailWithError error: Error) {
             finish(with: .failure(SpikeHostServiceError.extensionActivationFailed))
         }
 
-        private func finish(with result: Result<Void, Error>) {
+        private func finish(with result: Result<SystemExtensionActivationOutcome, Error>) {
             lock.lock()
             let current = continuation
             continuation = nil
@@ -54,8 +58,8 @@ public actor SystemExtensionActivator: SystemExtensionActivating {
         self.requestQueue = requestQueue
     }
 
-    public func activate() async throws {
-        try await withCheckedThrowingContinuation { continuation in
+    public func activate() async throws -> SystemExtensionActivationOutcome {
+        let outcome = try await withCheckedThrowingContinuation { continuation in
             let delegate = RequestDelegate(continuation: continuation)
             activeDelegate = delegate
 
@@ -67,5 +71,6 @@ public actor SystemExtensionActivator: SystemExtensionActivating {
             OSSystemExtensionManager.shared.submitRequest(request)
         }
         activeDelegate = nil
+        return outcome
     }
 }

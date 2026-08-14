@@ -2,7 +2,7 @@ import Foundation
 
 /// 입력·버퍼·흐름 경계값의 단일 정의 위치입니다.
 public enum SpikeLimits {
-    public static let schemaVersion = 1
+    public static let schemaVersion = 2
     public static let maximumJSONStringBytes = 4 * 1_024
     public static let maximumExportBytes = 5 * 1_024 * 1_024
     public static let maximumExportPathBytes = 1_024

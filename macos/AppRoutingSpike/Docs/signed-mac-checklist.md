@@ -10,6 +10,8 @@
 - [ ] 사용자 WireGuard 설정이나 개인 키를 선택하지 않았습니다.
 - [ ] 공개 시험용 서명 앱 본체 1개와 통제 앱 1개를 정했습니다. 앱 이름·서명 식별자·팀 식별자는 화면이나 결과에 표시하지 않습니다.
 - [ ] 가려진 fixture만 준비했습니다.
+- [ ] Selected Traffic Harness와 Control Traffic Harness가 서로 다른 서명 신원으로 준비됐습니다.
+- [ ] 설치 전 DNS·IPv4 가용 여부와 IPv6 가용 여부를 주소·응답 내용 없이 기준선으로 잡았습니다.
 
 하나라도 확인할 수 없으면 설치나 시작을 진행하지 않고 signedMac 결과를 `inconclusive`로 남깁니다.
 
@@ -24,12 +26,11 @@
 
 정책 적용 뒤 만든 새 연결만 판정합니다. 이전 연결은 `preExistingFlow`로 분리합니다.
 
-| 앱 역할 | TCP v4/v6 | UDP v4/v6 | QUIC | DNS A/AAAA | 기대 결과 |
-|---|---|---|---|---|---|
-| `selectedApp` | 필수 | 필수 | 필수 | 필수 | 신원 관찰 뒤 P2에서 흐름을 명시적으로 닫음 |
-| `controlApp` | 필수 | 필수 | 표본 | 필수 | 일반 인터넷 직접 통과 |
-| `helper` | v4 필수, v6 표본 | v4 필수, v6 표본 | 표본 | A 필수 | 자동 포함하지 않고 별도 관찰 |
-| `controlPlane` | v4/v6 필수 | v4 필수 | 해당 없음 | 필수 | 재귀 없음 |
+| 앱 역할 | 새 TCP IPv4 | 새 UDP IPv4 | 일반 인터넷 | 기대 결과 |
+|---|---|---|---|---|
+| `selectedApp` | 필수 | 필수 | 해당 없음 | 두 신호 확인 뒤 P2에서 소유·닫힘 |
+| `controlApp` | 필수 | 필수 | 필수 | Provider directPass와 실제 인터넷을 별도 확인 |
+| `controlPlane` | 필수 | 보조 | 필수 | directPass, XPC 정상, 재귀 0건 |
 
 - [ ] 앱 본체의 TCP와 UDP에서 `sourceAppSigningIdentifier`와 audit token 확인 결과가 안정적으로 일치했습니다.
 - [ ] 선택 앱 실패가 일반 인터넷 직접 통과로 바뀌지 않았습니다.
@@ -51,9 +52,10 @@
 다음 순서를 지켰는지 확인합니다.
 
 1. 새 흐름 거부
-2. Transparent Proxy 중단
-3. 스파이크 설정 제거
-4. 통제 앱의 DNS·IPv4·IPv6 일반 인터넷 확인
+2. Transparent Proxy 중단 상태 확인
+3. 같은 Provider 식별자의 VPN Router 소유 manager 전건 제거
+4. 같은 Provider 식별자의 manager 0건 재조회
+5. DNS·IPv4·IPv6를 설치 전 기준선과 비교
 
 - [ ] 수동 `route`, `networksetup`, 시스템 DNS 변경을 사용하지 않았습니다.
 - [ ] 정리 실패 시 추가 시험을 중단하고 결과를 `fail`로 기록했습니다.

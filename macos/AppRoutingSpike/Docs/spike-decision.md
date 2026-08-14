@@ -10,6 +10,8 @@
 | 선택 흐름 WireGuard 전달 | `inconclusive` / NO-GO | P3 승인 범위 밖이며 공식 연결점이 확인되지 않았습니다. |
 | 제품 통합 | NO-GO | 필수 흐름과 배포·복구 근거가 없습니다. |
 
+`automated`, `signedMac`, `p3ProductIntegration`은 서로 독립된 판정 축입니다. 현재 자동 시험 결과가 통과해도 실제 권한·프로비저닝·사용자 승인이 확인되지 않았으므로 `signedMac=inconclusive`를 유지합니다.
+
 ## P2 안전 불변식
 
 - 선택 앱 signing/team identifier는 활성 실행 동안 Provider 메모리에만 있고, 멱등 기록에는 SHA-256 지문만 최대 32건 보관합니다. snapshot·로그·설정 파일에는 저장하지 않습니다.
@@ -20,7 +22,9 @@
 - 동시에 처리하는 선택 흐름은 256개로 제한하고, 증거 2,000건 버퍼가 차면 실행을 실패 상태로 바꿔 이후 흐름을 닫습니다.
 - `SelectedFlowTransport`는 `unsupported`만 반환하며 `NWConnection`을 만들지 않습니다.
 - 선택 흐름 결과는 `wireguard-transport-unavailable`과 `inconclusive`로 기록합니다. VPN 경로 성공으로 올리지 않습니다.
-- 정리 순서는 새 흐름 거부 → Provider 중단 → 시제품 설정 제거 → 통제 연결 확인입니다.
+- 정리 순서는 새 흐름 거부 → Provider 중단 확인 → 소유 manager 전건 제거 → manager 0건 재조회 → DNS·IPv4·IPv6 기준선 비교입니다.
+- `ProviderFlowBridge`는 Provider 투영부터 신원 검증·정책·최종 Bool·가려진 결과까지 한 경로로 연결합니다. 통제 흐름도 `directPass` 결과를 남긴 뒤 `false`를 반환합니다.
+- 실제 TCP·UDP 흐름은 서로 다른 번들 식별자를 가진 Selected/Control Traffic Harness가 만들며, `NWConnection`은 하네스 지원 코드 한 곳에서만 사용합니다.
 
 ## 남은 실제 서명 게이트
 

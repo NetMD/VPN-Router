@@ -1,13 +1,29 @@
 import Foundation
 
 public protocol SystemExtensionActivating: Sendable {
-    func activate() async throws
+    func activate() async throws -> SystemExtensionActivationOutcome
+}
+
+public enum SystemExtensionActivationOutcome: Equatable, Sendable {
+    case completed
+    case willCompleteAfterReboot
 }
 
 public protocol TransparentProxyControlling: Sendable {
     func start() async throws
+    func startAndWaitUntilConnected(timeout: Duration) async throws
     func stopProvider() async throws
+    func stopAndWaitUntilDisconnected(timeout: Duration) async throws
     func removeOwnedConfiguration() async throws
+    func removeAllOwnedConfigurations() async throws -> Int
+    func ownedConfigurationCount() async throws -> Int
+}
+
+public extension TransparentProxyControlling {
+    func startAndWaitUntilConnected(timeout: Duration) async throws { try await start() }
+    func stopAndWaitUntilDisconnected(timeout: Duration) async throws { try await stopProvider() }
+    func removeAllOwnedConfigurations() async throws -> Int { try await removeOwnedConfiguration(); return 1 }
+    func ownedConfigurationCount() async throws -> Int { 0 }
 }
 
 @MainActor
@@ -24,6 +40,22 @@ public struct SelectedTestAppIdentity: Equatable, Sendable {
     public init(signingIdentifier: String, teamIdentifier: String) {
         self.signingIdentifier = signingIdentifier
         self.teamIdentifier = teamIdentifier
+    }
+}
+
+/// 설계상 제어 경로 판정은 Host 자신이 만든 새 흐름 1건을 Provider가 directPass 하는지로 확인합니다.
+/// 이 흐름이 없으면 signedMac 판정의 controlPlane 관찰이 비어 INCONCLUSIVE로 남습니다.
+public protocol ControlPlaneFlowProbing: Sendable {
+    func probeControlPlaneFlow() async
+}
+
+public struct LocalFlowControlPlaneProbe: ControlPlaneFlowProbing {
+    private let trigger = LocalFlowTrigger()
+
+    public init() {}
+
+    public func probeControlPlaneFlow() async {
+        _ = await trigger.trigger(.tcp)
     }
 }
 
