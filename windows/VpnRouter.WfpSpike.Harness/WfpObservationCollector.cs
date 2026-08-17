@@ -29,11 +29,8 @@ public sealed class WfpObservationCollector(int firstCase, int lastCase)
         return new(value.CaseId, value.Outcome, value.FailureCode, DateTimeOffset.UtcNow);
     }
 
-    public static bool IsValidCombination(WfpSpikeOutcome outcome, WfpSpikeResultCode code) => outcome switch
-    {
-        WfpSpikeOutcome.PASS => code == WfpSpikeResultCode.NONE,
-        WfpSpikeOutcome.FAIL => code != WfpSpikeResultCode.NONE,
-        WfpSpikeOutcome.NOT_RUN => code is WfpSpikeResultCode.PACKAGE_IDENTITY_UNAVAILABLE or WfpSpikeResultCode.OWNER_ABORTED or WfpSpikeResultCode.ENVIRONMENT_UNAVAILABLE,
-        _ => false
-    };
+    // 판정 계약을 여기에 다시 적지 않고 한 곳(WfpVerdictContract)에 위임합니다 (설계 C-1 · R-02).
+    // 공개 이름과 서명은 그대로 둡니다 — OwnerHarnessRunner 와 집중 시험이 이 이름으로 부릅니다.
+    public static bool IsValidCombination(WfpSpikeOutcome outcome, WfpSpikeResultCode code) =>
+        WfpVerdictContract.IsValidCombination(outcome, code);
 }

@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "startedAtUtc": "2026-08-10T00:00:00Z",
   "completedAtUtc": "2026-08-10T00:00:01Z",
   "mode": "DRY_RUN",
@@ -9,6 +9,7 @@
   "passCount": 0,
   "failCount": 0,
   "notRunCount": 0,
+  "inconclusiveCount": 0,
   "cleanupOutcome": "NOT_RUN",
   "cleanupFailureCode": "NONE",
   "cases": []

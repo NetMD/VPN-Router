@@ -282,7 +282,9 @@ if ($IncludeWfpSpike) {
     }
     finally { $fixtureHash.Dispose() }
     $featurePaths = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-    @("windows\VpnRouter.WfpSpike", "windows\VpnRouter.WfpSpike.Harness", "scripts\windows\fixtures\wfp-spike") | ForEach-Object {
+    # test-wfp-app-routing-spike.ps1 의 Get-FeatureManifest 와 같은 목록이다.
+    # 한쪽만 고치면 FEATURE_MANIFEST_MISMATCH 로 자동 검사가 끊긴다 (R4 설계 §6.4).
+    @("windows\VpnRouter.WfpSpike", "windows\VpnRouter.WfpSpike.Harness", "scripts\windows\fixtures\wfp-spike", "scripts\windows\wfp-observation") | ForEach-Object {
         Get-ChildItem -LiteralPath (Join-Path $repoRoot $_) -Recurse -File |
             Where-Object { $_.FullName -notmatch '[\\/](?:bin|obj)[\\/]' } |
             ForEach-Object { [void]$featurePaths.Add($_.FullName.Substring($repoRoot.Length).TrimStart([char[]]"\/").Replace("\", "/")) }

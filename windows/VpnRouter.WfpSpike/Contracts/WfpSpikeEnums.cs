@@ -2,7 +2,9 @@ namespace VpnRouter.WfpSpike.Contracts;
 
 public enum WfpAppIdentityKind { DesktopAppId, PackageId }
 public enum WfpIpVersion { IPv4, IPv6 }
-public enum WfpSpikeOutcome { PASS, FAIL, NOT_RUN }
+// INCONCLUSIVE 는 맨 뒤에 둡니다. 앞에 넣으면 기존 값의 정수가 밀립니다 (설계 R-01).
+public enum WfpSpikeOutcome { PASS, FAIL, NOT_RUN, INCONCLUSIVE }
+// 최종 판정 어휘는 3값 그대로입니다. INCONCLUSIVE 를 넣지 않습니다 (설계 §15 #1).
 public enum WfpSpikeVerdict { PASS, FAIL, PARTIAL }
 
 public enum WfpSpikeResultCode

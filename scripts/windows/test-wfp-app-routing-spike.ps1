@@ -5,7 +5,10 @@ param(
     [uint32]$LiveInterfaceIndex,
     [string]$LiveExecutablePath,
     [AllowEmptyString()][string]$LivePackageFamilyName,
-    [ValidateLength(0, 65535)][string]$LiveObservationJson
+    [ValidateLength(0, 65535)][string]$LiveObservationJson,
+    # 측정에 필요한 실제 값(기준 인터페이스 번호·대상 주소·앱 경로 등)이 든 설정 파일.
+    # 저장소 밖에 두고 경로만 받는다. 값은 결과 JSON 에 한 글자도 들어가지 않는다 (설계 §4.1).
+    [string]$MeasurementSettingsPath
 )
 
 $ErrorActionPreference = "Stop"
@@ -19,6 +22,11 @@ $runStartedAtUtc = [DateTimeOffset]::UtcNow
 $runNonce = [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(24)).ToLowerInvariant()
 $privateSpoolBase = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)) "VpnRouter\wfp-spike-spool"
 $temporaryRoot = Join-Path $privateSpoolBase $runNonce
+# 실행 폴더 — 실행 전에 자리를 정한다 (설계 §7.1 / FR-12 / AC-12-1).
+# spool($temporaryRoot)의 형제 폴더여야 한다. spool 아래에 두면 finally 가 지운다.
+$runDirectoryBase = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)) "VpnRouter\wfp-spike-runs"
+$runDirectory = Join-Path $runDirectoryBase ($runStartedAtUtc.ToString("yyyyMMdd-HHmmss") + "Z-" + $runNonce.Substring(0, 8))
+$observationScriptRoot = Join-Path $PSScriptRoot "wfp-observation"
 $markerPath = Join-Path $temporaryRoot "automated-marker.json"
 $automatedMutex = $null
 $automatedMutexAcquired = $false
@@ -39,6 +47,42 @@ $allowedResultCodes = @(
     "PUBLISH_CONTENT_MISSING", "ENVIRONMENT_UNAVAILABLE"
 )
 
+# ---------------------------------------------------------------------------
+# 판정 계약 — PowerShell 거울 (설계 §2.1 · §2.2)
+#
+# 으뜸 출처는 fixtures\wfp-spike\verdict-contract.json 이다. 사람이 고치는 자리는 그 파일뿐이고,
+# 아래 거울이 그 파일과 같은지는 Test-Fixtures 가 기계로 대조한다(Q-05). 다르면
+# VERDICT_CONTRACT_MISMATCH 로 막힌다. 값을 여기서 따로 정하지 않는다.
+#
+# "실패가 아님" 같은 느슨한 조건을 쓰지 않는다. 네 판정값마다 허용 실패 코드를
+# 정확한 목록으로 적는다 — 새 값이 하나 생겨도 조용히 통과하지 못한다.
+# ---------------------------------------------------------------------------
+$verdictContractPath = Join-Path $fixtureRoot "verdict-contract.json"
+$outcomeFailureCodeContract = [ordered]@{
+    PASS         = @("NONE")
+    FAIL         = @("DNS_APP_ID_NOT_PROPAGATED", "UNEXPECTED_INTERFACE")
+    NOT_RUN      = @("ENVIRONMENT_UNAVAILABLE", "OWNER_ABORTED", "PACKAGE_IDENTITY_UNAVAILABLE")
+    INCONCLUSIVE = @("ENVIRONMENT_UNAVAILABLE", "NEW_CONNECTION_NOT_OBSERVED")
+}
+
+function Test-OutcomeFailureCodePair {
+    param(
+        [AllowEmptyString()][string]$Outcome,
+        [AllowEmptyString()][string]$FailureCode
+    )
+
+    if (-not $outcomeFailureCodeContract.Contains($Outcome)) { return $false }
+    return $outcomeFailureCodeContract[$Outcome] -ccontains $FailureCode
+}
+
+# 측정 루프가 쓰는 상태. 값이 정해지는 자리는 아래 한 곳뿐이다.
+$policyAppliedAtUtc = $null
+$measurementDeadlineUtc = $null
+$measurementSettings = $null
+$measurementInterfaceIndex = 0
+$caseMatrixRows = @()
+$caseMatrixTransports = @()
+
 function New-LimitedResult {
     param(
         [ValidateSet("DRY_RUN", "LIVE")][string]$Mode,
@@ -48,7 +92,7 @@ function New-LimitedResult {
     )
 
     return [ordered]@{
-        schemaVersion = 1
+        schemaVersion = 2
         startedAtUtc = $runStartedAtUtc.ToString("O")
         completedAtUtc = [DateTimeOffset]::UtcNow.ToString("O")
         mode = $Mode
@@ -58,6 +102,7 @@ function New-LimitedResult {
         passCount = 0
         failCount = 0
         notRunCount = 0
+        inconclusiveCount = 0
         cleanupOutcome = "NOT_RUN"
         cleanupFailureCode = $FailureCode
         cases = @()
@@ -244,10 +289,12 @@ function Copy-PrivateNewFile {
 function Assert-LimitedResult {
     param([Parameter(Mandatory)]$Result)
 
+    # 13개다. beforeAfterFingerprint 는 여기 없고 $allowed 에만 있다.
+    # Test-Fixtures 의 $expectedSchemaProperties(14개)와 정확히 하나 차이다 (설계 §2.3).
     $required = @(
         "schemaVersion", "startedAtUtc", "completedAtUtc", "mode", "verdict",
-        "caseTotal", "passCount", "failCount", "notRunCount", "cleanupOutcome",
-        "cleanupFailureCode", "cases"
+        "caseTotal", "passCount", "failCount", "notRunCount", "inconclusiveCount",
+        "cleanupOutcome", "cleanupFailureCode", "cases"
     )
     $allowed = @($required) + "beforeAfterFingerprint"
     foreach ($name in $required) {
@@ -259,7 +306,7 @@ function Assert-LimitedResult {
         throw "LIMITED_RESULT_SCHEMA_INVALID"
     }
 
-    if ($Result.schemaVersion -ne 1 -or $Result.caseTotal -lt 0 -or $Result.caseTotal -gt 64) {
+    if ($Result.schemaVersion -ne 2 -or $Result.caseTotal -lt 0 -or $Result.caseTotal -gt 64) {
         throw "LIMITED_RESULT_SCHEMA_INVALID"
     }
     if ($Result.mode -notin @("DRY_RUN", "LIVE") -or
@@ -272,7 +319,9 @@ function Assert-LimitedResult {
         -not [DateTimeOffset]::TryParse([string]$Result.completedAtUtc, [ref]$timestamp)) {
         throw "LIMITED_RESULT_SCHEMA_INVALID"
     }
-    if ($Result.caseTotal -ne ($Result.passCount + $Result.failCount + $Result.notRunCount)) {
+    # 칸이 하나 늘었으므로 항도 하나 늘린다. 이 줄이 빠지면 "관찰 못 함"이
+    # 조용히 사라져도 검사가 통과한다 (설계 §2.3 산술 불변식).
+    if ($Result.caseTotal -ne ($Result.passCount + $Result.failCount + $Result.notRunCount + $Result.inconclusiveCount)) {
         throw "LIMITED_RESULT_SCHEMA_INVALID"
     }
     if ($allowedResultCodes -notcontains [string]$Result.cleanupFailureCode) {
@@ -289,16 +338,15 @@ function Assert-LimitedResult {
         if ([string]$case.caseId -notmatch '^M-(00[1-9]|0[1-5][0-9]|06[0-4])$' -or -not $caseIds.Add([string]$case.caseId)) {
             throw "LIMITED_RESULT_SCHEMA_INVALID"
         }
-        if ($case.outcome -notin @("PASS", "FAIL", "NOT_RUN") -or
+        # 판정 어휘와 실패 코드 짝짓기는 계약 한 곳만 본다. 여기서 값을 다시 적지 않는다.
+        if (@($outcomeFailureCodeContract.Keys) -notcontains [string]$case.outcome -or
             -not [DateTimeOffset]::TryParse([string]$case.observedAtUtc, [ref]$timestamp)) {
             throw "LIMITED_RESULT_SCHEMA_INVALID"
         }
         if ($allowedResultCodes -notcontains [string]$case.failureCode) {
             throw "LIMITED_RESULT_SCHEMA_INVALID"
         }
-        if (($case.outcome -eq "PASS" -and $case.failureCode -ne "NONE") -or
-            ($case.outcome -eq "FAIL" -and $case.failureCode -eq "NONE") -or
-            ($case.outcome -eq "NOT_RUN" -and $case.failureCode -ne "PACKAGE_IDENTITY_UNAVAILABLE")) {
+        if (-not (Test-OutcomeFailureCodePair -Outcome ([string]$case.outcome) -FailureCode ([string]$case.failureCode))) {
             throw "LIMITED_RESULT_SCHEMA_INVALID"
         }
     }
@@ -353,10 +401,12 @@ function Read-BoundedProtocolTask {
 
 function Test-Fixtures {
     $schema = Get-Content -LiteralPath (Join-Path $fixtureRoot "limited-result.schema.json") -Raw | ConvertFrom-Json
+    # 14개다. Assert-LimitedResult 의 $required(13개)와 정확히
+    # beforeAfterFingerprint 하나 차이다. 한쪽 수를 다른 쪽에 쓰면 그 자리에서 막힌다.
     $expectedSchemaProperties = @(
         "schemaVersion", "startedAtUtc", "completedAtUtc", "mode", "verdict",
         "beforeAfterFingerprint", "caseTotal", "passCount", "failCount", "notRunCount",
-        "cleanupOutcome", "cleanupFailureCode", "cases"
+        "inconclusiveCount", "cleanupOutcome", "cleanupFailureCode", "cases"
     )
     if ($schema.additionalProperties -ne $false -or
         @($schema.required).Count -ne $expectedSchemaProperties.Count -or
@@ -367,6 +417,39 @@ function Test-Fixtures {
 
     $safeFixture = Get-Content -LiteralPath (Join-Path $fixtureRoot "dry-run-result.json") -Raw | ConvertFrom-Json
     Assert-LimitedResult -Result $safeFixture
+
+    # --- Q-05 : 판정 계약 파일과 PowerShell 거울이 같은지 (AC-05-4 의 PowerShell 쪽 절반) ---
+    # 사람이 고치는 자리는 verdict-contract.json 하나다. 거울만 고치거나 파일만 고치면
+    # 여기서 막힌다. 네 자리를 각각 고치는 방식으로 돌아가지 않는다.
+    $verdictContract = Get-Content -LiteralPath $verdictContractPath -Raw | ConvertFrom-Json
+    if ($verdictContract.schemaVersion -ne 1) { throw "VERDICT_CONTRACT_MISMATCH" }
+
+    # 같은 값을 두 번 적어도 개수만으로는 못 가린다 —
+    # ["PASS","PASS","FAIL","NOT_RUN"] 은 개수 4에 전부 거울 안에 있는 값이라 그냥 지나간다.
+    # 그래서 먼저 중복을 없앤 뒤 개수를 센다.
+    $contractOutcomes = @(@($verdictContract.outcomes) | Select-Object -Unique)
+    $mirrorOutcomes = @($outcomeFailureCodeContract.Keys)
+    if (@($verdictContract.outcomes).Count -ne $contractOutcomes.Count -or
+        $contractOutcomes.Count -ne $mirrorOutcomes.Count -or
+        @($contractOutcomes | Where-Object { $mirrorOutcomes -notcontains $_ }).Count -ne 0) {
+        throw "VERDICT_CONTRACT_MISMATCH"
+    }
+    foreach ($contractOutcome in $mirrorOutcomes) {
+        $fileCodes = @($verdictContract.failureCodesByOutcome.$contractOutcome | Sort-Object)
+        $mirrorCodes = @($outcomeFailureCodeContract[$contractOutcome] | Sort-Object)
+        if (($fileCodes -join "|") -cne ($mirrorCodes -join "|")) { throw "VERDICT_CONTRACT_MISMATCH" }
+        if (@($fileCodes | Where-Object { $allowedResultCodes -notcontains $_ }).Count -ne 0) {
+            throw "VERDICT_CONTRACT_MISMATCH"
+        }
+    }
+
+    # --- Q-06 : 계약 파일과 JSON Schema 의 outcome 목록이 같은지 ---
+    # JSON Schema 는 함수를 부를 수 없어 값이 겹쳐 적히는 유일한 자리다. 그 하나를 기계가 지킨다.
+    $schemaOutcomes = @($schema.properties.cases.items.properties.outcome.enum)
+    if ($schemaOutcomes.Count -ne $contractOutcomes.Count -or
+        @($schemaOutcomes | Where-Object { $contractOutcomes -notcontains $_ }).Count -ne 0) {
+        throw "VERDICT_CONTRACT_MISMATCH"
+    }
 
     $matrix = Get-Content -LiteralPath (Join-Path $fixtureRoot "case-matrix.json") -Raw | ConvertFrom-Json
     if (@($matrix.rowsInOrder).Count -ne 16 -or @($matrix.transportsInOrder).Count -ne 4) {
@@ -449,6 +532,39 @@ function Test-Fixtures {
     $rejected = $false
     try { Assert-LimitedResult -Result $cleanupFailResult } catch { $rejected = $true }
     if (-not $rejected) { throw "NEGATIVE_RESULT_GATE_INVALID" }
+
+    # --- Q-01 : inconclusiveCount 칸이 빠진 결과는 거부되어야 한다 ---
+    # 이 시험이 통과해야 "필수 항목 12 -> 13" 이 실제로 들어갔다고 말할 수 있다.
+    $missingCountResult = $safeFixture | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+    $missingCountResult.PSObject.Properties.Remove("inconclusiveCount")
+    $rejected = $false
+    try { Assert-LimitedResult -Result $missingCountResult } catch { $rejected = $true }
+    if (-not $rejected) { throw "NEGATIVE_RESULT_GATE_INVALID" }
+
+    # --- Q-02 : caseTotal 이 네 칸 합과 1 어긋나면 거부되어야 한다 ---
+    $sumMismatchResult = $safeFixture | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+    $sumMismatchResult.caseTotal = 1
+    $rejected = $false
+    try { Assert-LimitedResult -Result $sumMismatchResult } catch { $rejected = $true }
+    if (-not $rejected) { throw "NEGATIVE_RESULT_GATE_INVALID" }
+
+    # --- Q-03 : INCONCLUSIVE 에 "재서 틀렸다" 코드를 붙이면 거부되어야 한다 ---
+    # 붙일 수 있게 두면 FAIL 을 피해 가는 뒷문이 된다.
+    $inconclusiveBackdoor = $safeFixture | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+    $inconclusiveBackdoor.caseTotal = 1; $inconclusiveBackdoor.inconclusiveCount = 1
+    $inconclusiveBackdoor.cases = @([pscustomobject]@{ caseId = "M-001"; outcome = "INCONCLUSIVE"; failureCode = "UNEXPECTED_INTERFACE"; observedAtUtc = [DateTimeOffset]::UtcNow.ToString("O") })
+    $rejected = $false
+    try { Assert-LimitedResult -Result $inconclusiveBackdoor } catch { $rejected = $true }
+    if (-not $rejected) { throw "NEGATIVE_RESULT_GATE_INVALID" }
+
+    # --- Q-04 : FAIL 에 "관찰 못 함" 코드를 붙이면 거부되어야 한다 ---
+    # 붙일 수 있게 두면 "관찰 못 함"과 "재서 틀렸음"이 한 칸에 섞인다.
+    $failInconclusiveCode = $safeFixture | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+    $failInconclusiveCode.caseTotal = 1; $failInconclusiveCode.failCount = 1
+    $failInconclusiveCode.cases = @([pscustomobject]@{ caseId = "M-001"; outcome = "FAIL"; failureCode = "NEW_CONNECTION_NOT_OBSERVED"; observedAtUtc = [DateTimeOffset]::UtcNow.ToString("O") })
+    $rejected = $false
+    try { Assert-LimitedResult -Result $failInconclusiveCode } catch { $rejected = $true }
+    if (-not $rejected) { throw "NEGATIVE_RESULT_GATE_INVALID" }
 }
 
 function Get-NetworkFingerprint {
@@ -478,6 +594,45 @@ function Get-NetworkFingerprint {
     return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes))
 }
 
+# ---------------------------------------------------------------------------
+# 실행 폴더 (설계 §7.1 · §7.2 / FR-12 / AC-12-1 · AC-12-2)
+#
+# spool($temporaryRoot)의 형제 폴더다. finally(:1561-1565)가 지우는 것은 spool 이고
+# 이 폴더는 그 밖이라 실기가 끝나도 남는다.
+# 원문 진단과 관찰 기록이 들어가므로 spool 과 같은 방식으로 잠근다.
+# 결과 JSON 에는 이 폴더의 내용이 한 글자도 들어가지 않는다.
+# ---------------------------------------------------------------------------
+function New-RunDirectory {
+    if (-not (Test-Path -LiteralPath $runDirectoryBase)) {
+        [void][IO.Directory]::CreateDirectory($runDirectoryBase)
+    }
+    # 폴더가 이미 있어도 매번 잠그고 매번 확인한다. 형제인 spool(:237-242)과 같은 방식이다.
+    # 새로 만들 때만 잠그면, 지난 실행이나 다른 도구가 만들어 둔 폴더는 잠기지 않은 채로 쓰인다.
+    Set-PrivateAcl -Path $runDirectoryBase -Kind Directory
+    Assert-NoReparsePath -Path $runDirectoryBase
+    Assert-PrivateAcl -Path $runDirectoryBase
+    if (Test-Path -LiteralPath $runDirectory) { throw "RUN_DIRECTORY_ALREADY_EXISTS" }
+    [void][IO.Directory]::CreateDirectory($runDirectory)
+    Set-PrivateAcl -Path $runDirectory -Kind Directory
+    Assert-NoReparsePath -Path $runDirectory
+    Assert-PrivateAcl -Path $runDirectory
+}
+
+function Write-RunDirectoryText {
+    param(
+        [Parameter(Mandatory)][string]$FileName,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Text,
+        [switch]$Append
+    )
+
+    if (-not (Test-Path -LiteralPath $runDirectory -PathType Container)) { return }
+    $fullPath = Assert-PathUnderRoot -Path (Join-Path $runDirectory $FileName) -Root $runDirectory
+    $encoding = [Text.UTF8Encoding]::new($false)
+    if ($Append) { [IO.File]::AppendAllText($fullPath, $Text, $encoding) }
+    else { [IO.File]::WriteAllText($fullPath, $Text, $encoding) }
+    try { Set-PrivateAcl -Path $fullPath -Kind File } catch { }
+}
+
 function Invoke-LoggedCommand {
     param(
         [Parameter(Mandatory)][string]$Name,
@@ -485,17 +640,32 @@ function Invoke-LoggedCommand {
     )
 
     $logPath = Join-Path $temporaryRoot ("step-" + $Name + ".tmp")
+    $stepFailed = $true
     try {
         & $Command *> $logPath
-        if ($LASTEXITCODE -is [int]) {
-            return [int]$LASTEXITCODE
-        }
-        return 0
+        $exitCode = if ($LASTEXITCODE -is [int]) { [int]$LASTEXITCODE } else { 0 }
+        $stepFailed = $exitCode -ne 0
+        return $exitCode
     }
     catch {
+        # 실패한 단계와 원인을 지우지 않는다. "C++ 컴파일러가 없다"가
+        # "게시물이 없다"로 바뀌어 나오는 일을 막는다 (AC-12-2).
+        $stepFailed = $true
+        Write-RunDirectoryText -FileName "step-failures.txt" -Append -Text (
+            "{0} step={1} error={2}`n" -f [DateTimeOffset]::UtcNow.ToString("O"), $Name, ($_.Exception.Message -replace "\s+", " "))
         return 1
     }
     finally {
+        # 성공했으면 지금처럼 그냥 지운다. 실패했을 때만 원문을 실행 폴더로 옮긴다.
+        if ($stepFailed -and (Test-Path -LiteralPath $logPath -PathType Leaf) -and
+            (Test-Path -LiteralPath $runDirectory -PathType Container)) {
+            try {
+                $destination = Assert-PathUnderRoot -Path (Join-Path $runDirectory ("step-" + $Name + ".log")) -Root $runDirectory
+                Copy-Item -LiteralPath $logPath -Destination $destination -Force
+                Set-PrivateAcl -Path $destination -Kind File
+            }
+            catch { }
+        }
         Remove-Item -LiteralPath $logPath -Force -ErrorAction SilentlyContinue
     }
 }
@@ -617,9 +787,15 @@ function Get-StaticImportClosure {
 
 function Get-FeatureManifest {
     $files = [Collections.Generic.List[IO.FileInfo]]::new()
+    # 관찰 스크립트는 결과를 만드는 코드다. 자동 검사를 통과한 뒤 실기 직전에 바뀌면
+    # "이 값은 기계가 관찰한 것"이라는 주장이 무너진다. 그래서 무결성 사슬에 넣는다.
+    # 폴더 단위로 넣으므로 여섯 번째 스크립트를 나중에 더해도 저절로 들어간다.
+    # build-portable.ps1:285 의 같은 목록과 반드시 함께 고친다 — 한쪽만 고치면
+    # Assert-FeatureManifestMatchesCurrent 가 FEATURE_MANIFEST_MISMATCH 를 던진다 (설계 §6.4).
     foreach ($directory in @(
         (Join-Path $repoRoot "windows\VpnRouter.WfpSpike"),
-        (Join-Path $repoRoot "windows\VpnRouter.WfpSpike.Harness")
+        (Join-Path $repoRoot "windows\VpnRouter.WfpSpike.Harness"),
+        (Join-Path $repoRoot "scripts\windows\wfp-observation")
     )) {
         Get-ChildItem -LiteralPath $directory -Recurse -File |
             Where-Object { $_.FullName -notmatch '\\(?:bin|obj)\\' } |
@@ -828,8 +1004,12 @@ function Test-SpikeExtraction {
     $abiEvidencePath = Join-Path $payloadRoot "wfp-sdk-abi-x64.json"
     $gateEvidencePath = Join-Path $payloadRoot "wfp-gate-evidence.json"
     $abiProbeSource = Join-Path $repoRoot "windows\VpnRouter.WfpSpike\Native\WfpSdkAbiProbe.cpp"
+    # AC-12-3: wfp-sdk-abi-x64.json 이 없으면 실패한다.
+    # 지금은 build-portable.ps1 이 늘 만들어 주어 이 구멍이 안 열리지만,
+    # 증거 사슬의 한 칸이 조용히 지나갈 수 있는 자리를 실기 전에 막는다.
     if (-not (Test-Path -LiteralPath (Join-Path $extracted.FullName ".complete")) -or
         -not (Test-Path -LiteralPath $harnessExecutable) -or
+        -not (Test-Path -LiteralPath $abiEvidencePath) -or
         -not (Test-Path -LiteralPath $gateEvidencePath) -or
         -not (Test-Path -LiteralPath $abiProbeSource)) {
         throw "PUBLISH_CONTENT_MISSING"
@@ -872,11 +1052,9 @@ function Test-SpikeExtraction {
         ArtifactSha256 = (Get-FileHash -LiteralPath $artifact -Algorithm SHA256).Hash.ToLowerInvariant()
         PublishManifestSha256 = $expectedManifestHash
         HarnessSha256 = (Get-FileHash -LiteralPath $harnessExecutable -Algorithm SHA256).Hash.ToLowerInvariant()
-        AbiEvidenceSha256 = if (Test-Path -LiteralPath $abiEvidencePath) {
-            (Get-FileHash -LiteralPath $abiEvidencePath -Algorithm SHA256).Hash.ToLowerInvariant()
-        } else {
-            Get-Sha256Text -Text "ABI_EVIDENCE_NOT_AVAILABLE"
-        }
+        # 대체 해시 분기를 없앴다 (AC-12-3). 위 필수 존재 검사를 지났으면
+        # 이 자리에 올 때 파일이 반드시 있다. 없는 것을 상수 해시로 덮지 않는다.
+        AbiEvidenceSha256 = (Get-FileHash -LiteralPath $abiEvidencePath -Algorithm SHA256).Hash.ToLowerInvariant()
         AbiProbeSourceSha256 = (Get-FileHash -LiteralPath $abiProbeSource -Algorithm SHA256).Hash.ToLowerInvariant()
         WorktreeFingerprint = ([string]$gateEvidence.worktreeFingerprint).ToLowerInvariant()
         ScriptSha256 = ([string]$gateEvidence.scriptSha256).ToLowerInvariant()
@@ -973,35 +1151,287 @@ function Read-BoundedValue {
     return $value
 }
 
-function Read-LimitedObservation {
+# ---------------------------------------------------------------------------
+# 측정 (설계 §4.2 · §7.3 / FR-11 · FR-14 / AC-11-1 · NFR-04)
+#
+# 값을 미리 넘기면 그 값은 측정이 아니다. -LiveObservationJson 으로 들어온 값은
+# 하네스를 띄우기 "전"에 정해진 값이고, 스크립트는 그 값이 기계에서 왔는지
+# 확인할 수단이 없다. 그래서 그 경로로 들어온 값의 출처는 HUMAN 이다.
+# 본 실행은 그 인자를 쓰지 않고 정책이 걸린 창 안에서 기계가 잰다 (출처 MACHINE).
+# ---------------------------------------------------------------------------
+function New-CaseObservation {
+    param(
+        [Parameter(Mandatory)][string]$CaseId,
+        [Parameter(Mandatory)][string]$Outcome,
+        [Parameter(Mandatory)][string]$FailureCode,
+        [Parameter(Mandatory)][ValidateSet("MACHINE", "HUMAN")][string]$Source,
+        [AllowEmptyString()][string]$Rationale = "",
+        [hashtable]$Evidence = @{}
+    )
+
+    # 계약에 없는 짝은 만들지 않는다. 여기서 막히면 그 자리를 고쳐야 한다.
+    if (-not (Test-OutcomeFailureCodePair -Outcome $Outcome -FailureCode $FailureCode)) {
+        throw "LIVE_INPUT_INVALID"
+    }
+
+    # 관찰값·시각·출처·근거 문장은 실행 폴더와 실행표에만 남는다.
+    $record = [ordered]@{
+        caseId        = $CaseId
+        outcome       = $Outcome
+        failureCode   = $FailureCode
+        source        = $Source
+        observedAtUtc = [DateTimeOffset]::UtcNow.ToString("O")
+        rationale     = $Rationale
+    }
+    foreach ($key in @($Evidence.Keys)) { $record[$key] = $Evidence[$key] }
+    Write-RunDirectoryText -FileName ("observation-" + $CaseId + ".json") -Text ($record | ConvertTo-Json -Depth 6)
+
+    # 하네스에는 세 칸만 보낸다. WfpObservationCollector.cs:21 이 정확히 세 칸을 요구하고,
+    # 근거 문장이 결과에 들어가면 금지 낱말 검사에 걸려 결과 전체가 폐기된다 (BL-07).
+    return [ordered]@{
+        caseId      = $CaseId
+        outcome     = $Outcome
+        failureCode = $FailureCode
+    }
+}
+
+function Invoke-ObservationScript {
+    param(
+        [Parameter(Mandatory)][string]$ScriptName,
+        [Parameter(Mandatory)][hashtable]$Arguments
+    )
+
+    # 글자를 이어 붙여 명령줄을 만들지 않고, 글자를 명령으로 되돌려 실행하지도 않는다.
+    # & <경로> 로 부르고 인자는 하나씩 넘긴다 (G-09 · 회귀 확인 GR-15).
+    $scriptPath = Join-Path $observationScriptRoot $ScriptName
+    if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) { return $null }
+    try {
+        $output = & $scriptPath @Arguments
+        $lines = @($output | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+        if ($lines.Count -eq 0) { return $null }
+        return ([string]$lines[-1] | ConvertFrom-Json)
+    }
+    catch {
+        Write-RunDirectoryText -FileName "step-failures.txt" -Append -Text (
+            "{0} tool={1} error={2}`n" -f [DateTimeOffset]::UtcNow.ToString("O"), $ScriptName, ($_.Exception.Message -replace "\s+", " "))
+        return $null
+    }
+}
+
+function Measure-LimitedObservation {
     param([Parameter(Mandatory)][string]$CaseId)
 
-        $caseId = $CaseId
-        if ($providedLiveObservations.ContainsKey($caseId)) {
-            return $providedLiveObservations[$caseId]
-        }
-        $outcome = (Read-BoundedValue -Prompt "$caseId 결과(PASS/FAIL/NOT_RUN)").ToUpperInvariant()
-        if ($outcome -notin @("PASS", "FAIL", "NOT_RUN")) { throw "LIVE_INPUT_INVALID" }
-        $failureCode = (Read-BoundedValue -Prompt "$caseId 제한 실패 코드").ToUpperInvariant()
-        if ($allowedResultCodes -notcontains $failureCode) { throw "LIVE_INPUT_INVALID" }
-        if (($outcome -eq "PASS" -and $failureCode -ne "NONE") -or
-            ($outcome -eq "FAIL" -and $failureCode -eq "NONE") -or
-            ($outcome -eq "NOT_RUN" -and $failureCode -ne "PACKAGE_IDENTITY_UNAVAILABLE")) {
-            throw "LIVE_INPUT_INVALID"
-        }
-        return [ordered]@{
-            caseId = $caseId
-            outcome = $outcome
-            failureCode = $failureCode
-        }
+    # --- 1 : 정책이 걸린 시각이 없으면 아무것도 만들지 않는다 ---------------
+    # 시각 없이 분류하면 정책 적용 전 연결이 섞인다. 그것은 측정이 아니다.
+    if ($null -eq $policyAppliedAtUtc) { throw "LIVE_PROTOCOL_INVALID" }
+
+    $number = [int]$CaseId.Substring(2)
+
+    # --- 2 : 패키지 사례 -----------------------------------------------------
+    if ($number -ge 33) {
+        return New-CaseObservation -CaseId $CaseId -Outcome "NOT_RUN" -FailureCode "PACKAGE_IDENTITY_UNAVAILABLE" -Source "MACHINE" `
+            -Rationale "WfpNativeApi.cs:27 이 패키지 신원 변환을 열지 않아 코드 수준에서 NOT_RUN 만 가능함"
+    }
+
+    if ($null -eq $measurementSettings -or $caseMatrixRows.Count -ne 16 -or $caseMatrixTransports.Count -ne 4) {
+        return New-CaseObservation -CaseId $CaseId -Outcome "INCONCLUSIVE" -FailureCode "ENVIRONMENT_UNAVAILABLE" -Source "MACHINE" `
+            -Rationale "측정 설정 또는 사례 행렬이 없어 관찰 수단이 성립하지 않음"
+    }
+
+    # 행과 전송 방식은 case-matrix.json 에서 뽑는다. 그 파일은 한 글자도 고치지 않는다.
+    $row = $caseMatrixRows[[math]::Floor(($number - 1) / 4)]
+    $transport = [string]$caseMatrixTransports[($number - 1) % 4]
+    $ipVersion = [string]$row.ipVersion
+    $expectedPath = [string]$row.expectedPath
+    $isDns = $transport -eq "DNS"
+    $isIpv6 = $ipVersion -eq "IPv6"
+
+    # --- 3 : 터널이 IPv6 를 안 주면 IPv6 사례는 잴 수 없다. 재시도하지 않는다 ---
+    if ($isIpv6 -and [string]$measurementSettings.ipv6Verdict -ne "MEASURE") {
+        return New-CaseObservation -CaseId $CaseId -Outcome "INCONCLUSIVE" -FailureCode "ENVIRONMENT_UNAVAILABLE" -Source "MACHINE" `
+            -Rationale ("이 회선과 시험용 터널 모두 IPv6 전역 주소와 ::/0 경로를 주지 않아 관찰 수단이 성립하지 않음 (관찰 시각: {0})" -f [DateTimeOffset]::UtcNow.ToString("O"))
+    }
+
+    # --- 4 : 관찰 A 가 "환경"이면 안 고른 앱의 기대 경로가 성립하지 않는다 ---
+    if ([string]$measurementSettings.observationAPath -eq "VPN" -and $expectedPath -eq "BASELINE") {
+        return New-CaseObservation -CaseId $CaseId -Outcome "INCONCLUSIVE" -FailureCode "ENVIRONMENT_UNAVAILABLE" -Source "MACHINE" `
+            -Rationale ("터널이 기본 경로를 통째로 가져가 정책과 무관하게 모든 앱이 VPN 으로 나감. 안 고른 앱의 기대 경로 BASELINE 이 이 환경에서 성립하지 않음 (관찰 시각: {0})" -f [DateTimeOffset]::UtcNow.ToString("O"))
+    }
+
+    # --- 5 : 남은 예산이 없으면 재지 않고 채운다 ----------------------------
+    # 하네스를 죽게 두지 않는다. 30분에 걸려 하네스가 죽으면 정리가 안 돌아 정책이 남는다.
+    if ($null -ne $measurementDeadlineUtc -and [DateTimeOffset]::UtcNow -ge $measurementDeadlineUtc) {
+        return New-CaseObservation -CaseId $CaseId -Outcome "INCONCLUSIVE" -FailureCode "ENVIRONMENT_UNAVAILABLE" -Source "MACHINE" `
+            -Rationale ("측정 마감(정책 적용 뒤 20분)을 넘겨 재지 않음 (마감: {0})" -f $measurementDeadlineUtc.ToString("O"))
+    }
+
+    # --- 6 : 잰다 -----------------------------------------------------------
+    $caseStopwatch = [Diagnostics.Stopwatch]::StartNew()
+    $policyText = $policyAppliedAtUtc.ToString("O")
+    $baselineInterfaceIndex = [uint32]$measurementSettings.baselineInterfaceIndex
+    $targetAddress = if ($isIpv6) { [string]$measurementSettings.ipv6TargetAddress } else { [string]$measurementSettings.ipv4TargetAddress }
+    $targetPort = if ($isIpv6) { [int]$measurementSettings.ipv6TargetPort } else { [int]$measurementSettings.ipv4TargetPort }
+    $dnsServer = if ($isIpv6) { [string]$measurementSettings.ipv6DnsServer } else { [string]$measurementSettings.ipv4DnsServer }
+    $appPath = if ([string]$row.identity -like "SELECTED_*") { [string]$measurementSettings.selectedAppPath } else { [string]$measurementSettings.unselectedAppPath }
+    $observedAddress = if ($isDns) { $dnsServer } else { $targetAddress }
+    $observedPort = if ($isDns) { 53 } else { $targetPort }
+
+    # ① 관찰기를 잡기 모드로 시작
+    $startResult = Invoke-ObservationScript -ScriptName "Get-WfpSpikeInterface.ps1" -Arguments @{
+        Mode                   = "Start"
+        VpnInterfaceIndex      = $measurementInterfaceIndex
+        BaselineInterfaceIndex = $baselineInterfaceIndex
+        TargetAddress          = $observedAddress
+        TargetPort             = $observedPort
+        Transport              = $transport
+        RunDirectory           = $runDirectory
+        CaseId                 = $CaseId
+        PolicyAppliedAtUtc     = $policyText
+    }
+    if ($null -eq $startResult -or [string]$startResult.status -ne "OK") {
+        $caseStopwatch.Stop()
+        return New-CaseObservation -CaseId $CaseId -Outcome "INCONCLUSIVE" -FailureCode "ENVIRONMENT_UNAVAILABLE" -Source "MACHINE" `
+            -Rationale "관찰기를 시작하지 못해 이 사례를 재지 못함" `
+            -Evidence @{ transport = $transport; ipVersion = $ipVersion; expectedPath = $expectedPath; observerStatus = "START_FAILED" }
+    }
+
+    # ② 흐름을 한 개 만든다
+    $flowArguments = @{
+        AppPath            = $appPath
+        Transport          = $transport
+        IpVersion          = $ipVersion
+        PolicyAppliedAtUtc = $policyText
+        RunDirectory       = $runDirectory
+        TimeoutSeconds     = 45
+    }
+    if ($isDns) {
+        $flowArguments["DnsServer"] = $dnsServer
+        $flowArguments["QueryName"] = [string]$measurementSettings.queryName
+    }
+    else {
+        $flowArguments["TargetAddress"] = $targetAddress
+        $flowArguments["TargetPort"] = $targetPort
+    }
+    # 행이 "겹치는 경로"를 요구하면 기준 인터페이스로 가는 /32(또는 /128) 경로를 심어
+    # WFP 정책과 경쟁시킨다. 이것이 R2-AC-06-4 가 재려던 것이다.
+    if ([bool]$row.matchingHostRoute) {
+        $flowArguments["InstallHostRoute"] = $true
+        $flowArguments["HostRouteInterfaceIndex"] = $baselineInterfaceIndex
+    }
+    $flowResult = Invoke-ObservationScript -ScriptName "New-WfpSpikeFlow.ps1" -Arguments $flowArguments
+
+    # ③ 관찰기를 멈추고 판정
+    $stopArguments = @{
+        Mode                   = "Stop"
+        VpnInterfaceIndex      = $measurementInterfaceIndex
+        BaselineInterfaceIndex = $baselineInterfaceIndex
+        TargetAddress          = $observedAddress
+        TargetPort             = $observedPort
+        Transport              = $transport
+        RunDirectory           = $runDirectory
+        CaseId                 = $CaseId
+        PolicyAppliedAtUtc     = $policyText
+    }
+    if ($null -ne $flowResult -and $null -ne $flowResult.processId) {
+        $stopArguments["FlowProcessId"] = [uint32]$flowResult.processId
+    }
+    $stopResult = Invoke-ObservationScript -ScriptName "Get-WfpSpikeInterface.ps1" -Arguments $stopArguments
+    $caseStopwatch.Stop()
+
+    $flowStatus = if ($null -eq $flowResult) { "ERROR" } else { [string]$flowResult.status }
+    $flowReason = if ($null -eq $flowResult) { "TOOL_UNAVAILABLE" } else { [string]$flowResult.failureReason }
+    $observerStatus = if ($null -eq $stopResult) { "ERROR" } else { [string]$stopResult.status }
+    $observedPath = if ($null -eq $stopResult) { "UNOBSERVED" } else { [string]$stopResult.observedPath }
+
+    $evidence = @{
+        transport              = $transport
+        ipVersion              = $ipVersion
+        identity               = [string]$row.identity
+        expectedPath           = $expectedPath
+        observedPath           = $observedPath
+        observedInterfaceIndex = if ($null -eq $stopResult) { $null } else { $stopResult.observedInterfaceIndex }
+        packetCount            = if ($null -eq $stopResult) { 0 } else { $stopResult.packetCount }
+        method                 = if ($null -eq $stopResult) { "PKTMON" } else { [string]$stopResult.method }
+        hostRouteInstalled     = if ($null -eq $flowResult) { $false } else { [bool]$flowResult.hostRouteInstalled }
+        newConnectionCreated   = if ($null -eq $flowResult) { $false } else { [bool]$flowResult.newConnectionCreated }
+        flowStatus             = $flowStatus
+        flowFailureReason      = $flowReason
+        observerStatus         = $observerStatus
+        elapsedSeconds         = [math]::Round($caseStopwatch.Elapsed.TotalSeconds, 3)
+    }
+
+    # 사례 하나의 상한 60초 (E-11). 넘으면 그 사례만 관찰 못 함으로 닫는다.
+    if ($caseStopwatch.Elapsed.TotalSeconds -ge 60) {
+        return New-CaseObservation -CaseId $CaseId -Outcome "INCONCLUSIVE" -FailureCode "NEW_CONNECTION_NOT_OBSERVED" -Source "MACHINE" `
+            -Rationale "사례 하나의 상한 60초를 넘겨 관찰을 마치지 못함" -Evidence $evidence
+    }
+
+    # 관찰기 자체가 못 돌았으면 "관찰 못 함"이 아니라 "수단이 안 섰다"이다 (§4.2 매핑 표).
+    if ($observerStatus -ne "OK") {
+        return New-CaseObservation -CaseId $CaseId -Outcome "INCONCLUSIVE" -FailureCode "ENVIRONMENT_UNAVAILABLE" -Source "MACHINE" `
+            -Rationale "관찰기가 정상으로 끝나지 않아 이 사례를 재지 못함" -Evidence $evidence
+    }
+
+    # 흐름을 못 만들었으면 잰 것이 없다. 시간이 모자라 못 본 것과 도구가 안 선 것을 가른다.
+    if ($flowStatus -ne "OK") {
+        $flowFailureCode = if ($flowReason -eq "FLOW_TIMEOUT") { "NEW_CONNECTION_NOT_OBSERVED" } else { "ENVIRONMENT_UNAVAILABLE" }
+        return New-CaseObservation -CaseId $CaseId -Outcome "INCONCLUSIVE" -FailureCode $flowFailureCode -Source "MACHINE" `
+            -Rationale "흐름 발생기가 새 연결을 만들지 못함" -Evidence $evidence
+    }
+
+    if ($observedPath -ceq "UNOBSERVED") {
+        return New-CaseObservation -CaseId $CaseId -Outcome "INCONCLUSIVE" -FailureCode "NEW_CONNECTION_NOT_OBSERVED" -Source "MACHINE" `
+            -Rationale "정책이 걸린 창 안에서 새 연결이 어느 인터페이스로 나갔는지 관찰되지 않음" -Evidence $evidence
+    }
+
+    if ($observedPath -ceq $expectedPath) {
+        return New-CaseObservation -CaseId $CaseId -Outcome "PASS" -FailureCode "NONE" -Source "MACHINE" `
+            -Rationale "기대한 경로가 실제로 관찰됨" -Evidence $evidence
+    }
+
+    # 재서 답이 나왔는데 기대와 달랐다. 이것은 FAIL 이고 INCONCLUSIVE 가 아니다.
+    $mismatchCode = if ($isDns) { "DNS_APP_ID_NOT_PROPAGATED" } else { "UNEXPECTED_INTERFACE" }
+    return New-CaseObservation -CaseId $CaseId -Outcome "FAIL" -FailureCode $mismatchCode -Source "MACHINE" `
+        -Rationale "관찰된 경로가 기대와 다름" -Evidence $evidence
+}
+
+function Set-PolicyAppliedTimestamp {
+    param([Parameter(Mandatory)][DateTimeOffset]$ReadyAtUtc)
+
+    # 하네스가 READY 를 낸 시각이 곧 "정책이 걸린 시각"이다. 새 배선이 필요 없다 —
+    # 이 값은 지금까지 파싱만 하고 버려지던 값이다 (설계 §7.3 M-1 · BL-08).
+    # 처음 한 번만 정한다. 뒤에서 다시 정하면 측정 마감이 밀린다.
+    if ($null -ne $script:policyAppliedAtUtc) { return }
+    $script:policyAppliedAtUtc = $ReadyAtUtc
+    # 측정 마감 20분. 하네스 대기 상한 30분보다 10분 이르다 —
+    # 30분에 걸려 하네스가 죽으면 정리가 안 돌아 정책이 남는다.
+    $script:measurementDeadlineUtc = $ReadyAtUtc.AddMinutes(20)
+}
+
+function Resolve-LimitedObservation {
+    param([Parameter(Mandatory)][string]$CaseId)
+
+    # 미리 넘어온 값이 있으면 그대로 쓰되 출처를 HUMAN 으로 적는다.
+    # 스크립트는 그 값이 기계에서 왔는지 확인할 수단이 없다 (BL-03 · T-3).
+    if ($providedLiveObservations.ContainsKey($CaseId)) {
+        $provided = $providedLiveObservations[$CaseId]
+        return New-CaseObservation -CaseId $CaseId `
+            -Outcome ([string]$provided.outcome) -FailureCode ([string]$provided.failureCode) -Source "HUMAN" `
+            -Rationale "-LiveObservationJson 으로 미리 넘어온 값. 스크립트는 이 값이 기계에서 왔는지 확인할 수단이 없음"
+    }
+    return Measure-LimitedObservation -CaseId $CaseId
 }
 
 function Initialize-ProvidedLiveObservations {
-    param([Parameter(Mandatory)][string]$Json)
+    param(
+        [Parameter(Mandatory)][string]$Json,
+        # 개수는 상수가 아니다. 패키지 입력이 없으면 32건, 있으면 64건이다.
+        [Parameter(Mandatory)][ValidateSet(32, 64)][int]$ExpectedCount
+    )
 
     try { $items = @($Json | ConvertFrom-Json -Depth 4) }
     catch { throw "LIVE_INPUT_INVALID" }
-    if ($items.Count -ne 32) { throw "LIVE_INPUT_INVALID" }
+    if ($items.Count -ne $ExpectedCount) { throw "LIVE_INPUT_INVALID" }
 
     foreach ($item in $items) {
         $propertyNames = @($item.PSObject.Properties.Name)
@@ -1012,13 +1442,13 @@ function Initialize-ProvidedLiveObservations {
         $caseId = [string]$item.caseId
         $outcome = ([string]$item.outcome).ToUpperInvariant()
         $failureCode = ([string]$item.failureCode).ToUpperInvariant()
-        if ($caseId -notmatch '^M-(00[1-9]|0[12][0-9]|03[0-2])$' -or
+        # 무늬는 M-001~M-064 로 넓히고, 이번 실행에서 실제로 받을 번호인지 따로 본다.
+        if ($caseId -notmatch '^M-(00[1-9]|0[1-5][0-9]|06[0-4])$' -or
+            [int]$caseId.Substring(2) -gt $ExpectedCount -or
             $providedLiveObservations.ContainsKey($caseId) -or
-            $outcome -notin @("PASS", "FAIL", "NOT_RUN") -or
+            @($outcomeFailureCodeContract.Keys) -notcontains $outcome -or
             $allowedResultCodes -notcontains $failureCode -or
-            ($outcome -eq "PASS" -and $failureCode -ne "NONE") -or
-            ($outcome -eq "FAIL" -and $failureCode -eq "NONE") -or
-            ($outcome -eq "NOT_RUN" -and $failureCode -notin @("PACKAGE_IDENTITY_UNAVAILABLE", "OWNER_ABORTED", "ENVIRONMENT_UNAVAILABLE"))) {
+            -not (Test-OutcomeFailureCodePair -Outcome $outcome -FailureCode $failureCode)) {
             throw "LIVE_INPUT_INVALID"
         }
         $providedLiveObservations[$caseId] = [ordered]@{
@@ -1027,7 +1457,7 @@ function Initialize-ProvidedLiveObservations {
             failureCode = $failureCode
         }
     }
-    if ((1..32 | Where-Object { -not $providedLiveObservations.ContainsKey(("M-{0:D3}" -f $_)) }).Count -ne 0) {
+    if ((1..$ExpectedCount | Where-Object { -not $providedLiveObservations.ContainsKey(("M-{0:D3}" -f $_)) }).Count -ne 0) {
         throw "LIVE_INPUT_INVALID"
     }
 }
@@ -1072,6 +1502,8 @@ function Invoke-LiveHarnessStreaming {
         }
         [DateTimeOffset]$readyAt = [DateTimeOffset]::MinValue
         if (-not [DateTimeOffset]::TryParse([string]$ready.readyAtUtc, [ref]$readyAt)) { throw "LIVE_PROTOCOL_INVALID" }
+        # 이 값을 버리지 않고 함수 밖으로 돌려준다. 측정이 이 시각을 기준으로 갈린다.
+        return $readyAt
     }
 
     try {
@@ -1093,10 +1525,10 @@ function Invoke-LiveHarnessStreaming {
             if ($process.ExitCode -ne 0 -and $earlyResult.verdict -eq "PASS") { throw "LIVE_PROCESS_FAILED" }
             return $earlyResult
         }
-        Assert-ReadySignal -Line $desktopReady -ExpectedIdentity "DESKTOP"
+        Set-PolicyAppliedTimestamp -ReadyAtUtc (Assert-ReadySignal -Line $desktopReady -ExpectedIdentity "DESKTOP")
         Assert-PrivatePayloadManifest -PayloadRoot $PrivatePayload.Root -ExpectedManifestSha256 $PrivatePayload.ManifestSha256
         foreach ($number in 1..32) {
-            $observation = Read-LimitedObservation -CaseId ("M-{0:D3}" -f $number)
+            $observation = Resolve-LimitedObservation -CaseId ("M-{0:D3}" -f $number)
             $process.StandardInput.WriteLine(($observation | ConvertTo-Json -Compress))
             $process.StandardInput.Flush()
         }
@@ -1107,10 +1539,10 @@ function Invoke-LiveHarnessStreaming {
         $nextValue = $nextLine | ConvertFrom-Json
         $isPackageReady = $HasPackageEvidence -and $nextValue.PSObject.Properties.Name -contains "signal" -and $nextValue.signal -eq "READY"
         if ($isPackageReady) {
-            Assert-ReadySignal -Line $nextLine -ExpectedIdentity "PACKAGE"
+            Set-PolicyAppliedTimestamp -ReadyAtUtc (Assert-ReadySignal -Line $nextLine -ExpectedIdentity "PACKAGE")
             Assert-PrivatePayloadManifest -PayloadRoot $PrivatePayload.Root -ExpectedManifestSha256 $PrivatePayload.ManifestSha256
             foreach ($number in 33..64) {
-                $observation = Read-LimitedObservation -CaseId ("M-{0:D3}" -f $number)
+                $observation = Resolve-LimitedObservation -CaseId ("M-{0:D3}" -f $number)
                 $process.StandardInput.WriteLine(($observation | ConvertTo-Json -Compress))
                 $process.StandardInput.Flush()
             }
@@ -1317,6 +1749,21 @@ try {
     $currentGate = "PRIVATE_SPOOL"
     New-PrivateSpool
     Test-PrivateSpoolNegativeGates
+
+    # 실행 폴더는 실행 "전에" 자리를 정한다. 몇 시간짜리 실기의 증거가
+    # 어디에 쌓일지 나중에 정하면 그 사이에 나온 증거가 사라진다 (AC-12-1).
+    $currentGate = "RUN_DIRECTORY"
+    New-RunDirectory
+    # 인자 "이름"만 적는다. 값은 적지 않는다 — 실행 파일 경로·패키지 이름이 들어가면
+    # 금지 낱말 검사에 걸릴 자료가 된다. 이름만 적어도 승인 문구를 도구가 자동으로
+    # 채웠는지 확인할 수 있다 (§7.1 · AC-14-4 · GR-17).
+    Write-RunDirectoryText -FileName "invocation.json" -Text (
+        [ordered]@{
+            schemaVersion  = 1
+            startedAtUtc   = $runStartedAtUtc.ToString("O")
+            parameterNames = @($PSBoundParameters.Keys | Sort-Object)
+        } | ConvertTo-Json -Depth 4)
+
     $automatedMutex = [Threading.Mutex]::new($false, "Local\VpnRouter.WfpSpike.AutomatedGate.v2")
     $automatedMutexAcquired = $automatedMutex.WaitOne(0)
     if (-not $automatedMutexAcquired) {
@@ -1330,7 +1777,10 @@ try {
     $currentGate = "WORKTREE_BEFORE"
     $featureManifestBefore = Get-FeatureManifest
 
-    $protectedDiff = @(git diff --name-only -- macos docs/v0.1.0-release-plan.md artifacts)
+    # HEAD 와 견준다. `git diff` 만 쓰면 작업 폴더와 색인을 견주므로
+    # `git add` 로 색인에 올린 변경이 이 관문을 그냥 지나간다 (AC-01-4).
+    # `HEAD --` 를 붙이면 올린 것과 안 올린 것을 함께 본다.
+    $protectedDiff = @(git diff --name-only HEAD -- macos docs/v0.1.0-release-plan.md artifacts)
     if ($LASTEXITCODE -ne 0 -or $protectedDiff.Count -ne 0) {
         $finalResult = New-LimitedResult -Mode "DRY_RUN" -Verdict "FAIL" -Fingerprint "MATCH" -FailureCode "AUTOMATED_GATE_FAILED"
         $scriptExitCode = 1
@@ -1522,8 +1972,31 @@ try {
         approvalToken = $approvalToken
     } | ConvertTo-Json -Depth 3 -Compress
 
+    # 하네스가 받을 사례 수는 상수가 아니다. 패키지 입력이 없으면 32건, 있으면 64건이다.
+    $expectedObservationCount = if ([string]::IsNullOrWhiteSpace($packageFamilyName)) { 32 } else { 64 }
     if ($PSBoundParameters.ContainsKey("LiveObservationJson")) {
-        Initialize-ProvidedLiveObservations -Json $LiveObservationJson
+        Initialize-ProvidedLiveObservations -Json $LiveObservationJson -ExpectedCount $expectedObservationCount
+    }
+
+    # --- 측정 준비 (설계 §7.3) --------------------------------------------
+    # 실제 값(기준 인터페이스 번호·대상 주소·앱 경로)은 저장소 밖 설정 파일에서 읽는다.
+    # 그 값은 관찰 도구의 인자와 실행 폴더에만 쓰이고 결과 JSON 에는 한 글자도 안 들어간다.
+    $currentGate = "MEASUREMENT_SETTINGS"
+    $measurementInterfaceIndex = $interfaceIndex
+    $caseMatrix = Get-Content -LiteralPath (Join-Path $fixtureRoot "case-matrix.json") -Raw | ConvertFrom-Json
+    $caseMatrixRows = @($caseMatrix.rowsInOrder)
+    $caseMatrixTransports = @($caseMatrix.transportsInOrder)
+    if ($PSBoundParameters.ContainsKey("MeasurementSettingsPath")) {
+        if (-not (Test-Path -LiteralPath $MeasurementSettingsPath -PathType Leaf)) { throw "MEASUREMENT_SETTINGS_INVALID" }
+        $measurementSettings = Get-Content -LiteralPath $MeasurementSettingsPath -Raw | ConvertFrom-Json
+        foreach ($settingName in @("baselineInterfaceIndex", "selectedAppPath", "unselectedAppPath", "ipv6Verdict", "observationAPath")) {
+            if ($measurementSettings.PSObject.Properties.Name -notcontains $settingName) { throw "MEASUREMENT_SETTINGS_INVALID" }
+        }
+        # 두 값은 설계가 정한 목록 밖으로 나갈 수 없다. 넓히면 판정이 흐려진다.
+        if ([string]$measurementSettings.ipv6Verdict -notin @("MEASURE", "INCONCLUSIVE") -or
+            [string]$measurementSettings.observationAPath -notin @("VPN", "BASELINE", "OTHER", "UNOBSERVED")) {
+            throw "MEASUREMENT_SETTINGS_INVALID"
+        }
     }
 
     $currentGate = "LIVE_HARNESS"
@@ -1539,9 +2012,28 @@ try {
         -HasPackageEvidence (-not [string]::IsNullOrWhiteSpace($packageFamilyName))
     $liveResult | Add-Member -NotePropertyName beforeAfterFingerprint -NotePropertyValue $fingerprintState
     $finalResult = $liveResult
+
+    # LIVE 가 끝난 직후의 지문 F2 (설계 §7.4 / FR-13 / AC-13-1).
+    # 결과의 beforeAfterFingerprint 칸은 게이트 값(F1)이고 여기서 덮지 않는다.
+    # 사후 비교 값으로 덮으면 두 뜻이 한 칸에 섞인다 (AC-13-3). F2 는 결과 밖에만 남는다.
+    try {
+        $fingerprintF2 = Get-NetworkFingerprint
+        Write-RunDirectoryText -FileName "fingerprint-f2.json" -Text (
+            [ordered]@{
+                measuredAtUtc        = [DateTimeOffset]::UtcNow.ToString("O")
+                gateFingerprintAfter = $afterFingerprint
+                fingerprintF2        = $fingerprintF2
+                liveChangedNetwork   = ($afterFingerprint -cne $fingerprintF2)
+            } | ConvertTo-Json -Depth 4)
+    }
+    catch { }
 }
 catch {
-    Write-Verbose ("FAILED_GATE={0} ERROR={1}" -f $currentGate, $_.Exception.Message)
+    # -Verbose 로 돌리면 이 줄이 화면에 나온다. 예외 원문에는 전체 경로가 섞일 수 있으므로
+    # 결과 JSON 과 같은 검사를 지나게 한다. 걸리면 낱말 대신 가림표를 낸다 (AC-09-3).
+    $failureDiagnostic = ($_.Exception.Message -replace "\s+", " ")
+    if (Test-ProhibitedContent -Text $failureDiagnostic) { $failureDiagnostic = "REDACTED" }
+    Write-Verbose ("FAILED_GATE={0} ERROR={1}" -f $currentGate, $failureDiagnostic)
     $mode = if ($ApplyLiveWfp) { "LIVE" } else { "DRY_RUN" }
     $finalResult = New-LimitedResult -Mode $mode -Verdict "FAIL" -Fingerprint "MISMATCH" -FailureCode "ENVIRONMENT_UNAVAILABLE"
     $scriptExitCode = 1

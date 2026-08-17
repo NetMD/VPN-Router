@@ -105,7 +105,26 @@ var tests = new (string Name, Action Body)[]
     ("Reject non-MSBuild import before reading", RejectsNonMsBuildImportBeforeReading),
     ("Reject reparse Directory.Build import", RejectsReparseDirectoryBuildImport),
     ("Reject cyclic Directory.Build imports", RejectsCyclicDirectoryBuildImports),
-    ("Block payload mutation while execution lease held", BlocksPayloadMutationWhileExecutionLeaseHeld)
+    ("Block payload mutation while execution lease held", BlocksPayloadMutationWhileExecutionLeaseHeld),
+    ("Count INCONCLUSIVE separately from NOT_RUN", CountsInconclusiveSeparatelyFromNotRun),
+    ("Keep four WFP outcome values", KeepsFourOutcomeValues),
+    ("Sum four WFP counts to case total", SumsFourCountsToCaseTotal),
+    ("Keep WFP result schema version two", KeepsResultSchemaVersionTwo),
+    ("Keep WFP marker schema version one", KeepsMarkerSchemaVersionOne),
+    ("Keep WFP ready signal schema version one", KeepsReadySignalSchemaVersionOne),
+    ("Match verdict contract fixture", MatchesVerdictContractFixture),
+    ("Reject INCONCLUSIVE with unlisted code", RejectsInconclusiveWithUnlistedCode),
+    ("Reject FAIL with INCONCLUSIVE code", RejectsFailWithInconclusiveCode),
+    ("Accept INCONCLUSIVE with allowed codes", AcceptsInconclusiveWithAllowedCodes),
+    ("Accept NOT_RUN with OWNER_ABORTED", AcceptsNotRunWithOwnerAborted),
+    ("Validate WFP cases with INCONCLUSIVE", ValidatesCasesWithInconclusive),
+    ("Keep PARTIAL verdict when INCONCLUSIVE present", KeepsPartialVerdictWhenInconclusivePresent),
+    ("Keep FAIL verdict when any case fails", KeepsFailVerdictWhenAnyFail),
+    ("Preserve WFP cases on cancellation", PreservesCasesOnCancellation),
+    ("Preserve WFP cases on partial package input", PreservesCasesOnPartialPackageInput),
+    ("Fail verdict on partial package input", FailsVerdictOnPartialPackageInput),
+    ("Keep hasNoPackage path intact", KeepsHasNoPackagePathIntact),
+    ("Remove read-only fixture directory", RemovesReadOnlyFixtureDirectory)
 };
 
 var failures = 0;
@@ -1078,6 +1097,207 @@ static void MakesCleanupFailureVerdictFail()
     var result = OwnerHarnessRunner.BuildResultForValidation("LIVE", WfpSpikeResultCode.SESSION_CLOSE_FAILED, WfpSpikeOutcome.FAIL, ValidWfpCases());
     AssertEqual(WfpSpikeVerdict.FAIL, result.Verdict);
 }
+
+// ---- R4 판정 어휘·집계·사례 보존 시험 (설계 §13.1 N-01~N-18) ----
+
+// N-01 · 빼기 집계가 살아 있으면 notRunCount 가 16이 되어 여기서 깨집니다.
+static void CountsInconclusiveSeparatelyFromNotRun()
+{
+    var result = OwnerHarnessRunner.BuildResultForValidation("LIVE", WfpSpikeResultCode.NONE, WfpSpikeOutcome.PASS, WfpCasesWithOutcomes(0, 8, 8));
+    AssertEqual(8, result.NotRunCount);
+    AssertEqual(8, result.InconclusiveCount);
+    AssertEqual(48, result.PassCount);
+}
+
+// N-02 · 값이 다섯 번째로 늘면 각각 세기가 조용히 모자라집니다.
+static void KeepsFourOutcomeValues() => AssertEqual(4, Enum.GetValues<WfpSpikeOutcome>().Length);
+
+// N-03 · 산술 불변식의 C# 쪽입니다.
+static void SumsFourCountsToCaseTotal()
+{
+    var result = OwnerHarnessRunner.BuildResultForValidation("LIVE", WfpSpikeResultCode.NONE, WfpSpikeOutcome.PASS, WfpCasesWithOutcomes(3, 8, 8));
+    AssertEqual(result.CaseTotal, result.PassCount + result.FailCount + result.NotRunCount + result.InconclusiveCount);
+    AssertEqual(45, result.PassCount);
+    AssertEqual(3, result.FailCount);
+}
+
+// N-04 · 결과 스키마만 2로 올립니다.
+static void KeepsResultSchemaVersionTwo() =>
+    AssertEqual(2, OwnerHarnessRunner.BuildResultForValidation("LIVE", WfpSpikeResultCode.NONE, WfpSpikeOutcome.PASS, ValidWfpCases()).SchemaVersion);
+
+// N-05 · 표식 스키마는 1을 지킵니다. 결과 스키마를 올리면서 함께 올리는 회귀를 잡습니다.
+// 스키마 1 표식은 표식 단계를 지나 게시물 증거 단계까지 가고, 스키마 2 표식은 표식 단계에서 막힙니다.
+static void KeepsMarkerSchemaVersionOne()
+{
+    using var spool = CreateProtectedSpool();
+    var valid = ValidMarker(DateTimeOffset.UtcNow);
+    AssertEqual(1, valid.SchemaVersion);
+    var acceptedPath = WriteMarker(spool.Directory.FullName, valid);
+    var accepted = AssertThrowsAndReturn<InvalidDataException>(() =>
+        OwnerHarnessRunner.TrustedGateEvidence.ConsumeAndValidate(["--automated-marker", acceptedPath, "--expected-commit", valid.Commit]));
+    Assert(accepted.Message.StartsWith("PUBLISHED_EVIDENCE:", StringComparison.Ordinal), $"schema 1 marker stopped too early: {accepted.Message}");
+
+    var bumped = valid with { SchemaVersion = 2 };
+    var rejectedPath = WriteMarker(spool.Directory.FullName, bumped);
+    var rejected = AssertThrowsAndReturn<InvalidDataException>(() =>
+        OwnerHarnessRunner.TrustedGateEvidence.ConsumeAndValidate(["--automated-marker", rejectedPath, "--expected-commit", bumped.Commit]));
+    Assert(rejected.Message.StartsWith("MARKER:", StringComparison.Ordinal), $"schema 2 marker not rejected at the marker stage: {rejected.Message}");
+}
+
+// N-06 · 준비 신호 스키마도 1을 지킵니다. 결과 스키마와 같은 값이 되면 두 자리를 함께 올린 것입니다.
+static void KeepsReadySignalSchemaVersionOne()
+{
+    var ready = new WfpReadySignal(1, "READY", "DESKTOP", DateTimeOffset.UtcNow);
+    AssertEqual(1, ready.SchemaVersion);
+    var result = OwnerHarnessRunner.BuildResultForValidation("DRY_RUN", WfpSpikeResultCode.NONE, WfpSpikeOutcome.NOT_RUN, []);
+    Assert(ready.SchemaVersion != result.SchemaVersion, "ready signal and result schema versions must stay different");
+}
+
+// N-07 · 판정 계약의 으뜸 출처 파일과 C# 거울이 같은지 기계가 대조합니다.
+static void MatchesVerdictContractFixture()
+{
+    var path = ResolveRepositoryFile("scripts/windows/fixtures/wfp-spike/verdict-contract.json");
+    using var document = JsonDocument.Parse(File.ReadAllBytes(path));
+    var root = document.RootElement;
+    AssertEqual(1, root.GetProperty("schemaVersion").GetInt32());
+
+    var outcomeNames = Enum.GetNames<WfpSpikeOutcome>().ToHashSet(StringComparer.Ordinal);
+    var fixtureOutcomes = root.GetProperty("outcomes").EnumerateArray().Select(x => x.GetString()!).ToHashSet(StringComparer.Ordinal);
+    Assert(fixtureOutcomes.SetEquals(outcomeNames), "verdict contract outcomes differ from WfpSpikeOutcome");
+
+    var byOutcome = root.GetProperty("failureCodesByOutcome");
+    var fixtureKeys = byOutcome.EnumerateObject().Select(x => x.Name).ToHashSet(StringComparer.Ordinal);
+    Assert(fixtureKeys.SetEquals(outcomeNames), "verdict contract outcome keys differ from WfpSpikeOutcome");
+
+    foreach (var outcome in Enum.GetValues<WfpSpikeOutcome>())
+    {
+        var expected = WfpVerdictContract.FailureCodesByOutcome[outcome].Select(x => x.ToString()).ToHashSet(StringComparer.Ordinal);
+        var actual = byOutcome.GetProperty(outcome.ToString()).EnumerateArray().Select(x => x.GetString()!).ToHashSet(StringComparer.Ordinal);
+        Assert(actual.SetEquals(expected), $"verdict contract failure codes differ for {outcome}");
+    }
+}
+
+// N-08 · "재서 틀렸다"는 코드를 INCONCLUSIVE 에 붙여 FAIL 을 피해 가는 뒷문을 막습니다.
+static void RejectsInconclusiveWithUnlistedCode()
+{
+    Assert(!WfpObservationCollector.IsValidCombination(WfpSpikeOutcome.INCONCLUSIVE, WfpSpikeResultCode.UNEXPECTED_INTERFACE), "INCONCLUSIVE/UNEXPECTED_INTERFACE accepted");
+    Assert(!WfpObservationCollector.IsValidCombination(WfpSpikeOutcome.INCONCLUSIVE, WfpSpikeResultCode.DNS_APP_ID_NOT_PROPAGATED), "INCONCLUSIVE/DNS_APP_ID_NOT_PROPAGATED accepted");
+    Assert(!WfpObservationCollector.IsValidCombination(WfpSpikeOutcome.INCONCLUSIVE, WfpSpikeResultCode.NONE), "INCONCLUSIVE/NONE accepted");
+}
+
+// N-09 · FAIL 도 정확한 2종으로 좁혔는지 봅니다. 좁히지 않으면 두 뜻이 한 칸에 섞입니다.
+static void RejectsFailWithInconclusiveCode()
+{
+    Assert(!WfpObservationCollector.IsValidCombination(WfpSpikeOutcome.FAIL, WfpSpikeResultCode.NEW_CONNECTION_NOT_OBSERVED), "FAIL/NEW_CONNECTION_NOT_OBSERVED accepted");
+    Assert(!WfpObservationCollector.IsValidCombination(WfpSpikeOutcome.FAIL, WfpSpikeResultCode.ENVIRONMENT_UNAVAILABLE), "FAIL/ENVIRONMENT_UNAVAILABLE accepted");
+    Assert(WfpObservationCollector.IsValidCombination(WfpSpikeOutcome.FAIL, WfpSpikeResultCode.UNEXPECTED_INTERFACE), "FAIL/UNEXPECTED_INTERFACE rejected");
+}
+
+// N-10 · 계약이 실제로 통하는지 봅니다.
+static void AcceptsInconclusiveWithAllowedCodes()
+{
+    Assert(WfpObservationCollector.IsValidCombination(WfpSpikeOutcome.INCONCLUSIVE, WfpSpikeResultCode.NEW_CONNECTION_NOT_OBSERVED), "INCONCLUSIVE/NEW_CONNECTION_NOT_OBSERVED rejected");
+    Assert(WfpObservationCollector.IsValidCombination(WfpSpikeOutcome.INCONCLUSIVE, WfpSpikeResultCode.ENVIRONMENT_UNAVAILABLE), "INCONCLUSIVE/ENVIRONMENT_UNAVAILABLE rejected");
+}
+
+// N-11 · 중단 경로가 만드는 값입니다.
+static void AcceptsNotRunWithOwnerAborted() =>
+    Assert(WfpObservationCollector.IsValidCombination(WfpSpikeOutcome.NOT_RUN, WfpSpikeResultCode.OWNER_ABORTED), "NOT_RUN/OWNER_ABORTED rejected");
+
+// N-12 · 위임이 실제로 통하는지 64건으로 봅니다.
+static void ValidatesCasesWithInconclusive() =>
+    Assert(OwnerHarnessRunner.ValidateCases(WfpCasesWithOutcomes(0, 8, 8)), "case set with INCONCLUSIVE rejected");
+
+// N-13 · INCONCLUSIVE 가 있으면 최종은 PASS 가 아니고, 그렇다고 FAIL 도 아닙니다.
+static void KeepsPartialVerdictWhenInconclusivePresent()
+{
+    var cases = ValidWfpCases();
+    cases[0] = cases[0] with { Outcome = WfpSpikeOutcome.INCONCLUSIVE, FailureCode = WfpSpikeResultCode.NEW_CONNECTION_NOT_OBSERVED };
+    var result = OwnerHarnessRunner.BuildResultForValidation("LIVE", WfpSpikeResultCode.NONE, WfpSpikeOutcome.PASS, cases);
+    AssertEqual(WfpSpikeVerdict.PARTIAL, result.Verdict);
+    AssertEqual(1, result.InconclusiveCount);
+    AssertEqual(0, result.FailCount);
+}
+
+// N-14 · FAIL 한 건이면 최종은 FAIL 입니다 (기존 규칙 보존).
+static void KeepsFailVerdictWhenAnyFail()
+{
+    var cases = ValidWfpCases();
+    cases[0] = cases[0] with { Outcome = WfpSpikeOutcome.FAIL, FailureCode = WfpSpikeResultCode.UNEXPECTED_INTERFACE };
+    AssertEqual(WfpSpikeVerdict.FAIL, OwnerHarnessRunner.BuildResultForValidation("LIVE", WfpSpikeResultCode.NONE, WfpSpikeOutcome.PASS, cases).Verdict);
+}
+
+// N-15 · 중단 경로가 사례를 버리지 않습니다. 하네스의 취소·실패 자리와 같은 함수를 지납니다.
+static void PreservesCasesOnCancellation()
+{
+    var result = OwnerHarnessRunner.BuildAbortedResultForValidation(WfpSpikeResultCode.OWNER_ABORTED, ValidWfpCases()[..32]);
+    AssertEqual(64, result.CaseTotal);
+    AssertEqual(64, result.Cases.Count);
+    AssertEqual(32, result.PassCount);
+    AssertEqual(32, result.NotRunCount);
+    Assert(result.Cases.Skip(32).All(x => x.Outcome == WfpSpikeOutcome.NOT_RUN && x.FailureCode == WfpSpikeResultCode.OWNER_ABORTED), "aborted cases must be NOT_RUN/OWNER_ABORTED");
+    Assert(OwnerHarnessRunner.ValidateCases(result.Cases), "aborted case set rejected");
+    AssertEqual(WfpSpikeVerdict.FAIL, result.Verdict);
+}
+
+// N-16 · 패키지 세 값 가운데 일부만 들어와도 64건이 남습니다.
+static void PreservesCasesOnPartialPackageInput()
+{
+    var cases = OwnerHarnessRunner.FillPackageUnavailableForValidation(ValidWfpCases()[..32]);
+    AssertEqual(64, cases.Count);
+    Assert(cases.Skip(32).All(x => x.Outcome == WfpSpikeOutcome.NOT_RUN && x.FailureCode == WfpSpikeResultCode.PACKAGE_IDENTITY_UNAVAILABLE), "package cases must be NOT_RUN/PACKAGE_IDENTITY_UNAVAILABLE");
+    Assert(OwnerHarnessRunner.ValidateCases(cases), "partial package case set rejected");
+    AssertEqual(64, OwnerHarnessRunner.BuildResultForValidation("LIVE", WfpSpikeResultCode.NONE, WfpSpikeOutcome.PASS, cases).CaseTotal);
+}
+
+// N-16b · 세 값 가운데 일부만 온 것은 "패키지 신원을 못 얻었다"가 아니라
+// "부트스트랩 입력이 규약을 어겼다"입니다. 사례 64건은 지키되 최종은 FAIL 로 닫습니다.
+// 이 시험이 없으면 그 갈래가 다시 PASS 로 흘러도 아무것도 걸리지 않습니다.
+static void FailsVerdictOnPartialPackageInput()
+{
+    var result = OwnerHarnessRunner.BuildPartialPackageResultForValidation(ValidWfpCases()[..32]);
+    AssertEqual(64, result.CaseTotal);
+    AssertEqual(32, result.PassCount);
+    AssertEqual(32, result.NotRunCount);
+    Assert(OwnerHarnessRunner.ValidateCases(result.Cases), "partial package case set rejected");
+    AssertEqual(WfpSpikeResultCode.PACKAGE_IDENTITY_UNAVAILABLE, result.CleanupFailureCode);
+    AssertEqual(WfpSpikeVerdict.FAIL, result.Verdict);
+}
+
+// N-17 · 패키지 입력이 전부 비었을 때 만들어지는 묶음이 그대로 최종 PASS 로 갑니다.
+// 하네스의 그 갈래는 관리자 권한·실제 WFP 없이는 부를 수 없으므로, 같은 값 묶음으로 결과 쪽을 확인합니다.
+static void KeepsHasNoPackagePathIntact()
+{
+    var cases = OwnerHarnessRunner.FillPackageUnavailableForValidation(ValidWfpCases()[..32]);
+    var result = OwnerHarnessRunner.BuildResultForValidation("LIVE", WfpSpikeResultCode.NONE, WfpSpikeOutcome.PASS, cases);
+    Assert(result.Cases.Count != 0, "no-package path must not return an empty case set");
+    AssertEqual(32, result.PassCount);
+    AssertEqual(32, result.NotRunCount);
+    AssertEqual(0, result.InconclusiveCount);
+    AssertEqual(WfpSpikeVerdict.PASS, result.Verdict);
+}
+
+// N-18 · 시험 fixture 가 임시 폴더를 남기던 뿌리 두 가지를 고쳤는지 봅니다.
+// ① 읽기 전용 git 개체 ② 다시 걸리는 지점(junction). 둘 다 재귀 삭제를 실패시킵니다.
+static void RemovesReadOnlyFixtureDirectory()
+{
+    string plainRoot;
+    using (var fixture = BuildInputFixture.Create("<Project />"))
+    {
+        plainRoot = fixture.Root;
+        Assert(Directory.Exists(plainRoot), "fixture root missing");
+    }
+    Assert(!Directory.Exists(plainRoot), "read-only fixture directory left behind");
+
+    string linkedRoot;
+    using (var fixture = BuildInputFixture.Create("<Project />"))
+    {
+        linkedRoot = fixture.Root;
+        Directory.CreateDirectory(fixture.PathOf("target"));
+        fixture.CreateJunction("linked", "target");
+    }
+    Assert(!Directory.Exists(linkedRoot), "fixture directory with a junction left behind");
+}
 static void DetectsUntrackedFeatureContentMutation()
 {
     var first = new FeatureManifest(1, [new("windows/VpnRouter.WfpSpike/new.cs", 1, new string('a', 64), null)]);
@@ -1162,6 +1382,40 @@ static void BlocksPayloadMutationWhileExecutionLeaseHeld()
 static WfpSpikeCaseResult[] ValidWfpCases() => Enumerable.Range(1, 64)
     .Select(i => new WfpSpikeCaseResult($"M-{i:000}", WfpSpikeOutcome.PASS, WfpSpikeResultCode.NONE, DateTimeOffset.UtcNow)).ToArray();
 
+// 64건 가운데 뒤쪽부터 INCONCLUSIVE → NOT_RUN → FAIL 순으로 채우고 나머지를 PASS 로 둡니다.
+// 짝짓는 실패 코드는 전부 판정 계약이 허용하는 값입니다.
+static WfpSpikeCaseResult[] WfpCasesWithOutcomes(int failCount, int notRunCount, int inconclusiveCount)
+{
+    var now = DateTimeOffset.UtcNow;
+    var cases = new WfpSpikeCaseResult[64];
+    for (var number = 1; number <= 64; number++)
+    {
+        var fromEnd = 64 - number;
+        WfpSpikeOutcome outcome; WfpSpikeResultCode code;
+        if (fromEnd < inconclusiveCount) { outcome = WfpSpikeOutcome.INCONCLUSIVE; code = WfpSpikeResultCode.NEW_CONNECTION_NOT_OBSERVED; }
+        else if (fromEnd < inconclusiveCount + notRunCount) { outcome = WfpSpikeOutcome.NOT_RUN; code = WfpSpikeResultCode.OWNER_ABORTED; }
+        else if (fromEnd < inconclusiveCount + notRunCount + failCount) { outcome = WfpSpikeOutcome.FAIL; code = WfpSpikeResultCode.UNEXPECTED_INTERFACE; }
+        else { outcome = WfpSpikeOutcome.PASS; code = WfpSpikeResultCode.NONE; }
+        cases[number - 1] = new($"M-{number:000}", outcome, code, now);
+    }
+    return cases;
+}
+
+// 저장소 안의 파일을 찾습니다. 실행 폴더가 저장소 뿌리가 아닐 때도 위로 훑어 찾습니다.
+// 못 찾으면 조용히 건너뛰지 않고 예외를 냅니다 — 검사가 소리 없이 줄어드는 것을 막습니다.
+static string ResolveRepositoryFile(string relativePath)
+{
+    var nativePath = relativePath.Replace('/', Path.DirectorySeparatorChar);
+    var fromCurrent = Path.GetFullPath(nativePath);
+    if (File.Exists(fromCurrent)) return fromCurrent;
+    for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory is not null; directory = directory.Parent)
+    {
+        var candidate = Path.Combine(directory.FullName, nativePath);
+        if (File.Exists(candidate)) return candidate;
+    }
+    throw new FileNotFoundException($"repository file not found: {relativePath}", fromCurrent);
+}
+
 static AutomatedMarker ValidMarker(DateTimeOffset createdAt) => new(1, createdAt, new string('a', 40), new string('b', 32), 0, 0, 0, 0, 0, 0, "MATCH",
     new string('1', 64), new string('2', 64), new string('3', 64), new string('4', 64), new string('5', 64), new string('6', 64), new string('7', 64), new string('8', 64), new string('9', 64));
 static string WriteMarker(string directory, AutomatedMarker marker)
@@ -1230,6 +1484,7 @@ sealed class BuildInputFixture : IDisposable
         fixture.Git("init", "--quiet"); fixture.Git("add", ".");
         return fixture;
     }
+    public string Root => _root.FullName;
     public string PathOf(string relativePath) => Path.Combine(_root.FullName, relativePath.Replace('/', Path.DirectorySeparatorChar));
     private void Write(string relativePath, string content)
     {
@@ -1260,7 +1515,33 @@ sealed class BuildInputFixture : IDisposable
         using var process = System.Diagnostics.Process.Start(start) ?? throw new InvalidOperationException("PowerShell unavailable"); process.WaitForExit();
         if (process.ExitCode != 0) throw new InvalidOperationException(process.StandardError.ReadToEnd());
     }
-    public void Dispose() { try { _root.Delete(true); } catch { } }
+    // git 이 개체 파일을 읽기 전용으로 만들기 때문에 그냥 지우면 예외가 납니다.
+    // 읽기 전용 속성을 먼저 내린 뒤 지우고, 그래도 실패하면 삼키지 않고 표준 오류에 남깁니다 (설계 D-ADD-2).
+    public void Dispose()
+    {
+        try
+        {
+            PrepareForDelete(_root);
+            _root.Delete(true);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"FIXTURE_CLEANUP_FAILED:{_root.FullName}:{ex.GetType().Name}:{ex.Message}");
+        }
+    }
+
+    private static void PrepareForDelete(DirectoryInfo directory)
+    {
+        if (!directory.Exists) return;
+        foreach (var file in directory.EnumerateFiles()) if (file.IsReadOnly) file.IsReadOnly = false;
+        foreach (var child in directory.EnumerateDirectories())
+        {
+            // 다시 걸리는 지점(junction)은 연결 자체만 지웁니다. 따라 들어가면 자기 자신을 무한히 훑고,
+            // 그대로 두면 재귀 삭제가 "매개 변수가 틀립니다"로 실패해 폴더가 남습니다.
+            if ((child.Attributes & FileAttributes.ReparsePoint) != 0) child.Delete();
+            else PrepareForDelete(child);
+        }
+    }
 }
 
 sealed class FakeWfpNativeApi : IWfpNativeApi
