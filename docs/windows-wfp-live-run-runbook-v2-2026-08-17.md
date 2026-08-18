@@ -3,6 +3,9 @@
 > 앞 문서: `docs/windows-wfp-live-run-handoff-2026-08-17.md` (중단 기록 + 절차 v1)
 > 이 문서가 **절차의 최신본**이다. v1 의 §4 절차는 이 문서로 대체한다. v1 은 중단 기록으로만 읽는다.
 > 성격: 실기 전 사전 감사 + 관찰 도구 결함 6건 수정 + 고친 절차. **실기는 아직 안 했다.**
+>
+> **2026-08-18 갱신 (R5 도구 굳히기)** — 도구가 바뀌는 라운드라 절차도 함께 고쳤다. 고친 자리는 §3-0 · §3 · §4 단계 1·2·3·5·8 · §5 다.
+> 이 갱신은 **도구가 아직 안 바뀐 자리를 바뀐 것처럼 적지 않는다.** 갈리는 자리마다 §3-0 의 확인 블록을 먼저 돌리고 (가)·(나) 중 하나를 고른다.
 
 ## 0. 한 줄 요약
 
@@ -13,6 +16,10 @@
 ---
 
 ## 1. 관찰 도구 결함 6건 — 전부 실측으로 찾고 고쳤다
+
+> **[2026-08-18] 줄 번호 주의** — 아래 §1·§2 표의 `파일:줄번호` 는 **2026-08-17 시점 값**이다.
+> R5 가 순수 함수 5개를 `WfpObservationText.psm1` 로 옮기고 네 스크립트를 고쳤으므로 **그 줄 번호는 이미 밀렸다.**
+> 다시 찾을 때는 **줄 번호가 아니라 함수·변수 이름으로 찾는다.** 표의 내용(무엇이 왜 고장 났나)은 그대로 유효하다.
 
 측정 도구가 고장 난 채로 재면 안 잰 것만 못하다. 그래서 터널도 WFP 정책도 없이 관찰 사슬만 돌려 봤다(`-VpnInterfaceIndex` 에 끊긴 이더넷 17, `-BaselineInterfaceIndex` 에 Wi-Fi 8 을 넣으면 기대값은 `BASELINE`).
 
@@ -50,7 +57,8 @@
 - `scripts/windows/wfp-observation/Get-WfpSpikeInterface.ps1` — D-1·D-2·D-4·D-5
 - `scripts/windows/wfp-observation/New-WfpSpikeFlow.ps1` — D-3·D-6
 
-두 파일 모두 아직 **커밋하지 않았다.** 작업 나무에만 있다.
+~~두 파일 모두 아직 **커밋하지 않았다.** 작업 나무에만 있다.~~
+**[2026-08-18 정정]** 이 줄은 낡았다. 두 파일은 커밋 `c6888b8` (`feat(windows): add WFP observation tooling and verdict contract`) 에 관찰 도구 5종과 함께 들어갔고, 이 문서는 커밋 `25ea153` 에 들어갔다. 확인 명령: `git -C 'C:\dev\vpn_router' log --oneline -- scripts/windows/wfp-observation/Get-WfpSpikeInterface.ps1`
 
 ---
 
@@ -85,15 +93,64 @@ v1 §4 를 실제 코드와 한 줄씩 대조해 나온 것이다. 전부 근거
 
 ---
 
+## 3-0. 먼저 돌린다 — R5 도구 굳히기가 이 저장소에 들어왔나
+
+이 문서는 도구가 바뀌는 도중에 고쳤다. 아래 네 칸이 **이 문서의 갈림길을 정한다.** 실기를 시작하기 전에 한 번 돌리고 값을 적어 둔다.
+
+```powershell
+$repo = 'C:\dev\vpn_router'
+[pscustomobject]@{
+  'A-1 사람이 고르는 정리 갈래'  = ((Select-String -LiteralPath "$repo\scripts\windows\wfp-observation\Use-WfpSpikeTunnel.ps1" -Pattern 'StopHarnessFirst' -Quiet) -eq $true)
+  'A-2 Stop 재실행 안전'         = ((Select-String -LiteralPath "$repo\scripts\windows\wfp-observation\Get-WfpSpikeInterface.ps1" -Pattern 'pktmonUndoSucceeded' -Quiet) -eq $true)
+  'A-3 되돌리기가 훑는 뿌리 2곳' = ((Select-String -LiteralPath "$repo\scripts\windows\restore-network-dev.ps1" -Pattern 'restoreRunRoots' -Quiet) -eq $true)
+  'A-4 git·dotnet 폴더 독립'     = (@(Select-String -LiteralPath "$repo\scripts\windows\test-wfp-app-routing-spike.ps1" -Pattern '(?<!-C \$repoRoot )\bgit (ls-files|diff|rev-parse)').Count -eq 0)
+} | Format-List
+```
+
+| 칸 | `True` 면 | `False` 면 |
+|---|---|---|
+| **A-1** | §5 비상 복구 ① 의 **(가)** 를 쓴다 | §5 비상 복구 ① 의 **(나)** 를 쓴다 |
+| **A-2** | 단계 5 의 두 번째 Stop 이 되돌아간다 — §4 단계 5 의 (가) | `-Mode Stop` 을 사례마다 **한 번만** 돌린다 — §4 단계 5 의 (나) |
+| **A-3** | 손 예행 폴더를 `wfp-spike-manual-runs` 아래에 만든다 — §4 단계 1 의 (가) | 손 예행 폴더를 `wfp-spike-runs` 아래에 만든다 — §4 단계 1 의 (나) |
+| **A-4** | 작업 폴더가 어디든 단계 7 이 저장소를 본다 | 작업 폴더를 **반드시** `C:\dev\vpn_router` 로 둔다 |
+
+> **새 규약 (R5)**: **손으로 도는 예행은 `%LOCALAPPDATA%\VpnRouter\wfp-spike-manual-runs\<이름>` 아래에 만든다.**
+> 자동 실행이 스스로 만드는 자리(`wfp-spike-runs\<날짜>Z-<8자>`)와 섞지 않는다. 되돌리기 도구가 두 뿌리를 함께 훑게 하려는 것이고,
+> 차수 이름(`r4-live-plan-a` 같은 것)을 도구 안에 적지 않으려는 것이다. **A-3 이 `False` 인 동안에는 이 규약을 쓰면 안 된다** — 되돌리기 도구가 그 뿌리를 아직 못 본다.
+
+2026-08-18 **04:13** 기준 이 저장소 실측: **A-1 `True` · A-2 `True` · A-3 `True` · A-4 `True`** (네 자리 다 작업 나무에 있고 **아직 커밋 전이다**).
+**이 값은 그대로 믿지 않는다.** 되돌리거나 다시 고치면 바뀌므로 **실기를 여는 그 자리에서 위 블록을 다시 돌린다.**
+
+> **회귀 시험 쪽 (2026-08-18 04:20 실측)** — **이 문서는 안 들어온 것을 들어온 것처럼 적지 않는다.**
+>
+> | 파일 | 있나 | 확인 명령 |
+> |---|---|---|
+> | `scripts\windows\wfp-observation-tests\Test-WfpObservationFixture.ps1` (고정값 회귀 시험) | **있음** (작업 나무 · 커밋 전) | `Test-Path` |
+> | `.github\workflows\powershell-tests.yml` (push·PR 워크플로) | **있음** (작업 나무 · 커밋 전 · **아직 한 번도 안 돌았다**) | `Test-Path` |
+>
+> ⚠ 워크플로는 **밀어야 돈다.** 파일이 저장소에 있는 것과 GitHub 에서 실제로 돈 기록이 있는 것은 다르다. 이 차수에는 미는 일이 범위 밖이라 **실행 기록이 아직 0건**이다.
+>
+> 실기 진입 조건 2번(「회귀 시험이 돌고 통과」)은 **시험을 실제로 돌려 통과를 본 기록**으로 답한다. 파일이 있는 것과 통과한 것은 다르다.
+> 시험은 관리자 권한도 랜카드도 pktmon 도 필요 없으므로 **아무 때나 돌려도 이 기계 상태를 안 바꾼다.** 돌리는 명령:
+>
+> ```powershell
+> & 'C:\dev\vpn_router\scripts\windows\wfp-observation-tests\Test-WfpObservationFixture.ps1'
+> ```
+>
+> 2026-08-18 04:15 에 이 문서를 고치면서 **5회 돌려 봤다** — 매번 `고정값 시험 21/21 통과.` · 종료 코드 **0** · 한 번에 **0.14초** ·
+> `git status` 가 앞뒤로 **똑같았다**(시험이 저장소에 아무것도 안 쓴다). **그래도 실기 전에는 그 자리에서 다시 돌린다.**
+
+---
+
 ## 3. 실행 전 전제 (단계 0)
 
 | 확인 | 명령 | 있어야 할 값 |
 |---|---|---|
 | **셸** | `$PSVersionTable.PSVersion.Major` | **`7` 이상.** 관리자 권한 `pwsh` 로 연다. "Windows PowerShell(관리자)"는 안 된다 |
 | 관리자 승격 | `([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole('Administrators')` | `True` |
-| **작업 폴더** | `Set-Location 'C:\dev\vpn_router'` 뒤 `$PWD.Path` | **`C:\dev\vpn_router`** (하위 폴더도 안 된다) |
+| **작업 폴더** | `Set-Location 'C:\dev\vpn_router'` 뒤 `$PWD.Path` | §3-0 의 **A-4 가 `False` 면 반드시 `C:\dev\vpn_router`** (하위 폴더도 안 된다). **A-4 가 `True` 면 어느 폴더에서 돌려도 단계 7 이 저장소를 본다.** 어느 쪽이든 이 줄을 그대로 두면 손해가 없으므로 **습관으로는 계속 이 폴더에 둔다** |
 | BFE 서비스 | `(Get-Service BFE).Status` | `Running` |
-| 보호 경로 diff | `git diff --name-only HEAD -- macos docs/v0.1.0-release-plan.md artifacts` | **빈 출력** |
+| 보호 경로 diff | `git -C 'C:\dev\vpn_router' diff --name-only HEAD -- macos docs/v0.1.0-release-plan.md artifacts` | **빈 출력.** `-C` 를 빼면 **하위 폴더에서 통째로 눈이 먼다** — 아래 상자를 본다 |
 | 기준 인터페이스 | `Get-NetAdapter \| Where-Object Status -eq 'Up'` | **한 개만.** 그 index 가 `$baseIdx` |
 | 설정 파일 | `Test-Path $conf` | `True` (v1 §2 대로 사용자가 만든다) |
 
@@ -101,17 +158,47 @@ v1 §4 를 실제 코드와 한 줄씩 대조해 나온 것이다. 전부 근거
 
 > 기본 경로표에 ifIndex 17(이더넷)이 아직 한 줄 남아 있지만 그 어댑터는 `Disconnected` 이고, `Find-NetRoute 1.1.1.1` 은 **8** 을 낸다. 실제 나가는 길은 하나다.
 
+### ★ 보호 경로 관문은 폴더를 바꾸면 눈이 먼다 (2026-08-18 실측)
+
+`git` 의 경로 무늬(`-- macos ...`)는 **지금 서 있는 폴더**를 기준으로 읽는다. 그래서 같은 명령을 하위 폴더에서 돌리면 아무것도 못 본다.
+작업 나무를 한 글자도 안 건드리고 지난 커밋 하나로 시연한 결과다.
+
+```powershell
+# 같은 커밋 범위 · 같은 명령 · 폴더만 다르다
+cd C:\dev\vpn_router          ; @(git diff --name-only c685f1c~1 c685f1c -- macos docs/v0.1.0-release-plan.md artifacts).Count   # -> 49
+cd C:\dev\vpn_router\scripts\windows ; @(git diff --name-only c685f1c~1 c685f1c -- macos docs/v0.1.0-release-plan.md artifacts).Count   # -> 0
+```
+
+| 어디서 돌렸나 | `git ls-files -- macos` | 위 시연의 보호 경로 diff |
+|---|---|---|
+| `C:\dev\vpn_router` (저장소 뿌리) | **368** | **49** |
+| `C:\dev\vpn_router\scripts` | 2 | — |
+| `C:\dev\vpn_router\scripts\windows` | **0** | **0** |
+
+- 즉 하위 폴더에서 돌린 "빈 출력"은 **"변경이 없다"가 아니라 "안 봤다"** 이다. 관문이 있으나 마나가 된다.
+- 손으로 치는 확인은 **`git -C 'C:\dev\vpn_router'` 를 붙인다.** 붙이면 어느 폴더에서도 같은 답이 나온다.
+- 단계 7 안에서 도는 같은 관문은 A-4 가 고치는 자리다. §3-0 의 A-4 가 `False` 면 **그 관문은 아직 이 성질을 그대로 갖고 있다.**
+
 ---
 
 ## 4. 고친 절차 (복사해 붙이는 순서)
 
 ### 단계 1 — 변수와 사전 검사
 
+> **먼저 §3-0 을 돌린다.** 아래 `$run` 한 줄이 §3-0 의 **A-3** 값으로 갈린다.
+
 ```powershell
-Set-Location 'C:\dev\vpn_router'                                  # [수정] 게이트가 cwd 를 본다
+# [R5] A-4 가 True 면 단계 7 이 폴더에 안 매인다. 그래도 이 줄은 그대로 둔다 — 손으로 치는 git 명령이 아직 폴더를 본다
+Set-Location 'C:\dev\vpn_router'
 
 $obs     = 'C:\dev\vpn_router\scripts\windows\wfp-observation'
-$run     = Join-Path $env:LOCALAPPDATA 'VpnRouter\wfp-spike-runs\r4-live-plan-a'   # [수정] 복구 도구가 훑는 뿌리 안
+
+# [R5] 손으로 도는 자리는 새 규약대로 wfp-spike-manual-runs 아래에 만든다 (§3-0 새 규약)
+#      (가) A-3 이 True — 되돌리기 도구가 이 뿌리를 훑는다
+$run     = Join-Path $env:LOCALAPPDATA 'VpnRouter\wfp-spike-manual-runs\r4-live-plan-a'
+#      (나) A-3 이 False — 되돌리기 도구가 아직 manual-runs 를 못 본다. 아래 줄로 바꿔 쓴다
+# $run   = Join-Path $env:LOCALAPPDATA 'VpnRouter\wfp-spike-runs\r4-live-plan-a'
+
 $conf    = 'C:\Users\NetMD\Downloads\r4split.conf'
 $svc     = 'r4split'
 $target  = [ipaddress]'1.1.1.1'
@@ -120,11 +207,15 @@ New-Item -ItemType Directory -Force -Path $run | Out-Null
 
 # [수정] 서비스 이름과 설정 파일 이름이 어긋나면 조용히 어긋난 채로 진행한다
 if ($svc -ne [IO.Path]::GetFileNameWithoutExtension($conf)) { throw "svc($svc) 와 conf 이름이 다르다 — 멈춘다" }
-if (-not (Test-Path -LiteralPath $conf)) { throw "설정 파일이 없다: $conf" }
+if (-not (Test-Path -LiteralPath $conf)) { throw "설정 파일이 없다: $conf" }   # 있는지만 본다. 열지 않는다
 if ($PSVersionTable.PSVersion.Major -lt 7) { throw "pwsh 7 이상에서 돌려야 한다" }
 if (@(Get-NetAdapter | Where-Object Status -eq 'Up').Count -ne 1) { throw "Up 인 어댑터가 하나가 아니다 — 하나만 남긴다" }
-if (@(git diff --name-only HEAD -- macos docs/v0.1.0-release-plan.md artifacts).Count -ne 0) { throw "보호 경로에 변경이 있다" }
+# [R5] -C 를 붙인다. 없으면 하위 폴더에서 통째로 눈이 먼다 (§3 상자 · 실측 49 대 0)
+if (@(git -C 'C:\dev\vpn_router' diff --name-only HEAD -- macos docs/v0.1.0-release-plan.md artifacts).Count -ne 0) { throw "보호 경로에 변경이 있다" }
 ```
+
+- `$run` 을 (가)로 골랐으면 **단계 8 뒤 잔여물 확인도 그 뿌리에서** 본다. 되돌리기 도구가 못 훑는 뿌리에 증거를 쌓으면 뒤에 아무도 못 찾는다.
+- 설정 파일은 **있는지만 본다.** 이 절차도 도구도 그 파일을 열지 않고, 그 안의 값을 어느 문서에도 적지 않는다.
 
 ### 단계 2 — 기준선 (터널 올리기 **전**)
 
@@ -142,6 +233,23 @@ if (@(git diff --name-only HEAD -- macos docs/v0.1.0-release-plan.md artifacts).
 ```
 
 `ownedPolicyCount` 가 **0 이 아니면 여기서 멈춘다.**
+
+### ★ B-7a 판정 — 단계 2·3 을 읽는 방법이 바뀐다 (2026-08-18 실측)
+
+**「답 없는 상대에게 보낸 SYN 이 흐름 관문을 지납니다. 다만 이것은 기준 인터페이스로 나가는 흐름에 대한 답입니다. 터널에 갇힌 흐름은 B-7b 가 따로 답해야 합니다.」**
+
+| 무엇 | 값 |
+|---|---|
+| 결과 원본 (저장소 **밖**) | `%LOCALAPPDATA%\VpnRouter\wfp-spike-manual-runs\b7a-20260818\b7a-flow-gate-probe.json` · 2026-08-17T18:50:25Z |
+| `status` / `failureReason` | **`OK`** / `NONE` |
+| `newConnectionCreated` / `newConnectionLocalPort` | **`true`** / `59587` |
+| `hostRouteInstalled` | **`false`** — 경로표를 안 건드렸다 (`-InstallHostRoute` 를 안 줬다) |
+| 걸린 시간 | 0.3초 |
+
+- 시험용 주소는 **인자로만 넘겼다.** 이 문서에도 저장소 어느 파일에도 적지 않는다.
+- **판정 문장의 정본은 이번 라운드 dev-backend 보고서(W-1)다.** 위는 그 실측 원본에서 옮긴 네 칸이다.
+- **이 판정이 바꾸는 것**: 흐름 관문 하나만 보면 **살아 있는 서버가 없어도 통과한다.** 그래서 단계 3 의 `TUNNEL_NOT_REACHABLE` 은 "측정이 불가능하다"는 뜻이 아니다.
+- **이 판정이 안 바꾸는 것**: 단계 3 의 "세 번 다 실패면 끝낸다"는 그대로다. 위는 **기준 인터페이스**로 나가는 흐름을 잰 것이고, 터널 안에서 같은 일이 되는지는 **아직 아무도 안 쟀다**(B-7b 몫). 서버 없이 실기를 여는 근거로 쓰지 않는다.
 
 ### 단계 3 — 터널 올리고 **곧바로** 확인 (한 덩어리로 붙여 넣는다)
 
@@ -176,6 +284,7 @@ if ($null -eq $tunIdx) {
 ```
 
 - 세 번 다 `TUNNEL_NOT_REACHABLE` → 서버가 죽었을 가능성이 높다. **여기서 끝낸다.** 다른 설정 파일을 임의로 찾지 않는다.
+  - **B-7a 를 근거로 이 규칙을 무르지 않는다.** 흐름 관문이 답 없는 상대에게도 열린다는 것은 위에서 실측했지만, 그것은 기준 인터페이스 쪽 답이다. 터널이 안 살아 있으면 **터널을 지나는 흐름을 잰다는 이 차수의 목적 자체가 없어진다.**
 - `ipv6Verdict` 는 `INCONCLUSIVE` 가 나올 것이다(이 회선에 IPv6 없음). IPv6 16사례는 근거와 함께 자동으로 닫힌다(`:1250-1253`).
 
 ### 단계 4 — 대상 경로가 터널로 가는지 **확인한 뒤** 지운다
@@ -196,8 +305,12 @@ if ($postIdx -ne $baseIdx) { throw "경로를 지운 뒤에도 $postIdx 로 향�
 
 ### 단계 5 — 관찰 A (정책 걸기 **전**)
 
-> **이 블록도 쪼개지 않는다.** `-Mode Start` 는 pktmon 잡기를 켜 둔 채 끝나고, 이 PC 의 pktmon 거르개를 **전부 지운 상태**로 둔다(`Get-WfpSpikeInterface.ps1:396`·`:449`). 되돌리는 것은 `-Mode Stop` 뿐이다.
-> **`-Mode Stop` 은 사례마다 한 번만 돌린다.** 두 번째 Stop 은 되돌릴 목록이 이미 지워진 뒤라 거르개를 못 되살린다.
+> **이 블록도 쪼개지 않는다.** `-Mode Start` 는 pktmon 잡기를 켜 둔 채 끝나고, 이 PC 의 pktmon 거르개를 **전부 지운 상태**로 둔다(`Get-WfpSpikeInterface.ps1` 의 `Invoke-Pktmon` `filter remove` 자리와 `keepCaptureRunning` 표식). 되돌리는 것은 `-Mode Stop` 뿐이다.
+> **`-Mode Stop` 은 사례마다 한 번만 돌린다.** §3-0 의 **A-2** 로 갈린다:
+> - **(가) A-2 가 `True`** — 되돌리기가 성공하면 Stop 이 `{사례}.capture-state.json` 을 지운다. 그래서 두 번째 Stop 은 `CAPTURE_STATE_MISSING` 으로 **되돌아가고 pktmon 을 한 번도 안 부른다.** 그래도 **한 번만 돌리는 습관은 유지한다.**
+> - **(나) A-2 가 `False`** — 두 번째 Stop 은 되돌릴 목록이 이미 지워진 뒤라 **거르개를 못 되살린다.** 이 PC 전체의 pktmon 거르개가 걸린 문제다. 절대로 두 번 돌리지 않는다.
+>
+> 어느 쪽이든 되돌리기가 **실패**하면 `pktmon-filters-before.json` 과 `{사례}.capture-state.json` 이 **일부러 남는다.** 남아 있으면 "안 끝났다"는 표식이니 지우지 말고 원인을 먼저 본다.
 
 ```powershell
 $obsA = Join-Path $run 'observation-a'; New-Item -ItemType Directory -Force -Path $obsA | Out-Null
@@ -264,7 +377,7 @@ Get-Content -LiteralPath "$run\measurement-settings.json"
 ### 단계 7 — LIVE 실행
 
 ```powershell
-# [수정] 실패하면 이 셸이 닫힐 수 있다(:2062-2064 SetShouldExit). 값을 먼저 남긴다
+# [수정] 실패하면 이 셸이 닫힐 수 있다(바깥 catch 의 SetShouldExit). 값을 먼저 남긴다
 @{ run=$run; svc=$svc; tunIdx=$tunIdx; baseIdx=$baseIdx; target=$target.IPAddressToString; obs=$obs } |
     ConvertTo-Json | Set-Content -LiteralPath "$run\session-state.json" -Encoding utf8
 
@@ -304,15 +417,25 @@ Test-Path "$run\tunnel-installed.json"                      # False
 pktmon filter list                                           # 없음
 ```
 
-`POLICY_STILL_PRESENT` 가 나오면:
+`POLICY_STILL_PRESENT` 가 나오면 — §3-0 의 **A-1** 로 갈린다. **어느 쪽이든 사람이 그 자리에서 고른다.**
+
+**(가) A-1 이 `True`** — 한 줄이다. 스위치를 **사람이 직접 적었을 때만** 이 갈래로 들어간다.
 
 ```powershell
-Get-Process VpnRouter.WfpSpike.Harness -EA SilentlyContinue | Stop-Process -Force   # [수정] 먼저 하네스를 끝낸다
+& "$obs\Use-WfpSpikeTunnel.ps1" -Mode Teardown -StopHarnessFirst -RunDirectory $run -TunnelServiceName $svc
+```
+
+**(나) A-1 이 `False`** — 손으로 같은 순서를 밟는다. **정책이 0건인 것을 눈으로 본 뒤에만** 정리로 넘어간다.
+
+```powershell
+Get-Process VpnRouter.WfpSpike.Harness -EA SilentlyContinue | Stop-Process -Force
 Start-Sleep -Seconds 2
+& "$obs\Get-WfpOwnedPolicyState.ps1" -RunDirectory $run -Label 'after-harness-stop'   # 세 개수가 다 0 인지 눈으로 본다
 & "$obs\Use-WfpSpikeTunnel.ps1" -Mode Teardown -RunDirectory $run -TunnelServiceName $svc
 ```
 
-`restore-network-dev.ps1` 을 돌렸다면 **그 뒤에 Teardown 을 다시 돌린다.** restore 는 터널 서비스를 멈추기만 하고 지우지 않는다(`:169`).
+> **이 도구는 터널 서비스를 멈추기만 하고 지우지 않습니다. 되돌리기를 돌렸으면 그 뒤에 정리를 한 번 더 돌리십시오.**
+> 즉 `restore-network-dev.ps1` 을 돌렸다면 **그 뒤에 Teardown 을 다시 돌린다.** restore 안에는 `/uninstalltunnelservice` 를 부르는 줄이 **0건**이고 `Get-Service "WireGuardTunnel*" | Stop-Service` 만 있다. **멈추는 것과 지우는 것은 다르다.**
 
 ---
 
@@ -320,24 +443,68 @@ Start-Sleep -Seconds 2
 
 | 신호 | 즉시 할 일 |
 |---|---|
-| **인터넷이 끊긴다** | ① `Get-Process VpnRouter.WfpSpike.Harness -EA SilentlyContinue \| Stop-Process -Force` ② `& "$obs\Use-WfpSpikeTunnel.ps1" -Mode Teardown -RunDirectory $run -TunnelServiceName $svc` ③ 그래도 안 되면 §비상 복구. **하네스를 먼저 끝내지 않으면 Teardown 은 반드시 막힌다** |
+| **인터넷이 끊긴다** | 아래 **비상 복구 ①** 로 간다. 정책이 없어지면 길이 돌아온다. **하네스를 먼저 끝내지 않으면 Teardown 은 반드시 막힌다** |
 | 세 번 다 `TUNNEL_NOT_REACHABLE` | 서버가 죽었을 가능성이 높다. 끝낸다. 다른 설정을 찾지 않는다 |
 | 단계 4 의 `$preIdx` 가 `$tunIdx` 가 아니다 | 터널이 경로를 안 심었다. 진행하지 않는다 |
 | 단계 4 의 `$postIdx` 가 `$baseIdx` 가 아니다 | 경로가 안 지워졌다. 진행하지 않는다 |
 | 관찰 A 가 `UNOBSERVED` / `OTHER` | 사례를 채우지 않는다. 원인을 먼저 본다 |
 | `ownedPolicyCount` 가 0 이 아닌 채로 끝난다 | `restore-network-dev.ps1` → **그 뒤 Teardown 다시** → 그래도 남으면 **재부팅** (동적 세션이라 재부팅하면 사라진다) |
 
-### 비상 복구 (순서를 지킨다)
+### 비상 복구 — 네 단계 (사람이 그 자리에서 고른다)
+
+> **읽는 법 세 줄**
+> 1. **이 네 단계는 사람이 하나씩 고른다.** 어느 도구도 이 갈래에 스스로 들어가지 않는다. `-StopHarnessFirst` 는 **사람이 명령줄에 직접 적었을 때만** 동작하고, 안 적으면 지금까지의 동작 그대로다. 설정 파일이나 환경 변수로 이 스위치를 켜는 길은 없다.
+> 2. **순서를 뒤집지 않는다.** 소유 정책이 0건인 것을 확인하기 **전에** 터널을 내리지 않는다. 정책이 터널 LUID 를 다음 홉으로 쥐고 있어서, 뒤집으면 죽은 주소를 가리키는 정책이 남는다.
+> 3. 인터넷을 되돌리는 것은 **①** 이다. ②③④ 는 뒷정리다. 급하면 ① 만 먼저 하고 숨을 고른다.
+
+**① 하네스를 끝내고 · 정책을 다시 세고 · 그 다음 정리한다** — §3-0 의 **A-1** 로 갈린다
+
+**(가) A-1 이 `True`** — 사람이 스위치를 적으면 도구가 이 순서를 대신 지킨다.
 
 ```powershell
-Get-Process VpnRouter.WfpSpike.Harness -EA SilentlyContinue | Stop-Process -Force   # ① 정책부터 없앤다
+& "$obs\Use-WfpSpikeTunnel.ps1" -Mode Teardown -StopHarnessFirst -RunDirectory $run -TunnelServiceName $svc
+```
+
+**(나) A-1 이 `False`** — 같은 순서를 손으로 밟는다. **세 개수가 다 0 인 것을 눈으로 본 뒤에만** 정리로 넘어간다.
+
+```powershell
+Get-Process VpnRouter.WfpSpike.Harness -EA SilentlyContinue | Stop-Process -Force
 Start-Sleep -Seconds 2
-& 'C:\Program Files\WireGuard\wireguard.exe' /uninstalltunnelservice $svc           # ② 그 다음 터널
-Remove-Item -LiteralPath "$run\tunnel-installed.json" -Force -EA SilentlyContinue   # ③ 표식 정리
+& "$obs\Get-WfpOwnedPolicyState.ps1" -RunDirectory $run -Label 'after-harness-stop'
+& "$obs\Use-WfpSpikeTunnel.ps1" -Mode Teardown -RunDirectory $run -TunnelServiceName $svc
+```
+
+**② 결과 한 줄을 읽는다** — 여기서 다음 단계가 갈린다
+
+| `status` / `failureReason` | 뜻 | 다음 |
+|---|---|---|
+| `OK` / `NONE` | 정책 0건을 확인하고 터널을 내렸다 | ③ 으로 간다 (잔여물만 확인) |
+| `ERROR` / `HARNESS_STILL_RUNNING` | 하네스를 끝내려 했는데 아직 살아 있다 | 하네스를 직접 끝낸 뒤 ① 을 다시 고른다. **터널은 아직 안 내려갔다 — 그것이 맞다** |
+| `ERROR` / `POLICY_STILL_PRESENT` | 하네스는 없는데 정책·세션이 남았다 | ④ 로 간다 (재부팅) |
+| `ERROR` / `POLICY_STATE_UNREADABLE` | 정책을 **못 셌다.** 0건이 아니다 | ④ 로 간다. **못 센 것을 0 으로 읽지 않는다** |
+| `ERROR` / `TUNNEL_STOP_FAILED` | 관문은 지났는데 wireguard 가 실패했다 | 표준 오류의 진단 줄을 보고 ③ 으로 간다 |
+
+**③ 남은 것을 훑는다 — 되돌리기 도구**
+
+```powershell
 & 'C:\dev\vpn_router\scripts\windows\restore-network-dev.ps1'
 ```
 
-순서를 뒤집으면 죽은 LUID 를 가리키는 정책이 남는다.
+> **이 도구는 터널 서비스를 멈추기만 하고 지우지 않습니다. 되돌리기를 돌렸으면 그 뒤에 정리를 한 번 더 돌리십시오.**
+
+- 그래서 ③ 을 돌린 뒤에는 **① 을 한 번 더 고른다.** 이 도구에는 `/uninstalltunnelservice` 를 부르는 줄이 0건이다.
+- §3-0 의 **A-3** 이 `False` 면 이 도구는 `wfp-spike-runs` **한 뿌리만** 훑는다. 그 밖에 만든 폴더(손 예행 자리 등)는 **훑히지 않으니 손으로 본다.**
+- 출력에 "못 읽은 뿌리"가 있으면 그것은 **"잔여물 0건"이 아니라 "못 셌다"** 이다. 그대로 적는다.
+- 표식 파일을 손으로 지우는 것은 마지막에 한다: `Remove-Item -LiteralPath "$run\tunnel-installed.json" -Force -EA SilentlyContinue`. **정리가 안 끝났는데 표식만 지우면 "끝났다"는 거짓 자국이 남는다.**
+
+**④ 그래도 정책이 남으면 재부팅한다**
+
+- 소유 정책은 **동적 세션**이라 재부팅하면 사라진다. 재부팅 뒤에는 ① 의 관문이 열리므로 **① 을 다시 고르면 터널까지 깨끗이 내려간다.**
+- 재부팅이 이 갈래의 정상 퇴로다. 관문을 손으로 넘기는 것보다 낫다.
+
+> **마지막 수단 (권하지 않는다)**: `& 'C:\Program Files\WireGuard\wireguard.exe' /uninstalltunnelservice $svc` 를 직접 부르는 길이 있다.
+> 이것은 **관문을 건너뛴다.** 부르기 전에 `Get-WfpOwnedPolicyState.ps1` 출력에서 `ownedPolicyCount`·`ownerSessionCount`·`harnessProcessCount` 가 **셋 다 0 인 것을 눈으로 본다.**
+> 못 셌으면 부르지 않는다 — ④ 로 간다.
 
 ---
 
@@ -373,6 +540,19 @@ UDP·QUIC·DNS 는 `UNOBSERVED` → `INCONCLUSIVE` 로 닫힐 가능성이 크�
 
 v1 §7 의 5건에 이번에 나온 것을 더한다.
 
+> **[2026-08-18] R5 가 지금 손대는 자리** — 6·10·11·12·13 이 R5 도구 굳히기의 대상이다.
+> 어느 것이 **실제로 들어왔는지**는 이 표가 아니라 **§3-0 확인 블록이 답한다.** 아래 표는 발견 기록이지 완료 기록이 아니다.
+>
+> | 발견 | R5 대응 | §3-0 의 어느 칸이 답하나 |
+> |---|---|---|
+> | 6 (회귀 시험 없음) | 고정값 회귀 시험 틀 신설 + push·PR 워크플로 | (칸 없음) `scripts\windows\wfp-observation-tests\Test-WfpObservationFixture.ps1` 이 있는지로 본다 |
+> | 10 (되돌리기 뿌리 한 곳) | 뿌리 2곳 + `-AdditionalRunRoot` | **A-3** |
+> | 11 (하네스 살아 있으면 Teardown 막힘) | 사람이 고르는 `-StopHarnessFirst` 갈래 | **A-1** |
+> | 12 (`git`·`dotnet` 이 폴더를 따라감) | `git -C` + 절대 경로 + 작업 폴더 고정 | **A-4** |
+> | 13 (`-Mode Stop` 재실행) | 되돌리기 성공 뒤 상태 파일 삭제 | **A-2** |
+>
+> 7·8·9 는 R5 에서 **동작을 안 바꾸고 고정값 시험으로 굳히는** 쪽이다. 즉 증상이 사라지는 것이 아니라 **다시 나면 시험이 잡는다.**
+
 | # | 발견 | 근거 |
 |---|---|---|
 | 1 | 생존 확인이 경로 탈취 뒤에 돈다 | `Use-WfpSpikeTunnel.ps1` 의 `Verify` 안에 있음 |
@@ -393,7 +573,7 @@ v1 §7 의 5건에 이번에 나온 것을 더한다.
 
 ## 8. 이 문서가 안 하는 것
 
-- 설정 파일 만들기 — **AI 가 하지 않는다.** 사용자가 만든다(v1 §2). 내용·키·엔드포인트는 어디에도 적지 않는다
-- 커밋 — 고친 코드 2개 파일과 이 문서는 작업 나무에만 있다
+- 설정 파일 만들기 — **AI 가 하지 않는다.** 사용자가 만든다(v1 §2). 내용·키·엔드포인트는 어디에도 적지 않는다. **여는 것도 하지 않는다** — 있는지만 본다
+- 커밋 — ~~고친 코드 2개 파일과 이 문서는 작업 나무에만 있다~~ **[2026-08-18 정정]** 그 셋은 이미 커밋됐다(§1 「고친 파일」의 정정 줄). 이번 R5 갱신분은 커밋을 이 문서가 정하지 않는다
 - `R3-DEC-01`~`05` 결정 — 근거만 모은다
 - IPv6 실측 — 이 회선에 없다. 근거와 함께 닫는다
