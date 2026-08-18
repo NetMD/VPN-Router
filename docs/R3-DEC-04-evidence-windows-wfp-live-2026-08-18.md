@@ -239,3 +239,65 @@ R4 프리브리프가 "R4·R5 는 근거만 모으고 결정하지 않는다"로
 ### 12-7. 이 재개로 무효화되지 **않는** 것
 
 **"사용자 모드 WFP 연결 정책은 앱별 트래픽을 재지정하지 못한다"는 §2~§6 의 결론은 그대로 유효하다.** 가설 6개 제거 · 실기 2회 · 꾸러미 잡기 포함. 이번 재개는 그 결론을 뒤집는 것이 아니라 **다른 API 표면**을 보는 것이다.
+
+---
+
+## 13. 갈래 C 종결 — 남의 서명된 드라이버 재사용 (2026-08-18)
+
+**전문**: `docs/R3-DEC-04-driver-reuse-branch-verdict-2026-08-18.md` (조사 렌즈 6 · 적대 반박 2, **2/2 REFUTED**)
+
+### 13-1. 종결 사유 — 한 줄
+
+**앱별 라우팅을 실제로 해내는 드라이버는 전부 소스만 공개되어 있어 우리가 직접 서명해야 하고, 바로 쓸 수 있게 서명된 드라이버는 전부 앱별 라우팅을 못 한다.** 그래서 "남이 서명해 둔 것을 재사용한다"는 전제 자체가 성립하지 않는다.
+
+| 후보 | 라이선스 | 앱별 **라우팅**이 되나 | 판정 |
+|---|---|---|---|
+| WireSock (`ndiswgc.sys`) | 독점 EULA — 영리 배포 금지 | **됨** | 실격 (라이선스) |
+| WinpkFilter (`ndisrd.sys`) | 독점 — 배포 $3,000 / 소스 $9,000 | **안 됨** (드라이버에 앱 개념 없음) | 실격 |
+| WinDivert (`WinDivert64.sys`) | LGPLv3 또는 GPLv2 | **안 됨** — 문서 원문: *"For outbound injected packets, the `IfIdx` and `SubIfIdx` fields are currently ignored"* | 기능 미달 |
+| Mullvad·Proton·Windscribe `.sys` | **서명된 바이너리 저장소에 LICENSE 파일이 아예 없음** (GitHub API `"license": null`) | 됨 | 실격 (권리 0) |
+
+INF 의 `ManufacturerName` 등 남의 상표 문자열은 Microsoft 카탈로그가 해시한 대상이라 **고치는 순간 서명이 깨진다.**
+
+### 13-2. 서명 관문 — 이건 개발 작업이 아니라 회사 설립 결정이다
+
+Windows 10 1607 이후 Microsoft 가 서명하지 않은 새 커널 드라이버는 적재되지 않는다. 증명 서명(attestation)만으로 충분하지만, 그러려면 **① 검증된 법인 + Entra ID 테넌트 ② D-U-N-S 조회되는 회사 정보 ③ EV 코드 서명 인증서 ④ Partner Center 등록·서약**이 전부 필요하다. EV 인증서는 연 280~900달러이고 2026-02-23 부터 최대 유효기간이 459일로 줄어 **매년 갱신되는 고정비**이며 HSM 보관이 의무다.
+
+**이 저장소는 이미 반대 결정을 기록해 두었다.** `docs/windows-release-hardening.md`: *"The owner chose unsigned distribution because a commercial code-signing certificate is not cost-effective for this release."* 일반 코드 서명 인증서조차 값어치가 없다고 판단한 프로젝트가 **범위 밖 기능** 하나를 위해 그보다 비싼 길을 갈 수는 없다.
+
+### 13-3. 이 기계의 측정값 (재조사 금지)
+
+| 항목 | 값 |
+|---|---|
+| OS | Windows 11 Pro **10.0.26200** x64 |
+| Secure Boot | **꺼짐** |
+| HVCI · 메모리 무결성 | **켜짐, 동작 중** (`SecurityServicesRunning=2`) |
+| 취약 드라이버 차단 목록 | 켜짐 |
+| Smart App Control | 꺼짐 |
+| WDK 커널 헤더 | **없음** |
+| 이미 적재된 남의 커널 네트워크 드라이버 | Realtek `nt_rtf64` · `wireguard.sys` |
+
+> **경고**: Secure Boot 가 꺼져 있어 이 개발 PC 는 **실제 사용자 PC 보다 관대하다.** 여기서 드라이버가 올라갔다는 사실은 배포 근거가 되지 못한다.
+
+### 13-4. 공짜로 얻은 설계 자산 (이 조사의 진짜 산출물)
+
+나중에 앱별 라우팅을 실제로 만들 때의 출발점이다.
+
+- **올바른 구조**: 사용자 모드에서 `FWPM_CONDITION_ALE_APP_ID` 조건 필터를 심고 provider context 로 IP 를 넘긴 뒤, 커널 callout 이 `ALE_BIND_REDIRECT_V4/V6` · `ALE_CONNECT_REDIRECT_V4/V6` 에서 `localAddressAndPort` 를 **재작성**한다. Windscribe `callout_filter.cpp` · Proton `Callout.cpp` 가 완전한 참고 구현이다.
+- **포함 모드는 실제로 있다**: `if (calloutData->isExclude) redirect(localIp) else redirect(vpnIp)`. 방향은 걸림돌이 아니다.
+- **막다른 길로 확정된 것** — 터널 인터페이스에서 WFP 로 차단하면 물리 랜카드로 되돌아갈 것이라는 발상은 **틀렸다.** Windows 는 ALE 인가보다 **먼저** 경로 조회로 출구 인터페이스를 정한다. 차단은 폐기일 뿐 재라우팅이 아니다. **이로써 §7 의 "커널로 간다" 결론이 독립적으로 재확인된다.**
+- **라우팅 컴파트먼트**(`SetJobCompartmentId`)는 API 가 실재하나 **인터페이스를 다른 컴파트먼트로 옮기는 사용자 모드 API 가 없어** 막힌다.
+- **앱별 프록시 실행 인자**(`--proxy-server`)는 가장 싸지만 **UDP·QUIC 이 죽는다.** 하필 YouTube·Netflix 가 이 제품의 대표 규칙이다.
+- **드라이버 없이 가능한 유일한 갈래**: Wintun 전체 캡처 + `GetExtendedTcpTable`/`GetExtendedUdpTable` 로 소유 프로세스 판정 + `IP_UNICAST_IF` 로 물리 랜카드 재발신. mihomo·sing-box 가 이 방식이다. **2~4개월 전면 재작성**이고, "나머지 인터넷은 평소 네트워크에 그대로 둔다"는 이 제품의 안전 약속이 성격상 뒤집힌다.
+
+### 13-5. 재개 조건
+
+앱별 라우팅이 정식으로 범위에 들어오면, **첫걸음은 코드가 아니라 서류 결정**이다 — *"이 프로젝트가 법인을 만들고 EV 인증서를 상시 유지할 것인가?"* 아니오면 사용자 모드 TUN 갈래만 남고, 그마저도 **Wintun 0.14.1 이 HVCI 켜진 26200 에서 아직 적재되는지** 2시간 선행 시험을 통과해야 한다.
+
+### 13-6. 명시적으로 하지 않을 것
+
+- EV 코드 서명 인증서 구매 · Partner Center 하드웨어 개발자 등록
+- 어떤 `.sys` 파일도 저장소나 릴리스 자산에 넣기 — 특히 `mullvad-split-tunnel.sys` · `ProtonVPN.CalloutDriver.sys` · `windscribesplittunnel.sys` (**라이선스가 아예 없다**)
+- WireSock · WinpkFilter 번들 또는 설치 중 내려받기
+- 사용자에게 test signing · 메모리 무결성 끄기 · 차단 목록 끄기를 요구하는 모든 방안 (README 의 자체 헌장 위반)
+- 네 번째 앱별 라우팅 조사
