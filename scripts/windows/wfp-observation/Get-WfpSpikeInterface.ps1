@@ -117,34 +117,10 @@ $script:filterSnapshotPath = $null
 $script:filtersMutated = $false
 $script:captureStarted = $false
 $script:keepCaptureRunning = $false
-
-# `pktmon filter list` 의 글자 출력에서 거르개 줄만 뽑는다.
-#
-# 이 PC 의 pktmon 은 --json 을 받지 않는다(실측). 그렇다고 "못 읽었다"로 두면
-# 거르개가 원래 0개였던 흔한 경우에도 되돌리기 실패로 적히고, 되돌릴 목록 파일이
-# 실행마다 쌓인다. 그래서 글자도 읽는다.
-#
-# 자료 줄은 번호로 시작한다 — 머리글 줄은 `#`, 구분 줄은 `-` 로 시작한다.
-# 숫자로 가르므로 화면 말이 어느 나라 말이든 같게 동작한다.
-# 칸 차례는 `# 이름 프로토콜 IP주소 포트` 다.
-function ConvertFrom-PktmonFilterText {
-    param([AllowEmptyString()][string]$Text)
-
-    $rows = [Collections.Generic.List[object]]::new()
-    foreach ($line in ($Text -split "`r?`n")) {
-        $match = [regex]::Match($line, '^\s*\d+\s+(?<rest>\S.*?)\s*$')
-        if (-not $match.Success) { continue }
-        $tokens = @($match.Groups['rest'].Value -split '\s+')
-        if ($tokens.Count -lt 1 -or [string]::IsNullOrWhiteSpace($tokens[0])) { continue }
-        $rows.Add([pscustomobject]@{
-            name     = $tokens[0]
-            protocol = if ($tokens.Count -ge 2) { $tokens[1] } else { "" }
-            ip       = if ($tokens.Count -ge 3) { $tokens[2] } else { "" }
-            port     = if ($tokens.Count -ge 4) { $tokens[3] } else { "" }
-        })
-    }
-    return @($rows)
-}
+# 되돌리기가 실제로 끝났는가. -Mode Stop 이 잡기 창 표식을 지워도 되는지를 가른다.
+# 값으로 돌려주지 않고 표식 변수를 쓰는 이유: 되돌리기는 finally 에서 부르므로
+# 돌려준 값이 표준 출력(결과 JSON 한 줄)에 섞인다.
+$script:pktmonUndoSucceeded = $false
 
 function Get-PktmonFilterSnapshot {
     $listJson = Invoke-Pktmon -Arguments @("filter", "list", "--json")
@@ -207,42 +183,6 @@ function ConvertTo-PktmonFilterArguments {
     return @($arguments)
 }
 
-# 실행 폴더에 남은 되돌릴 목록을 읽는다. Start 와 Stop 이 같은 함수를 쓴다.
-#
-# 개수와 목록이 서로 맞지 않으면 "못 읽었다"로 본다. 예전에는 개수가 비어 있으면
-# [int]$null 이 0 이 되어 "원래 0개였다"로 읽혔고, 그러면 되돌리기가 성공한 것으로
-# 처리되어 이 기록 파일이 지워졌다 — 사용자 거르개의 유일한 사본이 사라진다.
-function Read-PktmonFilterRecord {
-    param([Parameter(Mandatory)][string]$Path)
-
-    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $null }
-    try {
-        $saved = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
-        $savedFormat = [string]$saved.format
-        if ($savedFormat -ne "JSON" -and $savedFormat -ne "TEXT") {
-            return [pscustomobject]@{ Format = "UNAVAILABLE"; Filters = $null; Raw = [string]$saved.raw }
-        }
-
-        # 개수 칸이 비어 있으면 0 으로 읽지 않는다. 못 읽은 것이다.
-        [int]$savedCount = -1
-        if (-not [int]::TryParse([string]$saved.filterCount, [ref]$savedCount) -or $savedCount -lt 0) {
-            return [pscustomobject]@{ Format = "UNAVAILABLE"; Filters = $null; Raw = [string]$saved.raw }
-        }
-
-        $savedFilters = @()
-        if ($savedCount -gt 0) { $savedFilters = @($saved.filters) }
-        # 적어 둔 개수와 실제 목록 길이가 다르면 그 기록은 믿을 수 없다.
-        if ($savedFilters.Count -ne $savedCount) {
-            return [pscustomobject]@{ Format = "UNAVAILABLE"; Filters = $null; Raw = [string]$saved.raw }
-        }
-
-        return [pscustomobject]@{ Format = $savedFormat; Filters = $savedFilters; Raw = [string]$saved.raw }
-    }
-    catch {
-        return [pscustomobject]@{ Format = "UNAVAILABLE"; Filters = $null; Raw = "" }
-    }
-}
-
 function Restore-PktmonFilterState {
     if ($null -eq $script:filterSnapshot) { return $true }
 
@@ -273,9 +213,12 @@ function Restore-PktmonFilterState {
 }
 
 function Undo-PktmonState {
+    # 잡기 멈춤이 깨끗했는가. 잡기를 아예 안 걸었으면 멈출 것도 없으므로 참이다.
+    $stopClean = $true
     if ($script:captureStarted) {
         $stopUndo = Invoke-Pktmon -Arguments @("stop")
         if ($stopUndo.ExitCode -ne 0) {
+            $stopClean = $false
             [Console]::Error.WriteLine("PKTMON_UNDO_STOP_FAILED=" + ((($stopUndo.Output -join " ") -replace "\s+", " ")))
         }
     }
@@ -294,6 +237,13 @@ function Undo-PktmonState {
         if (-not [string]::IsNullOrWhiteSpace($script:filterSnapshotPath)) {
             Remove-Item -LiteralPath $script:filterSnapshotPath -Force -ErrorAction SilentlyContinue
         }
+        # 되돌리기가 끝났다는 표식. 성공 = 잡기 멈춤 성공 ∧ 거르개 되돌리기 성공.
+        #
+        # 거르개만 보고 표식을 세우면 이런 구멍이 생긴다 — pktmon stop 이 실패했는데
+        # 거르개는 되돌려진 경우, 잡기 창 표식이 지워져 두 번째 Stop 이
+        # CAPTURE_STATE_MISSING 로 되돌아가고 잡기가 영원히 도는 채로 남는다.
+        # 고침이 새 사고를 만드는 모양이라 두 조건을 함께 본다.
+        $script:pktmonUndoSucceeded = $stopClean
     }
 }
 
@@ -321,47 +271,6 @@ function Get-TcpFallbackInterfaceIndex {
     return $null
 }
 
-# 실행 폴더에 남긴 시각을 다시 읽을 때 쓴다.
-#
-# ConvertFrom-Json 은 ISO-8601 모양의 글자를 [datetime] 으로 바꿔 놓는다. 그 값을
-# [string] 로 되돌리면 현재 문화권 서식의 "현지 시각·초 단위" 글자가 나온다
-# (실측: "2026-08-17T06:35:26.2726621+00:00" -> "08/17/2026 15:35:26").
-# 그대로 -PolicyAppliedAtUtc 와 견주면 같은 초에 걸린 두 시각이 "앞선다"로 뒤집혀
-# UNOBSERVED ⑤ 로 닫힌다. 기록으로 남는 값도 UTC 가 아니게 된다.
-# 2026-08-17 실측: 정책과 잡기 시작 간격 0.2초 -> CAPTURE_BEFORE_POLICY · 10초 -> 정상.
-function ConvertTo-RoundTripUtcText {
-    param($Value)
-
-    if ($Value -is [datetimeoffset]) { return $Value.ToUniversalTime().ToString("O") }
-    if ($Value -is [datetime]) { return ([datetimeoffset]$Value).ToUniversalTime().ToString("O") }
-    return [string]$Value
-}
-
-# 꾸러미 줄 하나에서 구성 요소 번호를 뽑는다.
-#
-# pktmon etl2txt 의 칸 이름표는 창 표시 언어를 따라 번역된다. 이 PC 실측(2026-08-17):
-#   영어  ... Direction Tx , Type Ethernet , Component 80, Edge 1, Filter 1, ...
-#   한국어 ... 방향 Tx , 유형 Ethernet , 구성 요소 80, 에지 1, 필터 1, ...
-# 그래서 "Component" 라는 이름표만 찾으면 한국어 PC 에서는 한 줄도 안 걸리고,
-# 잡기가 정상이어도 꾸러미 0개(NO_PACKET_CAPTURED)로 닫힌다.
-#
-# 이름표가 번역돼도 칸의 자리는 같다. 쉼표로 나눈 순서는 이렇다.
-#   0 PktGroupId · 1 PktNumber · 2 모양 · 3 방향 · 4 유형 · 5 구성 요소 · 6 에지 · 7 필터
-#   · 8 OriginalSize · 9 LoggedSize
-# 자리로 뽑은 값이 지도에 없으면 세지 않으므로, 서식이 바뀌어도 틀린 값을 만들지 않는다.
-function Get-PacketComponentId {
-    param([Parameter(Mandatory)][string]$Line)
-
-    $match = [regex]::Match($Line, '(?i)\bComponent\s*[:=]?\s*(\d+)')
-    if ($match.Success) { return $match.Groups[1].Value }
-
-    $fields = $Line.Split(',')
-    if ($fields.Count -lt 10) { return $null }
-    $fieldMatch = [regex]::Match($fields[5], '(\d+)\s*$')
-    if (-not $fieldMatch.Success) { return $null }
-    return $fieldMatch.Groups[1].Value
-}
-
 $observation = [ordered]@{
     caseId                = $CaseId
     observedPath          = "UNOBSERVED"
@@ -373,6 +282,36 @@ $observation = [ordered]@{
 }
 
 try {
+    # --- 순수 해석 함수 들여오기 -------------------------------------------
+    # 글자를 값으로 바꾸는 다섯 함수는 WfpObservationText.psm1 에 있다. 관찰 스크립트
+    # 안에 두면 시험이 부를 수 없기 때문이다(스크립트를 점 소스하면 본문이 통째로 돈다).
+    #
+    # $PSScriptRoot 는 이 스크립트 자기 폴더라 부르는 쪽 폴더를 안 따라간다.
+    # try 안에 두는 이유: 실패해도 JSON 한 줄로 닫히게 하려는 것이다. try 밖이면
+    # 예외가 그대로 나가 부르는 쪽이 결과를 한 줄도 못 받는다.
+    try {
+        # -Verbose:$false 를 붙이는 이유: 실기는 -Verbose 로 돌고, 그 값은 여기서 부르는
+        # 스크립트까지 그대로 내려온다. 그러면 사례 하나마다 들여오기 알림이 열몇 줄씩
+        # 쌓여 사람이 봐야 할 진단이 묻힌다. 결과 JSON 은 성공 스트림이고 이 알림은
+        # 자세히 스트림이라 섞이지는 않는다(실측 확인). 읽기 어려워지는 것만 막는다.
+        Import-Module -Name (Join-Path $PSScriptRoot "WfpObservationText.psm1") -ErrorAction Stop -Verbose:$false
+        # 같은 이름의 다른 모듈이 먼저 올라와 있는 경우를 막는다. 다섯 이름이 전부
+        # 실제로 풀리는지 여기서 확인한다.
+        foreach ($requiredFunction in @(
+            "ConvertFrom-PktmonFilterText", "Read-PktmonFilterRecord", "ConvertTo-RoundTripUtcText",
+            "Get-PacketComponentId", "ConvertFrom-PktmonComponentJson"
+        )) {
+            if ($null -eq (Get-Command -Name $requiredFunction -CommandType Function -ErrorAction SilentlyContinue)) {
+                throw ("OBSERVATION_MODULE_FUNCTION_MISSING:" + $requiredFunction)
+            }
+        }
+    }
+    catch {
+        [Console]::Error.WriteLine("OBSERVATION_MODULE_DIAGNOSTIC=" + ($_.Exception.Message -replace "\s+", " "))
+        Write-ToolResult -Status "UNAVAILABLE" -FailureReason "OBSERVATION_MODULE_UNAVAILABLE" -Extra $observation
+        return
+    }
+
     if (-not (Test-Path -LiteralPath $RunDirectory -PathType Container)) {
         Write-ToolResult -Status "ERROR" -FailureReason "RUN_DIRECTORY_MISSING" -Extra $observation
         return
@@ -568,53 +507,16 @@ try {
     }
 
     # --- 구성 요소 번호 -> 인터페이스 번호 지도 ------------------------------
-    # pktmon 의 구성 요소 번호는 인터페이스 번호와 다르다. pktmon list 로 지도를 만든다.
+    # 지도를 만드는 논리는 WfpObservationText.psm1 의 ConvertFrom-PktmonComponentJson
+    # 에 있다(실측 구조와 결함 기록도 그 함수 머리 주석에 함께 옮겼다).
     # 지도를 못 만들면 UNOBSERVED ③ 이다. 다른 도구로 임의로 대신하지 않는다.
-    # pktmon list --json 은 평평한 목록이 아니다. 실측 구조(2026-08-17)는 이렇다.
-    #   [ { "Group": "...", "Components": [ { "Id": 124, "Properties": [ { "Name": "ifIndex", "Value": 8 } ] } ] } ]
-    # 인터페이스 번호는 구성 요소의 직접 속성이 아니라 Properties 목록 안 이름/값 쌍이다.
-    # 옛 코드는 맨 바깥 객체에서 Id 와 ifIndex 를 직접 찾아, 지도가 늘 빈 채로 끝났다
-    # (꾸러미를 세어도 COMPONENT_INDEX_UNREADABLE 로 닫혔다).
-    # 평평한 목록으로 오는 판도 대비해 Components 가 없으면 그 객체 자체를 구성 요소로 본다.
+    #
+    # 빈 지도가 되는 갈래는 셋이고 전부 그대로다 — 종료 코드가 0 이 아님 · JSON 파싱
+    # 실패 · 항목 없음.
     $componentToInterface = @{}
     $listResult = Invoke-Pktmon -Arguments @("list", "--json")
     if ($listResult.ExitCode -eq 0) {
-        try {
-            $listJson = ($listResult.Output -join "`n") | ConvertFrom-Json
-            foreach ($group in @($listJson)) {
-                if ($null -eq $group) { continue }
-                $groupComponents = if ($group.PSObject.Properties.Name -contains "Components") { @($group.Components) } else { @($group) }
-                foreach ($component in $groupComponents) {
-                    if ($null -eq $component) { continue }
-
-                    $componentId = $null
-                    foreach ($name in @("Id", "ComponentId", "id")) {
-                        if ($component.PSObject.Properties.Name -contains $name) { $componentId = [string]$component.$name; break }
-                    }
-                    if ([string]::IsNullOrWhiteSpace($componentId)) { continue }
-
-                    $interfaceIndex = $null
-                    # 먼저 직접 속성으로 있는지 본다.
-                    foreach ($name in @("InterfaceIndex", "IfIndex", "NetworkInterfaceIndex", "ifIndex")) {
-                        if ($component.PSObject.Properties.Name -contains $name) { $interfaceIndex = [string]$component.$name; break }
-                    }
-                    # 없으면 Properties 목록에서 이름으로 찾는다.
-                    if ([string]::IsNullOrWhiteSpace($interfaceIndex)) {
-                        foreach ($property in @($component.Properties)) {
-                            if ($null -eq $property) { continue }
-                            if ([string]$property.Name -in @("ifIndex", "IfIndex", "InterfaceIndex", "NetworkInterfaceIndex")) {
-                                $interfaceIndex = [string]$property.Value
-                                break
-                            }
-                        }
-                    }
-                    if ([string]::IsNullOrWhiteSpace($interfaceIndex)) { continue }
-
-                    $componentToInterface[$componentId] = [int]$interfaceIndex
-                }
-            }
-        }
-        catch { $componentToInterface = @{} }
+        $componentToInterface = ConvertFrom-PktmonComponentJson -Json ($listResult.Output -join "`n")
     }
 
     # --- 잡힌 꾸러미를 인터페이스별로 센다 -----------------------------------
@@ -696,5 +598,20 @@ finally {
             [Console]::Error.WriteLine("PKTMON_UNDO_DIAGNOSTIC=" + ($_.Exception.Message -replace "\s+", " ") +
                 " record=" + [string]$script:filterSnapshotPath)
         }
+    }
+
+    # --- -Mode Stop 재실행 안전 (A-2) --------------------------------------
+    # 지금까지 Stop 은 잡기 창 표식({사례}.capture-state.json)을 안 지웠다. 그래서
+    # 두 번째 Stop 이 초기 관문(CAPTURE_STATE_MISSING)을 안 만나고 그대로 진행해,
+    # 되돌릴 목록 없이 `pktmon filter remove` 를 불렀다 — 그 명령은 우리 거르개만이
+    # 아니라 이 PC 에 걸린 거르개를 전부 지운다.
+    #
+    # 지우는 자리를 되돌리기 "뒤"에 두는 것이 핵심이다. try 안에서 지우면 되돌리기보다
+    # 앞이 되어, 되돌리기가 실패했는데도 표식이 사라진다. PowerShell 의 try/catch/finally
+    # 는 새 범위를 안 만들므로 $statePath 가 여기서 그대로 보인다. 다만 실행 폴더가 없어
+    # 그 변수를 만들기 전에 되돌아간 실행이 있으므로 빈 값 검사를 함께 건다.
+    if ($Mode -eq "Stop" -and $script:pktmonUndoSucceeded -and
+        -not [string]::IsNullOrWhiteSpace([string]$statePath)) {
+        Remove-Item -LiteralPath $statePath -Force -ErrorAction SilentlyContinue
     }
 }

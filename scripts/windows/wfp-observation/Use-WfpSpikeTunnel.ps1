@@ -31,7 +31,19 @@ param(
     # 단계 2 "터널 너머로 실제 통신됨"을 재는 대상.
     # 주소를 스크립트에 적어 두지 않고 인자로 받는다 (§4.1 과 같은 규칙).
     [ipaddress]$ReachabilityAddress,
-    [ValidateRange(1, 60000)][int]$ReachabilityTimeoutMs = 4000
+    [ValidateRange(1, 60000)][int]$ReachabilityTimeoutMs = 4000,
+
+    # 하네스를 먼저 끝내고 정책이 0건인지 다시 센 뒤 정리로 들어갑니다.
+    # 사람이 이 스위치를 준 실행에서만 동작합니다.
+    #
+    # 무인 자동 경로를 만들지 않는다 (NFR-03). PowerShell 스위치는 기본이 꺼짐이라
+    # 기본값을 따로 적지 않는다. 이 저장소 안에서 이 스위치를 붙여 이 스크립트를
+    # 부르는 자리는 0건이다 — 켜는 길은 사람이 명령줄에 직접 적는 것뿐이다.
+    [switch]$StopHarnessFirst,
+
+    # 하네스를 끝낸 뒤 정책이 사라지기를 기다리는 시간(밀리초). 기본 2000.
+    # 상한을 거는 이유: 없으면 사고 복구 경로가 사람 손 없이 오래 멈춘다.
+    [ValidateRange(0, 60000)][int]$HarnessStopWaitMs = 2000
 )
 
 $ErrorActionPreference = "Stop"
@@ -105,10 +117,36 @@ function Get-NetworkFingerprint {
 
 # 터널이 아직 없을 때의 기본 경로 인터페이스 = 기준 인터페이스.
 function Get-DefaultRouteInterfaceIndex {
-    $route = @(Get-NetRoute -DestinationPrefix "0.0.0.0/0" -ErrorAction SilentlyContinue |
-            Sort-Object -Property RouteMetric, InterfaceMetric) | Select-Object -First 1
-    if ($null -eq $route) { return $null }
-    return [int]$route.InterfaceIndex
+    # 기본 경로가 여럿일 때 "실제로 나가는 길"을 고른다.
+    #
+    # 옛 코드가 틀린 자리 두 곳 (2026-08-18 실측으로 확인):
+    #   ① `Sort-Object RouteMetric, InterfaceMetric` — `InterfaceMetric` 은
+    #      Get-NetRoute 결과에 **없는 속성**이다(Get-NetIPInterface 쪽에 있다).
+    #      그래서 두 번째 정렬 기준이 늘 비어 있었다.
+    #   ② 끊긴 랜카드의 낡은 기본 경로를 거르지 않았다. 실측: 이더넷 17 이
+    #      Disconnected 인데 기본 경로가 남아 있었고, 둘 다 RouteMetric 0 이라
+    #      먼저 나온 17 이 뽑혔다. 실제로 나가는 길은 Wi-Fi 8 이었다.
+    #      멀쩡한 제품이 UNEXPECTED_INTERFACE 로 적힐 수 있는 자리다.
+    #
+    # 그래서 어댑터가 'Up' 인 것만 후보로 두고, 두 metric 을 제대로 붙여 정렬한다.
+    # 후보가 하나도 없으면 못 정한 것으로 두고 null 을 돌려준다 — 채우지 않는다(§4.0).
+    $routes = @(Get-NetRoute -DestinationPrefix "0.0.0.0/0" -ErrorAction SilentlyContinue)
+    if ($routes.Count -eq 0) { return $null }
+
+    $candidates = foreach ($r in $routes) {
+        $adapter = Get-NetAdapter -InterfaceIndex $r.InterfaceIndex -ErrorAction SilentlyContinue
+        if ($null -eq $adapter -or $adapter.Status -ne "Up") { continue }
+        $ipInterface = Get-NetIPInterface -InterfaceIndex $r.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue
+        [pscustomobject]@{
+            InterfaceIndex  = [int]$r.InterfaceIndex
+            RouteMetric     = [int]$r.RouteMetric
+            InterfaceMetric = if ($null -eq $ipInterface) { [int]::MaxValue } else { [int]$ipInterface.InterfaceMetric }
+        }
+    }
+
+    $picked = @($candidates | Sort-Object -Property RouteMetric, InterfaceMetric, InterfaceIndex) | Select-Object -First 1
+    if ($null -eq $picked) { return $null }
+    return [int]$picked.InterfaceIndex
 }
 
 function Get-TunnelAdapter {
@@ -139,6 +177,12 @@ $tunnelState = [ordered]@{
     ipv6DefaultRouteViaTunnel = $false
     ipv6Verdict               = "INCONCLUSIVE"
     baselineInterfaceIndex    = $null
+    # 아래 두 칸은 모드가 달라도 늘 있다. 읽는 쪽이 칸이 있나 없나로 갈라지지 않게 한다.
+    # Prepare · Verify 결과에도 같은 두 칸이 나온다.
+    harnessStopRequested      = $false
+    # 실제로 끝낸 프로세스 수. 못 세면 0 이 아니라 null 이다 —
+    # "0건 확인"과 "못 셈"은 다른 사실이다. 갈래에 안 들어갔으면 null 이다.
+    harnessProcessesStopped   = $null
 }
 
 try {
@@ -307,6 +351,115 @@ try {
     if ($null -ne $adapter) {
         $tunnelState.tunnelUp = ([string]$adapter.Status -eq "Up")
         $tunnelState.tunnelInterfaceIndex = [int]$adapter.InterfaceIndex
+    }
+
+    # =======================================================================
+    # [신설] 사람이 고른 정리 갈래 — 하네스를 먼저 끝낸다 (A-1)
+    #
+    # 이 갈래는 -StopHarnessFirst 를 사람이 직접 준 실행에서만 돈다. 스위치를 안 준
+    # 실행은 이 블록을 통째로 건너뛰고 아래 기존 관문으로 곧장 간다. 기존 블록을
+    # 한 글자도 안 고치고 "앞에" 붙인 이유가 그것이다 — 스위치 없는 실행이 글자 그대로
+    # 같은 경로를 지나는 것이 읽어서가 아니라 코드로 증명된다.
+    #
+    # 순서 잠금은 무르지 않는다. 이 갈래는 아래 관문을 대체하지 않고 그 "앞"에 선다.
+    # 하네스가 안 죽었으면 여기서 멈추므로 터널을 내리는 명령까지 내려가지 않는다.
+    # (그 명령 글자를 주석에 적지 않는다 — 회귀 확인이 이 파일에서 그 글자가 딱 한 번,
+    #  곧 실제 호출 자리에서만 나오는 것을 센다.)
+    #
+    # 대가: netsh wfp show state 가 한 번 더 돈다 (이 갈래 1회 + 기존 관문 1회 = 2회).
+    # 사고 복구 경로라 이 대가를 받는다.
+    # =======================================================================
+    if ($StopHarnessFirst) {
+        $tunnelState.harnessStopRequested = $true
+
+        # --- ① 알림 -------------------------------------------------------
+        # 표준 출력은 결과 JSON 한 줄이고 부르는 쪽이 마지막 줄을 파싱한다.
+        # 그래서 사람이 읽는 글자는 경고 스트림으로 낸다 — `& <경로>` 는 성공 스트림만
+        # 잡으므로 이 글자가 결과 JSON 에 섞이지 않는다.
+        Write-Warning "사람이 고른 갈래로 들어갑니다: 하네스 종료 → 대기 → 정책 재열거 → 정리 관문."
+
+        # --- ② 하네스 종료 시도 --------------------------------------------
+        # 끝낼 대상은 개수를 세는 쪽과 같은 이름 하나뿐이다
+        # (Get-WfpOwnedPolicyState.ps1 의 $harnessProcessName). 세는 것과 끝내는 것의
+        # 대상이 어긋나면 ④가 영영 통과 못 하거나 엉뚱한 것을 죽인다.
+        # VpnRouter.Service · VpnRouter.App 은 건드리지 않는다 — 그 둘은
+        # restore-network-dev.ps1 의 몫이다.
+        $harnessProcessName = "VpnRouter.WfpSpike.Harness"
+        if ($null -eq (Get-Command -Name "Get-Process" -ErrorAction SilentlyContinue)) {
+            $tunnelState.harnessProcessesStopped = $null
+        }
+        else {
+            $harnessQueryErrors = $null
+            $harnessProcesses = @(Get-Process -Name $harnessProcessName -ErrorAction SilentlyContinue -ErrorVariable harnessQueryErrors)
+            # 이름에 맞는 프로세스가 없을 때도 오류가 하나 올라온다. 그것은 "0건"이지
+            # 실패가 아니다. 그 밖의 오류(접근 거부 등)는 "못 셈"이다.
+            $realHarnessErrors = @($harnessQueryErrors | Where-Object {
+                [string]$_.FullyQualifiedErrorId -notlike "NoProcessFoundForGivenName*"
+            })
+            if ($realHarnessErrors.Count -gt 0) {
+                [Console]::Error.WriteLine("HARNESS_QUERY_DIAGNOSTIC=" +
+                    ((@($realHarnessErrors | ForEach-Object { [string]$_.Exception.Message }) -join " ") -replace "\s+", " "))
+                $tunnelState.harnessProcessesStopped = $null
+            }
+            else {
+                $harnessStoppedCount = 0
+                foreach ($harnessProcess in $harnessProcesses) {
+                    try {
+                        $harnessProcess.Kill()
+                        [void]$harnessProcess.WaitForExit(5000)
+                        $harnessStoppedCount++
+                    }
+                    catch {
+                        [Console]::Error.WriteLine("HARNESS_STOP_DIAGNOSTIC=" + ($_.Exception.Message -replace "\s+", " "))
+                    }
+                }
+                $tunnelState.harnessProcessesStopped = $harnessStoppedCount
+            }
+        }
+
+        # --- ③ 정책이 사라질 시간을 준다 ------------------------------------
+        # 동적 세션은 프로세스가 죽으면 반드시 사라지지만
+        # (NativeSessionBuffer.cs:36 FWPM_SESSION_FLAG_DYNAMIC), 그것이 곧바로
+        # 열거에 반영되지는 않는다.
+        if ($HarnessStopWaitMs -gt 0) { Start-Sleep -Milliseconds $HarnessStopWaitMs }
+
+        # --- ④ 정책 재열거 --------------------------------------------------
+        # 기존 관문과 "같은 순서"로 읽는다 — 세 신호가 전부 OK 인 것을 먼저 보고
+        # 나서만 개수를 정수로 읽는다. 빈 값을 [int] 로 바꿔 0 이 되는 자리를
+        # 새로 만들지 않는다.
+        $harnessStopEnumeratorPath = Join-Path $PSScriptRoot "Get-WfpOwnedPolicyState.ps1"
+        if (-not (Test-Path -LiteralPath $harnessStopEnumeratorPath -PathType Leaf)) {
+            Write-ToolResult -Status "ERROR" -FailureReason "POLICY_ENUMERATOR_MISSING" -Extra $tunnelState
+            return
+        }
+        $afterStopJson = & $harnessStopEnumeratorPath -RunDirectory $RunDirectory -Label "after-harness-stop"
+        $afterStopState = $null
+        $afterStopLines = @($afterStopJson | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+        if ($afterStopLines.Count -gt 0) {
+            try { $afterStopState = ([string]$afterStopLines[-1] | ConvertFrom-Json) } catch { $afterStopState = $null }
+        }
+        if ($null -eq $afterStopState -or [string]$afterStopState.status -ne "OK") {
+            Write-ToolResult -Status "ERROR" -FailureReason "POLICY_STATE_UNREADABLE" -Extra $tunnelState
+            return
+        }
+        $afterStopSignalsComplete = [string]$afterStopState.signals.ownedPolicyEnumeration -eq "OK" -and
+            [string]$afterStopState.signals.ownerSession -eq "OK" -and
+            [string]$afterStopState.signals.harnessProcess -eq "OK"
+        if (-not $afterStopSignalsComplete) {
+            [Console]::Error.WriteLine("POLICY_SIGNALS_INCOMPLETE=" + (($afterStopState.signals | ConvertTo-Json -Compress) -replace "\s+", " "))
+            Write-ToolResult -Status "ERROR" -FailureReason "POLICY_STATE_UNREADABLE" -Extra $tunnelState
+            return
+        }
+
+        # 우리가 끝내려던 것이 안 끝났으면 여기서 멈춘다.
+        # 이 낱말은 "하네스·세션이 아직 살아 있다"만 뜻한다. 정책만 남은 경우는
+        # 아래 기존 관문의 POLICY_STILL_PRESENT 가 낸다 — 새 갈래는 기존 관문을
+        # 대체하지 않는다.
+        if ([int]$afterStopState.harnessProcessCount -ne 0 -or [int]$afterStopState.ownerSessionCount -ne 0) {
+            Write-Warning "하네스를 끝내려 했지만 아직 살아 있습니다. 정책이 남은 채로 터널을 내리면 죽은 주소를 가리키는 정책이 남으므로 여기서 멈춥니다. 하네스를 직접 끝낸 뒤 다시 돌리십시오."
+            Write-ToolResult -Status "ERROR" -FailureReason "HARNESS_STILL_RUNNING" -Extra $tunnelState
+            return
+        }
     }
 
     # 순서 잠금 — 정책이 0건인 것을 먼저 확인한다.

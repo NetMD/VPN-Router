@@ -1,0 +1,32 @@
+name: PowerShell fixture tests
+
+# 밀 때마다 돈다. 가지에만 걸고 태그에는 안 건다 —
+# 태그를 밀 때 릴리스 워크플로와 함께 도는 것을 막는다.
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+# 최소 권한. 이 워크플로는 저장소를 바꾸지 않고 아무것도 올리지 않는다.
+permissions:
+  contents: read
+
+# 시험이 빠르고 이 기계 상태를 안 바꾸므로 취소가 안전하다.
+concurrency:
+  group: powershell-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fixtures:
+    name: Observation fixture tests
+    # windows-latest 는 이미지가 바뀌면 조용히 따라간다. 이 워크플로의 주제가 그 반대다.
+    runs-on: windows-2022
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      # 여기서 도는 것은 새 PowerShell 고정값 시험 하나뿐이다.
+      # 빌드와 C# 시험은 넣지 않는다 — 재시도로 덮어 둔 불안정을 밀 때마다 물려받게 된다.
+      # 한국어 글자가 들어 있으므로 pwsh 로 고정한다.
+      - name: Run observation fixture tests
+        shell: pwsh
+        run: ./scripts/windows/wfp-observation-tests/Test-WfpObservationFixture.ps1

@@ -17,6 +17,12 @@ $ProgressPreference = "SilentlyContinue"
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\.."))
 $fixtureRoot = Join-Path $PSScriptRoot "fixtures\wfp-spike"
 $harnessProject = Join-Path $repoRoot "windows\VpnRouter.WfpSpike.Harness\VpnRouter.WfpSpike.Harness.csproj"
+# 빌드·시험 대상은 여기서 한 번만 만든다. 실행 자리마다 `.\windows\...` 처럼 적으면
+# 그 경로가 "부르는 쪽 폴더" 기준이 되어, 이 스크립트를 하위 폴더에서 부르는 순간
+# 다른 파일을 찾거나 못 찾는다. 매직 경로를 실행 자리마다 적지 않는다.
+$solutionPath = Join-Path $repoRoot "windows\VpnRouter.slnx"
+$vsSolutionPath = Join-Path $repoRoot "windows\VpnRouterVs.sln"
+$testsProject = Join-Path $repoRoot "windows\VpnRouter.Tests\VpnRouter.Tests.csproj"
 $buildScript = Join-Path $PSScriptRoot "build-portable.ps1"
 $runStartedAtUtc = [DateTimeOffset]::UtcNow
 $runNonce = [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(24)).ToLowerInvariant()
@@ -565,6 +571,25 @@ function Test-Fixtures {
     $rejected = $false
     try { Assert-LimitedResult -Result $failInconclusiveCode } catch { $rejected = $true }
     if (-not $rejected) { throw "NEGATIVE_RESULT_GATE_INVALID" }
+
+    # --- 관찰 도구의 고정값 회귀 시험 ---------------------------------------
+    # 위 검사들은 판정 계약과 결과 모양을 본다. 관찰 도구가 바깥 도구의 글자 출력을
+    # 어떻게 읽는지는 아무도 안 봤고, 지난 차수에 바로 그 자리에서 결함이 여러 건 나왔다.
+    # 그 시험을 여기에 잇는다.
+    #
+    # $PSScriptRoot 기준이라 부르는 쪽 폴더를 안 따라간다.
+    $fixtureTestScript = Join-Path $PSScriptRoot "wfp-observation-tests\Test-WfpObservationFixture.ps1"
+    if (-not (Test-Path -LiteralPath $fixtureTestScript -PathType Leaf)) { throw "OBSERVATION_FIXTURE_TESTS_MISSING" }
+    $observationFixtureSummary = & $fixtureTestScript -AsObject
+    # 시험이 0건인 것을 "전부 통과"로 읽지 않는다. 파일을 못 찾았거나 목록이 빈 것은
+    # 통과가 아니라 실패다 — "관찰 못 함을 성공으로 적지 않는다"의 시험 판이다.
+    if ($null -eq $observationFixtureSummary -or
+        [int]$observationFixtureSummary.total -lt 1 -or
+        [int]$observationFixtureSummary.failed -ne 0) {
+        # 어느 시험이 실패했는지는 실행 폴더에 남긴다. 결과 JSON 에는 안 넣는다.
+        Write-RunDirectoryText -FileName "observation-fixture-tests.json" -Text ($observationFixtureSummary | ConvertTo-Json -Depth 5)
+        throw "OBSERVATION_FIXTURE_TESTS_FAILED"
+    }
 }
 
 function Get-NetworkFingerprint {
@@ -641,7 +666,15 @@ function Invoke-LoggedCommand {
 
     $logPath = Join-Path $temporaryRoot ("step-" + $Name + ".tmp")
     $stepFailed = $true
+    # 절대 경로만으로는 부족하다. dotnet 은 global.json · NuGet.Config 를 "부르는 쪽
+    # 폴더"부터 위로 찾는다. 오늘은 이 저장소에 그 둘이 0건이라 절대 경로만으로도
+    # 되지만(실측 2026-08-18), 나중에 global.json 이 하나 생기는 순간 다시 매인다.
+    # 여기서 작업 폴더를 고정해 그 계열을 통째로 닫는다.
+    # 이름 붙인 자리표를 쓰는 이유: 다른 코드의 자리 스택과 안 섞이게.
+    $locationPushed = $false
     try {
+        Push-Location -LiteralPath $repoRoot -StackName "wfpSpikeCommand"
+        $locationPushed = $true
         & $Command *> $logPath
         $exitCode = if ($LASTEXITCODE -is [int]) { [int]$LASTEXITCODE } else { 0 }
         $stepFailed = $exitCode -ne 0
@@ -656,6 +689,9 @@ function Invoke-LoggedCommand {
         return 1
     }
     finally {
+        # 자리를 되돌린다. 밀어 넣기 자체가 실패했으면 꺼내지 않는다 —
+        # 빈 자리표에서 꺼내면 여기서 새 예외가 나 진짜 원인을 덮는다.
+        if ($locationPushed) { Pop-Location -StackName "wfpSpikeCommand" }
         # 성공했으면 지금처럼 그냥 지운다. 실패했을 때만 원문을 실행 폴더로 옮긴다.
         if ($stepFailed -and (Test-Path -LiteralPath $logPath -PathType Leaf) -and
             (Test-Path -LiteralPath $runDirectory -PathType Container)) {
@@ -868,7 +904,9 @@ function Get-FeatureManifest {
         $filePath = Join-Path $repoRoot $relativePath.Replace('/', '\')
         $file = Get-Item -LiteralPath $filePath -Force
         if (($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "FEATURE_MANIFEST_SCOPE_INVALID" }
-        $stageLine = @(git ls-files --stage -- $relativePath) | Select-Object -First 1
+        # -C $repoRoot 를 붙인다. git 의 pathspec 은 "부르는 쪽 폴더" 기준이라
+        # 이 스크립트를 하위 폴더에서 부르면 색인 조회가 다른 자리를 본다.
+        $stageLine = @(& git -C $repoRoot ls-files --stage -- $relativePath) | Select-Object -First 1
         if ($LASTEXITCODE -ne 0) { throw "FEATURE_MANIFEST_SCOPE_INVALID" }
         $indexBlobOid = $null
         if (-not [string]::IsNullOrWhiteSpace($stageLine)) {
@@ -1777,10 +1815,17 @@ try {
     $currentGate = "WORKTREE_BEFORE"
     $featureManifestBefore = Get-FeatureManifest
 
-    # HEAD 와 견준다. `git diff` 만 쓰면 작업 폴더와 색인을 견주므로
-    # `git add` 로 색인에 올린 변경이 이 관문을 그냥 지나간다 (AC-01-4).
+    # HEAD 와 견준다. HEAD 를 안 적으면 작업 폴더와 색인을 견주므로
+    # 색인에 이미 올린 변경이 이 관문을 그냥 지나간다 (AC-01-4).
     # `HEAD --` 를 붙이면 올린 것과 안 올린 것을 함께 본다.
-    $protectedDiff = @(git diff --name-only HEAD -- macos docs/v0.1.0-release-plan.md artifacts)
+    # (아래 명령 글자를 주석에 그대로 적지 않는다 — 회귀 확인이 "작업 폴더를 안 고정한
+    #  자리"를 글자 무늬로 세는데, 주석이 섞이면 고쳐 놓고도 걸린 것처럼 보인다.)
+    # -C $repoRoot 를 붙이는 것은 폴더 독립만을 위한 것이 아니다. pathspec 이
+    # "부르는 쪽 폴더" 기준이라, 하위 폴더에서 부르면 이 관문이 보호 폴더를 거의
+    # 안 본다 — 실측(2026-08-18): scripts\windows 를 작업 폴더로 두고 macos 폴더의
+    # 색인 목록을 물으면 0개, 저장소 뿌리를 작업 폴더로 두면 368개다.
+    # 즉 이 한 줄은 폴더 독립일 뿐 아니라 관문의 실질적 구멍을 막는 일이다.
+    $protectedDiff = @(& git -C $repoRoot diff --name-only HEAD -- macos docs/v0.1.0-release-plan.md artifacts)
     if ($LASTEXITCODE -ne 0 -or $protectedDiff.Count -ne 0) {
         $finalResult = New-LimitedResult -Mode "DRY_RUN" -Verdict "FAIL" -Fingerprint "MATCH" -FailureCode "AUTOMATED_GATE_FAILED"
         $scriptExitCode = 1
@@ -1791,13 +1836,13 @@ try {
     $beforeFingerprint = Get-NetworkFingerprint
     $currentGate = "AUTOMATED_COMMANDS"
     $solutionBuildExitCode = Invoke-LoggedCommand -Name "solution-build" -Command {
-        dotnet build .\windows\VpnRouter.slnx -nr:false
+        dotnet build $solutionPath -nr:false
     }
     $vsSolutionBuildExitCode = Invoke-LoggedCommand -Name "vs-solution-build" -Command {
-        dotnet build .\windows\VpnRouterVs.sln -nr:false
+        dotnet build $vsSolutionPath -nr:false
     }
     $testExitCode = Invoke-LoggedCommand -Name "focused-tests" -Command {
-        dotnet run --project .\windows\VpnRouter.Tests\VpnRouter.Tests.csproj --no-build
+        dotnet run --project $testsProject --no-build
     }
 
     $publishExitCode = 1
@@ -1871,7 +1916,7 @@ try {
         break
     }
 
-    $commit = (git rev-parse HEAD).Trim()
+    $commit = (& git -C $repoRoot rev-parse HEAD).Trim()
     if ($LASTEXITCODE -ne 0 -or $commit -notmatch '^[0-9a-fA-F]{40}$|^[0-9a-fA-F]{64}$') {
         $finalResult = New-LimitedResult -Mode "DRY_RUN" -Verdict "FAIL" -Fingerprint $fingerprintState -FailureCode "AUTOMATED_GATE_FAILED"
         $scriptExitCode = 1

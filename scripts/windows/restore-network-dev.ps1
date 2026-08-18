@@ -1,5 +1,10 @@
 param(
-    [switch]$ResetDnsToDhcp
+    [switch]$ResetDnsToDhcp,
+
+    # 기본 두 뿌리 밖에 남은 자리(지난 차수의 예행 폴더 등)를 한 번 훑을 때 쓴다.
+    # 아무 폴더나 훑게 두지 않는다 — 경계 3겹은 아래 Get-RestoreRunRootVerdict 에 있다.
+    # 사용자 폴더를 통째로 재귀하는 자리를 만들지 않는다.
+    [string[]]$AdditionalRunRoot = @()
 )
 
 $ErrorActionPreference = "Stop"
@@ -45,6 +50,43 @@ function Assert-NoReparsePath {
     }
 }
 
+# --- 훑을 뿌리 목록 ---------------------------------------------------------
+# 지금까지는 뿌리가 하나(wfp-spike-runs)뿐이라, 손으로 돈 예행이 남긴 잔여물을
+# 이 도구가 아예 못 봤다. 그렇다고 2026-08-17 예행 폴더 이름(r4-preflight-dry 등)을
+# 도구에 박으면 다음 차수에 또 낡는다.
+#
+# 그래서 규약을 세운다 — 손으로 도는 예행은 wfp-spike-manual-runs\<이름> 아래에
+# 만든다. 그러면 도구가 앞으로 저절로 덮는다. 지난 차수 폴더는 -AdditionalRunRoot 로
+# 한 번 훑는다.
+$restoreRunRootBoundary = Join-Path $env:LOCALAPPDATA "VpnRouter"
+$restoreRunRoots = @(
+    (Join-Path $env:LOCALAPPDATA "VpnRouter\wfp-spike-runs"),          # 자동 실행이 만드는 자리
+    (Join-Path $env:LOCALAPPDATA "VpnRouter\wfp-spike-manual-runs")    # 손으로 도는 예행 자리 (새 규약)
+) + @($AdditionalRunRoot | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+
+# 뿌리 하나가 훑어도 되는 자리인지 본다. 경계 3겹 —
+#   (가) %LOCALAPPDATA%\VpnRouter 아래여야 한다
+#   (나) 실제로 있어야 한다 (없으면 만들지 않는다)
+#   (다) 접합이나 바로가기로 바꿔치기된 자리가 아니어야 한다
+#
+# 셋을 하나의 답으로 합치지 않는다. "없다"와 "못 읽었다"는 다른 사실이기 때문이다 —
+# 없는 뿌리는 잔여물이 정말 0건이지만, 못 읽은 뿌리는 0건이 아니라 모르는 것이다.
+function Get-RestoreRunRootVerdict {
+    param([Parameter(Mandatory)][string]$Root)
+
+    try {
+        $fullRoot = [IO.Path]::GetFullPath($Root)
+        $fullBoundary = [IO.Path]::GetFullPath($restoreRunRootBoundary).TrimEnd('\') + '\'
+        if (-not $fullRoot.StartsWith($fullBoundary, [StringComparison]::OrdinalIgnoreCase)) {
+            return "UNREADABLE"
+        }
+        if (-not (Test-Path -LiteralPath $fullRoot -PathType Container)) { return "ABSENT" }
+        Assert-NoReparsePath -Path $fullRoot
+        return "SCAN"
+    }
+    catch { return "UNREADABLE" }
+}
+
 # --- 순서 1 : 고아 하네스 프로세스를 끝낸다 --------------------------------
 # 동적 세션은 프로세스가 죽으면 반드시 사라진다
 # (NativeSessionBuffer.cs:36 FWPM_SESSION_FLAG_DYNAMIC). 가장 흔한 경우를 여기서 푼다.
@@ -58,9 +100,10 @@ Get-Process VpnRouter.Service,VpnRouter.App,VpnRouter.WfpSpike.Harness -ErrorAct
 # 순서 1 뒤에도 0건이 아니면 그 사실을 적고 재부팅을 권한다.
 # 재부팅은 확실한 최후 수단이고, "0건 확인"을 대신하지 않는다.
 $policyEnumerator = Join-Path $PSScriptRoot "wfp-observation\Get-WfpOwnedPolicyState.ps1"
-$restoreRunRoot = Join-Path $env:LOCALAPPDATA "VpnRouter\wfp-spike-runs"
 $restoreLogRootUsable = $false
-$restoreLogRoot = Join-Path $restoreRunRoot "restore"
+# 기록 폴더는 첫 뿌리에 고정한다. 정책 세기는 뿌리 수와 무관하게 여전히 한 번만 돈다 —
+# netsh 상태 덤프(3MB 남짓)를 뿌리 수만큼 늘리지 않는다.
+$restoreLogRoot = Join-Path $restoreRunRoots[0] "restore"
 try {
     # netsh 가 이 폴더에 이 PC 네트워크 상태를 통째로 적는다(3MB 남짓).
     # 자리가 바꿔치기되어 있으면 그 파일이 남의 자리로 간다. 쓰기 전에 확인한다.
@@ -97,12 +140,52 @@ elseif (-not (Test-Path $policyEnumerator)) {
     Write-Warning "The owned-policy counter was not found. Owned WFP policy count is unknown."
 }
 
+# --- 뿌리를 훑어 잔여물 목록을 모은다 (순서 3 · 3b · 3c 공통) ---------------
+# 뿌리마다 한 번만 훑고 세 가지 잔여물을 한꺼번에 집는다. 훑기가 실패하면
+# "0건"이 아니라 "못 셌다"로 센다 — -ErrorAction SilentlyContinue 로 삼키면
+# 읽지 못한 폴더가 잔여물 0건으로 둔갑한다.
+$scannedRunRootCount = 0
+$unreadableRunRootCount = 0
+$leftoverRouteLogs = [Collections.Generic.List[object]]::new()
+$leftoverFilterRecords = [Collections.Generic.List[object]]::new()
+$leftoverTunnelRecords = [Collections.Generic.List[object]]::new()
+$leftoverFileNames = @("added-routes.json", "pktmon-filters-before.json", "tunnel-installed.json")
+
+foreach ($runRoot in $restoreRunRoots) {
+    $rootVerdict = Get-RestoreRunRootVerdict -Root $runRoot
+    if ($rootVerdict -eq "ABSENT") { continue }
+    if ($rootVerdict -eq "UNREADABLE") {
+        Write-Warning "이 뿌리를 읽지 못했습니다: $runRoot. 잔여물 0건이 아니라 ""못 셌다""입니다."
+        $unreadableRunRootCount++
+        continue
+    }
+
+    try {
+        $rootFiles = @(Get-ChildItem -LiteralPath $runRoot -Recurse -File -ErrorAction Stop |
+                Where-Object { $leftoverFileNames -contains $_.Name })
+    }
+    catch {
+        Write-Warning "이 뿌리를 읽지 못했습니다: $runRoot. 잔여물 0건이 아니라 ""못 셌다""입니다."
+        $unreadableRunRootCount++
+        continue
+    }
+    $scannedRunRootCount++
+
+    foreach ($rootFile in $rootFiles) {
+        switch ($rootFile.Name) {
+            "added-routes.json"            { $leftoverRouteLogs.Add($rootFile) }
+            "pktmon-filters-before.json"   { $leftoverFilterRecords.Add($rootFile) }
+            "tunnel-installed.json"        { $leftoverTunnelRecords.Add($rootFile) }
+        }
+    }
+}
+
 # --- 순서 3 : 실행 폴더에 남은 added-routes.json 의 경로를 지운다 -----------
 # 흐름 발생기가 /32(또는 /128) 경로를 심는다. 그 프로세스가 강제로 죽으면
 # finally 가 안 돌아 경로가 남는다. 남은 목록을 여기서 집는다.
-if (Test-Path $restoreRunRoot) {
+if ($leftoverRouteLogs.Count -gt 0) {
     Write-Host "Removing host routes left behind by the WFP spike flow generator..."
-    Get-ChildItem -Path $restoreRunRoot -Filter "added-routes.json" -Recurse -File -ErrorAction SilentlyContinue |
+    $leftoverRouteLogs |
         ForEach-Object {
             $routeLog = $_.FullName
             try { $addedRoutes = @(Get-Content $routeLog -Raw | ConvertFrom-Json) } catch { $addedRoutes = @() }
@@ -136,20 +219,17 @@ if (Test-Path $restoreRunRoot) {
 # 여기서는 잡기를 멈추는 것까지만 한다. 원래 거르개 목록을 되돌리는 일은
 # 그 파일에 무엇이 적혔는지에 달렸으므로 사람이 보고 판단하도록 파일을 남기고 알린다.
 # 지우지 않는다 — 되돌릴 목록을 우리가 없애면 되돌릴 길이 사라진다.
-if (Test-Path $restoreRunRoot) {
-    $leftoverFilterRecords = @(Get-ChildItem -Path $restoreRunRoot -Filter "pktmon-filters-before.json" -Recurse -File -ErrorAction SilentlyContinue)
-    if ($leftoverFilterRecords.Count -gt 0) {
-        Write-Host "Stopping a packet capture left behind by the WFP spike interface observer..."
-        $pktmonPath = Join-Path ${env:SystemRoot} "System32\pktmon.exe"
-        if (Test-Path -LiteralPath $pktmonPath -PathType Leaf) {
-            & $pktmonPath "stop" *> $null
-        }
-        else {
-            Write-Warning "pktmon.exe was not found at the standard location. The packet capture was not stopped."
-        }
-        foreach ($filterRecord in $leftoverFilterRecords) {
-            Write-Warning "A saved pktmon filter list is still on disk: $($filterRecord.FullName). Check it before relying on this machine's pktmon filters."
-        }
+if ($leftoverFilterRecords.Count -gt 0) {
+    Write-Host "Stopping a packet capture left behind by the WFP spike interface observer..."
+    $pktmonPath = Join-Path ${env:SystemRoot} "System32\pktmon.exe"
+    if (Test-Path -LiteralPath $pktmonPath -PathType Leaf) {
+        & $pktmonPath "stop" *> $null
+    }
+    else {
+        Write-Warning "pktmon.exe was not found at the standard location. The packet capture was not stopped."
+    }
+    foreach ($filterRecord in $leftoverFilterRecords) {
+        Write-Warning "A saved pktmon filter list is still on disk: $($filterRecord.FullName). Check it before relying on this machine's pktmon filters."
     }
 }
 
@@ -157,11 +237,16 @@ if (Test-Path $restoreRunRoot) {
 # Use-WfpSpikeTunnel.ps1 -Mode Prepare 가 터널을 올린 뒤 tunnel-installed.json 을 남긴다.
 # -Mode Teardown 이 그 파일을 지운다. 파일이 남아 있으면 정리가 안 끝난 것이다.
 # 아래 순서 4가 서비스를 멈추므로 여기서는 알리기만 한다.
-if (Test-Path $restoreRunRoot) {
-    Get-ChildItem -Path $restoreRunRoot -Filter "tunnel-installed.json" -Recurse -File -ErrorAction SilentlyContinue |
-        ForEach-Object {
-            Write-Warning "A test tunnel was installed but never torn down: $($_.FullName)"
-        }
+foreach ($tunnelRecord in $leftoverTunnelRecords) {
+    Write-Warning "A test tunnel was installed but never torn down: $($tunnelRecord.FullName)"
+}
+
+# 훑기 요약. 못 읽은 뿌리가 있으면 "잔여물 0건"이라고 적지 않는다.
+if ($unreadableRunRootCount -eq 0) {
+    Write-Host "Scanned run roots: $scannedRunRootCount. Unreadable run roots: 0."
+}
+else {
+    Write-Warning "Scanned run roots: $scannedRunRootCount. Unreadable run roots: $unreadableRunRootCount. Leftovers under the unreadable roots are unknown, not zero."
 }
 
 # --- 순서 4 : WireGuard 서비스 중지 (기존) ---------------------------------
@@ -284,5 +369,11 @@ if ($featureLeftovers.Count -gt 0) {
     $featureAfter = @(Get-ChildItem -Path $tempRoot -Directory -Filter "wfp-feature-*" -ErrorAction SilentlyContinue).Count
     Write-Host "Leftover test fixture folders after: $featureAfter. The focused test suite creates about 12 more on each run."
 }
+
+# --- 터널 안내 -------------------------------------------------------------
+# 이 파일에 /uninstalltunnelservice 는 0건이다. 순서 4가 하는 것은
+# Get-Service "WireGuardTunnel*" | Stop-Service 뿐이다.
+# 멈추는 것과 지우는 것은 다르다. 그 차이를 사람이 알게 여기서 말한다.
+Write-Warning "이 도구는 터널 서비스를 멈추기만 하고 지우지 않습니다. 되돌리기를 돌렸으면 그 뒤에 정리를 한 번 더 돌리십시오."
 
 Write-Host "Development network restore completed."

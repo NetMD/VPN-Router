@@ -145,6 +145,17 @@ $process = $null
 $installedRoute = $null
 
 try {
+    # 새 연결 차집합 판정은 WfpObservationText.psm1 의 Select-NewLocalPort 에 있다.
+    # $PSScriptRoot 는 이 스크립트 자기 폴더라 부르는 쪽 폴더를 안 따라간다.
+    # try 안에 두는 이유: 실패해도 JSON 한 줄로 닫히게 하려는 것이다.
+    # -Verbose:$false 는 실기가 -Verbose 로 돌 때 사례마다 들여오기 알림이 쌓이는 것을 막는다.
+    try { Import-Module -Name (Join-Path $PSScriptRoot "WfpObservationText.psm1") -ErrorAction Stop -Verbose:$false }
+    catch {
+        [Console]::Error.WriteLine("OBSERVATION_MODULE_DIAGNOSTIC=" + ($_.Exception.Message -replace "\s+", " "))
+        Write-ToolResult -Status "UNAVAILABLE" -FailureReason "OBSERVATION_MODULE_UNAVAILABLE" -Extra $flowState
+        return
+    }
+
     # --- ① 정책 적용 시각이 없으면 아무것도 하지 않는다 -------------------
     # 시각이 없으면 "정책이 걸린 뒤에 생긴 연결"을 가릴 수 없다. 가리지 못한 값을
     # 만들어 내보내면 그것은 측정이 아니다 (AC-03-2 · BL-08).
@@ -313,8 +324,8 @@ try {
         # 되짚을 수 있으면 주인 번호를 증거로 적되, 판정 조건으로 쓰지는 않는다.
         $appProcessBaseName = [IO.Path]::GetFileNameWithoutExtension($AppPath)
         while ([DateTimeOffset]::UtcNow -lt $deadline -and -not $observedConnection) {
-            $newLocalPorts = @(Get-TargetTcpLocalPort -Address $flowAddress -Port ([int]$TargetPort) |
-                    Where-Object { -not ($preexistingLocalPorts -contains [int]$_) })
+            $newLocalPorts = @(Select-NewLocalPort -PreexistingPort $preexistingLocalPorts `
+                    -ObservedPort @(Get-TargetTcpLocalPort -Address $flowAddress -Port ([int]$TargetPort)))
             if ($newLocalPorts.Count -gt 0) {
                 $observedConnection = $true
                 $flowState.newConnectionLocalPort = [int]$newLocalPorts[0]
