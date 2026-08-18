@@ -8,7 +8,9 @@
 
 **Windows 사용자 모드 WFP 의 `FwpmConnectionPolicyAdd0` + `NEXT_HOP_INTERFACE` 가 실제 라우팅을 바꾸지 않았다.** 정책·조건·다음 홉이 모두 올바른 상태에서 **양방향으로** 확인했다. 트래픽은 두 번 다 정책이 아니라 경로표를 따랐다.
 
-**결정(§7): 커널 driver 연구로 넘어간다.**
+**결정(§7): 커널 driver 연구로 넘어간다.** — **2026-08-18 조건부 재개됨. §12 를 먼저 읽을 것.**
+
+> **이 문서의 실측 결론은 그대로 유효하다.** 재개는 이 결론을 뒤집는 것이 아니라, 이 실기가 건드리지 않은 **다른 API 표면**(UWP VPN 플러그인의 `VpnChannel.StartWithTrafficFilter`)을 판별 시험 1회로 확인하는 것이다.
 
 ---
 
@@ -126,16 +128,20 @@ Microsoft 공식 문서:
 
 ## 7. 결정 — `R3-DEC-04`
 
+**상태: 2026-08-18 종결 → 같은 날 조건부 재개(REOPENED, 판별 시험 1회 한정).** 아래는 종결 당시 기록이며, 재개 사유와 조건은 §12 에 있다.
+
 **결정: 커널 driver 연구로 넘어간다.**
 **결정자: 사용자 · 결정일: 2026-08-18 · 근거: 이 문서 §2~§6**
 
 R4 프리브리프가 "R4·R5 는 근거만 모으고 결정하지 않는다"로 정해 둔 대로, 근거가 갖춰진 이 시점에 사용자가 결정했다.
 
 **함께 닫히는 것**
-- 사용자 모드 WFP 로 Windows 앱별 라우팅을 계속 시도하는 갈래는 닫는다
-- `R3-DEC-01`(helper·renderer 자동 포함)·`R3-DEC-02`(기존 연결 처리)는 이 결과를 **근거로만** 받는다. 사용자 모드 경로가 닫혔으므로 그 두 물음은 커널 방향에서 다시 물어야 한다
+- 사용자 모드 WFP **연결 정책**(`FwpmConnectionPolicyAdd0`)으로 Windows 앱별 라우팅을 계속 시도하는 갈래는 닫는다
+- `R3-DEC-01`(helper·renderer 자동 포함)·`R3-DEC-02`(기존 연결 처리)는 이 결과를 **근거로만** 받는다. 이 경로가 닫혔으므로 그 두 물음은 다시 물어야 한다
 
-**대비**: macOS 는 `NETransparentProxyProvider` 로 같은 제품 목표를 달성했다 (R3, `signedMac` PASS 실행 11 · 통과 11 · 실패 0). Windows 는 OS 가 사용자 모드에 같은 수준의 정식 수단을 주지 않는다는 것이 이번 결론이다.
+**대비**: macOS 는 `NETransparentProxyProvider` 로 같은 제품 목표를 달성했다 (R3, `signedMac` PASS 실행 11 · 통과 11 · 실패 0).
+
+> **2026-08-18 정정**: 종결 당시 여기에 "Windows 는 OS 가 사용자 모드에 같은 수준의 정식 수단을 주지 않는다"고 적었다. **그 문장은 너무 넓었다.** Windows 에는 사용자 모드 VPN 플러그인 플랫폼(`Windows.Networking.Vpn`)이 있고, 거기에는 앱을 실행 파일 경로로 지목하는 `VpnTrafficFilter` 가 있다. 이 실기가 잰 것은 **WFP 연결 정책 하나**이지 "Windows 사용자 모드 전체"가 아니다. 그 수단이 실제로 라우팅을 바꾸는지는 아직 아무도 모른다 — §12 참조.
 
 ---
 
@@ -170,3 +176,66 @@ R4 프리브리프가 "R4·R5 는 근거만 모으고 결정하지 않는다"로
 - 커널 driver **설계·구현** — 이 문서는 방향 결정까지다
 - `R3-DEC-05`(패키지 신원) 결정 — 미결 유지
 - 설정 파일 내용 기록 — 경로와 바꾼 항목 이름만 적었다
+
+---
+
+## 12. 재개 기록 — `R3-DEC-04` (2026-08-18)
+
+**상태 변경**: 종결(CLOSED, "커널 드라이버로 간다") → **조건부 재개(REOPENED, 판별 시험 1회 한정)**
+**변경자: 사용자 · 변경일: 2026-08-18**
+**전문**: `docs/R3-DEC-04-uwp-vpn-plugin-branch-verdict-2026-08-18.md` (조사 6명 · 적대 반박 3명)
+
+### 12-1. 재개 사유
+
+이 실기가 잰 것은 **WFP 연결 정책**(`FwpmConnectionPolicyAdd0` / `FWPM_LAYER_OUTBOUND_NETWORK_CONNECTION_POLICY_V4`) 하나다. 그와 **무관한 별도 표면**이 확인됐다 — `Windows.Networking.Vpn` (UWP VPN 플러그인 플랫폼)의 `VpnChannel.StartWithTrafficFilter` + `VpnTrafficFilter`.
+
+구조가 다르다. 흐름을 사후에 돌리는 것이 아니라, **채널을 여는 시점에 어떤 앱이 VPN L3 인터페이스에 붙는지를 선언**한다.
+
+**재개는 "구현 재개"가 아니라 "판별 시험 1회 허가"다.**
+
+### 12-2. 이 기계에서 실측한 것
+
+| 확인 | 결과 |
+|---|---|
+| `windows` 크레이트 0.28 이 필요한 API 를 노출하는가 | **전부 있음** — `StartWithTrafficFilter` · `VpnTrafficFilter` · `VpnTrafficFilterAssignment` · `VpnAppId` · `VpnAppIdType` · `VpnRoutingPolicyType` |
+| `VpnAppIdType::FilePath` | 있음 (값 `2`) |
+| `VpnRoutingPolicyType` | `SplitRouting=0` · `ForceAllTrafficOverVpn=1` |
+| 참조 구현(`luqmana/wireguard-uwp-rs`, 2021-12)이 Rust 1.97.1 로 빌드되는가 | **됨** — 릴리스 3분 22초 · exit 0 · 산출물 3개 |
+| 앱별 거르개 패치가 빌드되는가 | **됨** — exit 0 · DLL 626,176 → 650,752 바이트 |
+| 앱별 `TrafficFilter` 가 든 플러그인 VPN 프로필을 MDM 없이 만들 수 있는가 | **됨** — 관리자 권한만으로 생성·삭제 확인, 플랫폼이 `msedge.exe` 를 `Type=FilePath` 로 판정 |
+| 사이드로드에서 제한 기능(`networkingVpnProvider`)이 부여되는가 | 문서가 명시 허용 · 반박 담당이 깨지 못함 |
+| 이 기계의 준비물 | Rust · SDK 26100 · 개발자 모드 **전부 이미 있음**. WDK(`km` 헤더)는 **없음** |
+
+### 12-3. 적대 반박 결과 — **3명 중 3명 REFUTED**
+
+- **【치명】 "허용"과 "재지정"은 다르다.** 문서 언어가 전부 allow 계열이고 redirect 계열이 아니다. Windows 에 앱별 라우팅표가 없고 `VpnRouteAssignment` 에 AppId 칸이 없다. `ForceAllTrafficOverVpn` 이 "터널로 끌어온다"인지 "다른 인터페이스를 못 쓰게 막는다"인지가 결정적 미지수다.
+- **【치명】 Microsoft 가 Win32 앱 ID 사용을 만류했다.** `MicrosoftDocs/winrt-api#1798` (2021-03-26 미해결 종료): *"we're able to reproduce a data corruption ... it seems safest to avoid using Win32 appids at all."* 이후 5년간 수정 발표 없음.
+- **【치명】 데이터 경로 수명을 Windows 가 쥐고 있다.** `vpnClient` 백그라운드 작업이 2~5분 뒤 조용히 멈춘 보고가 미해결(MS Q&A 264773). Microsoft 자체 Azure VPN Client 도 Windows 11 에서 같은 증상.
+- **【강함】 11년간 성공 사례 0건.** Microsoft 공식 UWP VPN 샘플조차 `RoutingPolicyType` 을 한 번도 설정하지 않는다(저장소 전체 0건, 저장소는 archived). GitHub 코드 검색 `VpnTrafficFilter`/`StartWithTrafficFilter` 저장소 0건. VMware Workspace ONE Tunnel 은 2020-01 에 UWP 를 버리고 Win32 로 갈아엎었다.
+- **반박이 깨지 못한 것**: 사이드로드 rescap 부여 · 앱 컨테이너 UDP · 26200 배관 생존 · SKU/MDM 게이팅 없음. 전부 문제 없었다.
+
+### 12-4. 재개 조건 (전부 지킨다)
+
+1. 실작업 **4시간 · 달력 1일** 상한. 넘으면 자동 종결.
+2. 사전 스냅숏과 검증된 비상 복구를 먼저 만든다.
+3. DNS·백신·보안·VPN 제품을 끄는 절차 금지. `pktmon filter remove` 금지.
+4. 순서 자물쇠: 끊기 → 프로필 0개 확인 → 패키지 제거 → 인터넷 확인.
+5. WireGuard 설정과 개인 키는 **사람이 직접** 다룬다. AI 는 열지도 만들지도 않는다.
+6. PFN 거르개와 FilePath 거르개를 한 `VpnTrafficFilterAssignment` 에 **섞지 않는다** (#1798 액세스 위반).
+7. `AllowOutbound`/`AllowInbound` 를 **명시적으로 `true`** 로 둔다. 기본값이 문서에 없고, 기본이 `false` 면 조용한 블랙홀이 "거르개가 무시됨"과 똑같이 보인다.
+
+### 12-5. 종료 조건 (셋 중 하나가 관측되면 즉시 판정)
+
+| 관측 | 판정 |
+|---|---|
+| **③ 성공** — Edge 꾸러미가 터널 ifIndex 에만, Chrome 은 Wi-Fi 8 에 | `R3-DEC-04` 를 "UWP VPN 플러그인 갈래 채택(8시간 안정성 관문 조건부)"으로 개정 |
+| **① 거르개 무시** — Edge 가 Wi-Fi 8 로 정상 통신 | 재종결. 사유: 사용자 모드 경로 2종 모두 앱별 재지정 불가로 관측됨 |
+| **② 블랙홀** — Edge 가 어느 인터페이스에도 안 나타나고 통신 실패 | 재종결. 사유: 트래픽 거르개는 허용·차단 기계이며 재지정 수단이 아님이 실측됨 |
+
+### 12-6. 재종결 시 기본 후속
+
+커널 갈래로 복귀한다. 단 새로 확인된 **갈래 C — 기존 서명 드라이버 재사용**(WinpkFilter/ndisapi, WinDivert)을 드라이버 자체 작성 이전에 별도 검토한다. WireSock Secure Connect 가 우리 목표와 거의 같은 제품(WireGuard + AllowedApps/DisallowedApps)을 이 방식으로 이미 팔고 있다.
+
+### 12-7. 이 재개로 무효화되지 **않는** 것
+
+**"사용자 모드 WFP 연결 정책은 앱별 트래픽을 재지정하지 못한다"는 §2~§6 의 결론은 그대로 유효하다.** 가설 6개 제거 · 실기 2회 · 꾸러미 잡기 포함. 이번 재개는 그 결론을 뒤집는 것이 아니라 **다른 API 표면**을 보는 것이다.

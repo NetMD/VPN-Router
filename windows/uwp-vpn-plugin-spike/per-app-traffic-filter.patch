@@ -1,0 +1,145 @@
+diff --git a/plugin/src/config.rs b/plugin/src/config.rs
+index 8e7ac1c..4c15614 100644
+--- a/plugin/src/config.rs
++++ b/plugin/src/config.rs
+@@ -46,6 +46,14 @@ pub struct InterfaceConfig {
+     #[serde(default)]
+     #[serde(rename = "DNSSearch")]
+     pub search_domains: Vec<String>,
++
++    /// Full paths of Win32 executables whose traffic should be forced over the
++    /// tunnel (per-app VPN). An empty list keeps the plain, whole-interface
++    /// behaviour; a non-empty list switches the plugin over to
++    /// `VpnChannel::StartWithTrafficFilter`.
++    #[serde(default)]
++    #[serde(rename = "TunnelApp")]
++    pub tunnel_apps: Vec<String>,
+ }
+ 
+ /// Remote peer specific configuration
+diff --git a/plugin/src/plugin.rs b/plugin/src/plugin.rs
+index 04f025a..cc4b759 100644
+--- a/plugin/src/plugin.rs
++++ b/plugin/src/plugin.rs
+@@ -8,6 +8,7 @@ use ipnetwork::IpNetwork;
+ use windows::{
+     self as Windows,
+     core::*,
++    Foundation::Collections::IIterable,
+     Networking::Sockets::*,
+     Networking::Vpn::*,
+     Networking::*,
+@@ -164,6 +165,12 @@ impl VpnPlugin {
+             .collect::<Vec<_>>();
+         let search_domains = wg_config.interface.search_domains;
+ 
++        // `StartWithTrafficFilter` wants a `VpnDomainNameAssignment` where plain
++        // `Start` wants a `VpnNamespaceAssignment`, so keep a copy of the DNS
++        // inputs to rebuild the other shape from if per-app filters are in play.
++        let domain_dns_servers = dns_servers.clone();
++        let domain_search_domains = search_domains.clone();
++
+         let namespace_count = search_domains.len() + !dns_servers.is_empty() as usize;
+         let mut namespaces = Vec::with_capacity(namespace_count);
+ 
+@@ -221,19 +228,87 @@ impl VpnPlugin {
+         // connect isn't actually something that will hang (DNS aside perhaps?).
+         sock.ConnectAsync(&server, port.to_string())?.get()?;
+ 
+-        // Kick off the VPN setup
+-        channel.Start(
+-            ipv4_addrs,
+-            ipv6_addrs,
+-            None, // Interface ID portion of IPv6 address for VPN tunnel
+-            routes,
+-            namespace_assignment,
+-            1500,  // MTU size of VPN tunnel interface
+-            1600,  // Max frame size of incoming buffers from remote endpoint
+-            false, // Disable low cost network monitoring
+-            sock,  // Pass in the socket to the remote endpoint
+-            None,  // No secondary socket used.
+-        )?;
++        // Per-app VPN. `<TunnelApp>` entries in the profile's CustomConfiguration
++        // name Win32 executables whose traffic should be forced over the tunnel.
++        // An empty list leaves the original whole-interface path untouched.
++        let tunnel_apps = wg_config.interface.tunnel_apps;
++
++        if tunnel_apps.is_empty() {
++            // Kick off the VPN setup
++            channel.Start(
++                ipv4_addrs,
++                ipv6_addrs,
++                None, // Interface ID portion of IPv6 address for VPN tunnel
++                routes,
++                namespace_assignment,
++                1500,  // MTU size of VPN tunnel interface
++                1600,  // Max frame size of incoming buffers from remote endpoint
++                false, // Disable low cost network monitoring
++                sock,  // Pass in the socket to the remote endpoint
++                None,  // No secondary socket used.
++            )?;
++        } else {
++            // Rebuild the DNS side in the shape `StartWithTrafficFilter` takes.
++            let domain_assignment = VpnDomainNameAssignment::new()?;
++            let domain_list = domain_assignment.DomainNameList()?;
++
++            for mut search_domain in domain_search_domains {
++                // Prefix with . to make it a suffix rule
++                search_domain.insert(0, '.');
++                let dns: IIterable<HostName> =
++                    Vector::new(domain_dns_servers.clone()).into();
++                let info = VpnDomainNameInfo::CreateVpnDomainNameInfo(
++                    search_domain,
++                    VpnDomainNameType::Suffix,
++                    dns,
++                    None,
++                )?;
++                domain_list.Append(info)?;
++            }
++
++            if !domain_dns_servers.is_empty() {
++                let dns: IIterable<HostName> = Vector::new(domain_dns_servers).into();
++                let info = VpnDomainNameInfo::CreateVpnDomainNameInfo(
++                    ".",
++                    VpnDomainNameType::Suffix,
++                    dns,
++                    None,
++                )?;
++                domain_list.Append(info)?;
++            }
++
++            // One filter per configured executable, each pinned to the tunnel.
++            let filters = VpnTrafficFilterAssignment::new()?;
++            // The defaults for these two are undocumented. If they default to
++            // false, attaching any filter silently blackholes the tunnel -- and
++            // that looks exactly like "the filter was ignored", which is the one
++            // reading this experiment must not confuse. Set both explicitly.
++            filters.SetAllowOutbound(true)?;
++            filters.SetAllowInbound(true)?;
++            let filter_list = filters.TrafficFilterList()?;
++
++            for app_path in &tunnel_apps {
++                let app_id = VpnAppId::Create(VpnAppIdType::FilePath, app_path.as_str())?;
++                let filter = VpnTrafficFilter::Create(app_id)?;
++                filter.SetRoutingPolicyType(VpnRoutingPolicyType::ForceAllTrafficOverVpn)?;
++                filter_list.Append(filter)?;
++                debug_log!("per-app tunnel filter: {}", app_path);
++            }
++
++            channel.StartWithTrafficFilter(
++                ipv4_addrs,
++                ipv6_addrs,
++                None, // Interface ID portion of IPv6 address for VPN tunnel
++                routes,
++                domain_assignment,
++                1500,  // MTU size of VPN tunnel interface
++                1600,  // Max frame size of incoming buffers from remote endpoint
++                false, // Disable low cost network monitoring
++                sock,  // Pass in the socket to the remote endpoint
++                None,  // No secondary socket used.
++                filters,
++            )?;
++        }
+ 
+         // Log successful connection
+         self.etw_logger
